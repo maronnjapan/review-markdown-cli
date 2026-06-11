@@ -1,0 +1,19 @@
+{
+  "name": "review-markdown-cli",
+  "version": "0.1.0",
+  "description": "Local CLI and web app for reviewing Markdown files with contextual comments.",
+  "type": "module",
+  "bin": {
+    "markdown-review": "./bin/markdown-review.js"
+  },
+  "scripts": {
+    "start": "node ./bin/markdown-review.js . --no-open",
+    "test": "node --test"
+  },
+  "keywords": [
+    "markdown",
+    "review",
+    "cli"
+  ],
+  "license": "MIT"
+}
