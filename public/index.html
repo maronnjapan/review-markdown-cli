@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Markdown Review</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">Local Markdown Review</p>
+        <h1>Markdown Review</h1>
+      </div>
+      <a class="header-link" href="#/">ファイル一覧</a>
+    </header>
+
+    <main class="layout">
+      <section id="file-view" class="card"></section>
+      <section id="review-view" class="review-layout hidden">
+        <article class="document-pane card">
+          <div class="document-toolbar">
+            <button id="back-button" type="button">← ファイル一覧</button>
+            <button id="document-comment-button" type="button">文書全体にコメント</button>
+          </div>
+          <h2 id="document-title"></h2>
+          <div id="markdown-content" class="markdown-body"></div>
+        </article>
+        <aside class="comments-pane card">
+          <div class="comments-header">
+            <div>
+              <p class="eyebrow">Review comments</p>
+              <h2>コメント</h2>
+            </div>
+            <button id="save-button" type="button">保存</button>
+          </div>
+          <p id="save-status" class="muted"></p>
+          <button id="export-button" type="button" class="wide-button">レビューMarkdownを出力</button>
+          <textarea id="export-output" class="export-output" readonly hidden></textarea>
+          <div id="comments-list" class="comments-list"></div>
+        </aside>
+      </section>
+    </main>
+
+    <div id="selection-toolbar" class="selection-toolbar hidden">
+      <button type="button">選択範囲にコメント</button>
+    </div>
+
+    <dialog id="comment-dialog">
+      <form method="dialog" class="dialog-form">
+        <h2 id="dialog-title">コメント追加</h2>
+        <p id="dialog-target" class="dialog-target"></p>
+        <label>
+          コメント
+          <textarea id="comment-input" rows="6" placeholder="修正してほしい内容や意図を書いてください"></textarea>
+        </label>
+        <div class="dialog-actions">
+          <button value="cancel" type="button" id="cancel-dialog">キャンセル</button>
+          <button value="default" type="submit" id="submit-dialog">追加</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
