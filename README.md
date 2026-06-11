@@ -1,4 +1,4 @@
-# review-markdown-cli
+# review-markdown
 
 Markdownファイルをローカルブラウザで読みやすく表示し、範囲選択・段落・見出し・文書全体にレビューコメントを残すためのMVP CLIです。
 
@@ -6,10 +6,32 @@ Markdownファイルをローカルブラウザで読みやすく表示し、範
 
 ```bash
 npm install
-npx markdown-review .
+npm start
 ```
 
 ブラウザで `http://localhost:3000` を開くと、指定ディレクトリ配下のMarkdownファイル一覧が表示されます。
+
+別ディレクトリ配下の Markdown をこのローカル開発版でレビューする場合は、対象ディレクトリでこのパッケージのパスを指定して実行します。
+
+```bash
+cd /path/to/markdown-project
+npx /path/to/review-markdown-cli .
+```
+
+どこからでも `review-markdown .` と実行したい場合は、開発中のパッケージをリンクします。
+
+```bash
+cd /path/to/review-markdown-cli
+npm link
+cd /path/to/markdown-project
+review-markdown .
+```
+
+npm に `review-markdown` として公開した後は、任意のディレクトリで次の形式でも実行できます。
+
+```bash
+npx review-markdown .
+```
 
 ## 主な機能
 
@@ -23,7 +45,7 @@ npx markdown-review .
 ## CLIオプション
 
 ```bash
-markdown-review [targetDir] [--port 3000] [--no-open]
+review-markdown [targetDir] [--port 3000] [--no-open]
 ```
 
 - `targetDir`: レビュー対象ディレクトリ。省略時はカレントディレクトリです。
