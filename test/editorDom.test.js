@@ -224,7 +224,15 @@ test('comments autosave without waiting for the save button and survive a reload
   // Autosave must not re-render the pane: that would drop the caret the reviewer is typing at.
   assert.equal(document.activeElement, textarea);
 
-  document.querySelector('#comments-list button[data-delete-index="0"]').click();
+  // Deleting asks first: the confirmation replaces the card's own actions.
+  document.querySelector('#comments-list button[data-action="onRequestDelete"]').click();
+  assert.equal(document.querySelector('#comments-list .comment-card').classList.contains('confirming'), true);
+  document.querySelector('#comments-list button[data-action="onCancelDelete"]').click();
+  assert.equal(document.querySelector('#comments-list .comment-card').classList.contains('confirming'), false);
+  assert.equal(requests.length, 2, '確認を取り消しただけでは保存しない');
+
+  document.querySelector('#comments-list button[data-action="onRequestDelete"]').click();
+  document.querySelector('#comments-list button[data-action="onConfirmDelete"]').click();
   await waitFor(() => requests.length === 3, 1600);
   assert.deepEqual(storedComments, []);
 });

@@ -1,5 +1,6 @@
 import { load } from 'cheerio';
 import markdownToHtml from 'zenn-markdown-html';
+import { decodeMarkdownPath } from './urlPath.js';
 
 export async function renderMarkdown(markdown, options = {}) {
   if (options.editableBlocks) {
@@ -96,38 +97,54 @@ async function renderMarkdownFragment(markdown, options) {
     }
   });
 
-  return rewriteImageSources(html, options);
+  return rewriteDestinations(html, options);
 }
 
-function rewriteImageSources(html, options) {
-  if (!options.resolveImageSrc && !options.editorSourceAttrs) return html;
+/**
+ * Rewrites the destinations Markdown authors wrote (image sources, link hrefs)
+ * into something the review UI can serve, keeping the original spelling in a
+ * `data-markdown-*` attribute so the editor can write it back unchanged.
+ */
+function rewriteDestinations(html, options) {
+  if (!options.resolveImageSrc && !options.resolveLink && !options.editorSourceAttrs) return html;
 
   const $ = load(html, null, false);
   $('img[src]').each((_index, image) => {
     const element = $(image);
     const source = element.attr('src');
     if (!source) return;
-    if (options.editorSourceAttrs) element.attr('data-markdown-src', markdownImageSource(source));
+    if (options.editorSourceAttrs) element.attr('data-markdown-src', decodeMarkdownPath(source));
     if (options.resolveImageSrc) element.attr('src', options.resolveImageSrc(source));
   });
+
+  if (options.resolveLink) {
+    $('a[href]').each((_index, anchor) => {
+      const element = $(anchor);
+      const href = element.attr('href');
+      const resolved = href && options.resolveLink(href);
+      if (!resolved) return;
+      if (options.editorSourceAttrs) element.attr('data-markdown-href', decodeMarkdownPath(href));
+      applyLinkAttributes(element, resolved);
+    });
+  }
   return $.html();
 }
 
-/**
- * The renderer percent-encodes image paths, so a relative path such as
- * `./図/1.png` comes back escaped. The editor writes this attribute straight
- * back into the Markdown file, so restore the readable spelling whenever
- * decoding cannot change how the link destination parses.
- */
-function markdownImageSource(source) {
-  let decoded;
-  try {
-    decoded = decodeURIComponent(source);
-  } catch {
-    return source;
+function applyLinkAttributes(element, resolved) {
+  element.attr('href', resolved.href);
+  element.attr('data-link-state', resolved.state);
+  if (resolved.path) element.attr('data-link-path', resolved.path);
+
+  if (resolved.state === 'asset') {
+    element.attr('target', '_blank');
+    element.attr('rel', 'noreferrer');
+    return;
   }
-  if (decoded === source || /[\s<>()\\]/.test(decoded)) return source;
-  return decoded;
+  if (resolved.state === 'internal') return;
+
+  element.attr('data-link-error', resolved.message);
+  element.attr('title', resolved.message);
+  element.addClass('md-link-unavailable');
 }
 
 function splitSourceLines(source) {
