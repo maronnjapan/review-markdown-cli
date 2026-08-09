@@ -164,6 +164,26 @@ function createTurndownService() {
     }
   });
 
+  /**
+   * The review UI rewrites link destinations so they can be navigated locally.
+   * Write the author's original spelling back, and drop the renderer's own
+   * heading anchors so editing a heading does not leave `[](#...)` behind.
+   */
+  turndown.addRule('markdownSourceLink', {
+    filter(node) {
+      return node.nodeName === 'A' && Boolean(node.getAttribute('href'));
+    },
+    replacement(content, node) {
+      if (node.classList.contains('header-anchor-link')) return '';
+      const text = content.trim();
+      if (!text) return '';
+      const href = node.getAttribute('data-markdown-href') || node.getAttribute('href') || '';
+      if (!href) return text;
+      const title = node.getAttribute('data-link-error') ? '' : node.getAttribute('title');
+      return `[${text}](${href}${title ? ` "${title}"` : ''})`;
+    }
+  });
+
   turndown.addRule('markdownSourceImage', {
     filter: 'img',
     replacement(_content, node) {

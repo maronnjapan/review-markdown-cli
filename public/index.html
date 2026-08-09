@@ -61,11 +61,11 @@
           <div class="comments-header">
             <div>
               <p class="eyebrow">Review comments</p>
-              <h2>コメント</h2>
+              <h2>コメント <span id="comment-count" class="comment-count">0</span></h2>
             </div>
             <button id="save-button" type="button" title="自動保存を待たずにすぐ保存します">今すぐ保存</button>
           </div>
-          <p id="save-status" class="muted" aria-live="polite"></p>
+          <p id="save-status" class="save-status" aria-live="polite"></p>
           <button id="export-button" type="button" class="wide-button">レビューMarkdownを出力</button>
           <textarea id="export-output" class="export-output" readonly hidden></textarea>
           <div id="comments-list" class="comments-list"></div>
@@ -77,20 +77,35 @@
       <button type="button">選択範囲にコメント</button>
     </div>
 
-    <dialog id="comment-dialog">
+    <dialog id="comment-dialog" aria-labelledby="dialog-title">
       <form method="dialog" class="dialog-form">
-        <h2 id="dialog-title">コメント追加</h2>
-        <p id="dialog-target" class="dialog-target"></p>
-        <label>
-          コメント
+        <header class="dialog-head">
+          <span id="dialog-type-badge" class="target-badge"></span>
+          <h2 id="dialog-title">コメントを追加</h2>
+        </header>
+
+        <section id="dialog-target" class="dialog-target">
+          <p class="dialog-target-label">この対象にコメントします</p>
+          <p id="dialog-target-path" class="dialog-target-path" hidden></p>
+          <blockquote id="dialog-target-quote" class="dialog-target-quote"></blockquote>
+        </section>
+
+        <label class="dialog-field">
+          <span class="dialog-field-label">コメント</span>
           <textarea id="comment-input" rows="6" placeholder="修正してほしい内容や意図を書いてください"></textarea>
         </label>
-        <div class="dialog-actions">
-          <button value="cancel" type="button" id="cancel-dialog">キャンセル</button>
-          <button value="default" type="submit" id="submit-dialog">追加</button>
+
+        <div class="dialog-footer">
+          <p id="dialog-hint" class="dialog-hint">Ctrl / ⌘ + Enter で追加、Esc で取り消し</p>
+          <div class="dialog-actions">
+            <button value="cancel" type="button" id="cancel-dialog">キャンセル</button>
+            <button value="default" type="submit" id="submit-dialog">この対象にコメントを追加</button>
+          </div>
         </div>
       </form>
     </dialog>
+
+    <div id="toast-region" class="toast-region" role="status" aria-live="polite"></div>
 
     <script type="module" src="/app.js"></script>
   </body>
