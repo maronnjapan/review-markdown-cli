@@ -1,164 +1,188 @@
-const inlineCodePlaceholders = [];
+import { load } from 'cheerio';
+import markdownToHtml from 'zenn-markdown-html';
 
-export function renderMarkdown(markdown) {
-  const lines = String(markdown).replaceAll('\r\n', '\n').split('\n');
-  const html = [];
-  let index = 0;
-  let inCodeBlock = false;
-  let codeLanguage = '';
-  let codeLines = [];
-  let listType = null;
-  let blockquote = [];
-  let paragraph = [];
-  let table = [];
-
-  const flushParagraph = () => {
-    if (paragraph.length === 0) return;
-    html.push(`<p>${renderInline(paragraph.join(' '))}</p>`);
-    paragraph = [];
-  };
-  const flushList = () => {
-    if (!listType) return;
-    html.push(`</${listType}>`);
-    listType = null;
-  };
-  const flushBlockquote = () => {
-    if (blockquote.length === 0) return;
-    html.push(`<blockquote>${renderMarkdown(blockquote.join('\n'))}</blockquote>`);
-    blockquote = [];
-  };
-  const flushTable = () => {
-    if (table.length === 0) return;
-    const rows = table.map((line) => line.trim().replace(/^\||\|$/g, '').split('|').map((cell) => cell.trim()));
-    const hasSeparator = rows.length > 1 && rows[1].every((cell) => /^:?-{3,}:?$/.test(cell));
-    if (!hasSeparator) {
-      paragraph.push(...table);
-      table = [];
-      return;
-    }
-    const headers = rows[0];
-    const bodyRows = rows.slice(2);
-    html.push('<table><thead><tr>');
-    headers.forEach((header) => html.push(`<th>${renderInline(header)}</th>`));
-    html.push('</tr></thead><tbody>');
-    bodyRows.forEach((row) => {
-      html.push('<tr>');
-      row.forEach((cell) => html.push(`<td>${renderInline(cell)}</td>`));
-      html.push('</tr>');
-    });
-    html.push('</tbody></table>');
-    table = [];
-  };
-  const flushAll = () => {
-    flushParagraph();
-    flushList();
-    flushBlockquote();
-    flushTable();
-  };
-
-  while (index < lines.length) {
-    const line = lines[index];
-    const fence = line.match(/^```\s*([\w-]+)?\s*$/);
-    if (fence) {
-      if (inCodeBlock) {
-        html.push(`<pre><code${codeLanguage ? ` class="language-${escapeHtml(codeLanguage)}"` : ''}>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
-        inCodeBlock = false;
-        codeLanguage = '';
-        codeLines = [];
-      } else {
-        flushAll();
-        inCodeBlock = true;
-        codeLanguage = fence[1] || '';
-      }
-      index += 1;
-      continue;
-    }
-    if (inCodeBlock) {
-      codeLines.push(line);
-      index += 1;
-      continue;
-    }
-
-    if (line.trim() === '') {
-      flushAll();
-      index += 1;
-      continue;
-    }
-
-    const heading = line.match(/^(#{1,6})\s+(.+)$/);
-    if (heading) {
-      flushAll();
-      const level = heading[1].length;
-      html.push(`<h${level}>${renderInline(heading[2].trim())}</h${level}>`);
-      index += 1;
-      continue;
-    }
-
-    if (/^\|.+\|\s*$/.test(line)) {
-      flushParagraph();
-      flushList();
-      flushBlockquote();
-      table.push(line);
-      index += 1;
-      continue;
-    }
-    flushTable();
-
-    const quote = line.match(/^>\s?(.*)$/);
-    if (quote) {
-      flushParagraph();
-      flushList();
-      blockquote.push(quote[1]);
-      index += 1;
-      continue;
-    }
-    flushBlockquote();
-
-    const unordered = line.match(/^\s*[-*+]\s+(.+)$/);
-    const ordered = line.match(/^\s*\d+\.\s+(.+)$/);
-    if (unordered || ordered) {
-      flushParagraph();
-      const desiredType = unordered ? 'ul' : 'ol';
-      if (listType !== desiredType) {
-        flushList();
-        listType = desiredType;
-        html.push(`<${listType}>`);
-      }
-      html.push(`<li>${renderInline((unordered || ordered)[1])}</li>`);
-      index += 1;
-      continue;
-    }
-    flushList();
-
-    paragraph.push(line.trim());
-    index += 1;
+export async function renderMarkdown(markdown, options = {}) {
+  if (options.editableBlocks) {
+    const blocks = parseMarkdownBlocks(markdown);
+    const renderedBlocks = await Promise.all(blocks.map(async (block) => {
+      const content = await renderMarkdownFragment(block.source, {
+        ...options,
+        editorSourceAttrs: true
+      });
+      return `<div class="markdown-block" data-block-id="${block.id}" data-block-kind="${block.kind}" data-source-start="${block.start}" data-source-end="${block.end}">${content}</div>`;
+    }));
+    return renderedBlocks.join('\n');
   }
 
-  if (inCodeBlock) {
-    html.push(`<pre><code${codeLanguage ? ` class="language-${escapeHtml(codeLanguage)}"` : ''}>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
-  }
-  flushAll();
-  return html.join('\n');
+  return renderMarkdownFragment(markdown, options);
 }
 
-function renderInline(text) {
-  inlineCodePlaceholders.length = 0;
-  let output = escapeHtml(text).replace(/`([^`]+)`/g, (_match, code) => {
-    const token = `@@CODE${inlineCodePlaceholders.length}@@`;
-    inlineCodePlaceholders.push(`<code>${code}</code>`);
-    return token;
+export function parseMarkdownBlocks(markdown) {
+  const source = String(markdown);
+  const lines = splitSourceLines(source);
+  const blocks = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    if (lines[index].text.trim() === '') {
+      index += 1;
+      continue;
+    }
+
+    const startIndex = index;
+    const firstLine = lines[index].text;
+    const fence = matchFence(firstLine);
+    let kind = 'paragraph';
+
+    if (fence) {
+      kind = fence.language === 'mermaid' ? 'mermaid' : 'code';
+      index += 1;
+      while (index < lines.length) {
+        const isClosingFence = matchesClosingFence(lines[index].text, fence);
+        index += 1;
+        if (isClosingFence) break;
+      }
+    } else if (isZennContainerStart(firstLine)) {
+      kind = 'container';
+      index += 1;
+      while (index < lines.length) {
+        const isClosingContainer = /^:::\s*$/.test(lines[index].text);
+        index += 1;
+        if (isClosingContainer) break;
+      }
+    } else if (/^#{1,6}\s+/.test(firstLine)) {
+      kind = 'heading';
+      index += 1;
+    } else if (/^\|.+\|\s*$/.test(firstLine)) {
+      kind = 'table';
+      index += 1;
+      while (index < lines.length && /^\|.+\|\s*$/.test(lines[index].text)) index += 1;
+    } else if (/^>\s?/.test(firstLine)) {
+      kind = 'blockquote';
+      index += 1;
+      while (index < lines.length && /^>\s?/.test(lines[index].text)) index += 1;
+    } else if (listMatch(firstLine)) {
+      kind = 'list';
+      index += 1;
+      while (index < lines.length && listMatch(lines[index].text)) index += 1;
+    } else if (isThematicBreak(firstLine)) {
+      kind = 'thematic-break';
+      index += 1;
+    } else {
+      index += 1;
+      while (index < lines.length && !startsNewBlock(lines[index].text)) index += 1;
+    }
+
+    const first = lines[startIndex];
+    const last = lines[index - 1];
+    blocks.push({
+      id: `block-${blocks.length}`,
+      kind,
+      start: first.start,
+      end: last.contentEnd,
+      source: source.slice(first.start, last.contentEnd)
+    });
+  }
+
+  return blocks;
+}
+
+async function renderMarkdownFragment(markdown, options) {
+  const html = await markdownToHtml(String(markdown), {
+    customEmbed: {
+      mermaid(source) {
+        return `<div class="mermaid">${escapeHtml(source)}</div>`;
+      }
+    }
   });
-  output = output
-    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2">')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/__([^_]+)__/g, '<strong>$1</strong>')
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-    .replace(/_([^_]+)_/g, '<em>$1</em>');
-  inlineCodePlaceholders.forEach((code, placeholderIndex) => {
-    output = output.replace(`@@CODE${placeholderIndex}@@`, code);
+
+  return rewriteImageSources(html, options);
+}
+
+function rewriteImageSources(html, options) {
+  if (!options.resolveImageSrc && !options.editorSourceAttrs) return html;
+
+  const $ = load(html, null, false);
+  $('img[src]').each((_index, image) => {
+    const element = $(image);
+    const source = element.attr('src');
+    if (!source) return;
+    if (options.editorSourceAttrs) element.attr('data-markdown-src', markdownImageSource(source));
+    if (options.resolveImageSrc) element.attr('src', options.resolveImageSrc(source));
   });
-  return output;
+  return $.html();
+}
+
+/**
+ * The renderer percent-encodes image paths, so a relative path such as
+ * `./図/1.png` comes back escaped. The editor writes this attribute straight
+ * back into the Markdown file, so restore the readable spelling whenever
+ * decoding cannot change how the link destination parses.
+ */
+function markdownImageSource(source) {
+  let decoded;
+  try {
+    decoded = decodeURIComponent(source);
+  } catch {
+    return source;
+  }
+  if (decoded === source || /[\s<>()\\]/.test(decoded)) return source;
+  return decoded;
+}
+
+function splitSourceLines(source) {
+  const lines = [];
+  const linePattern = /([^\r\n]*)(\r\n|\n|$)/g;
+  let match;
+  while ((match = linePattern.exec(source)) && (match[0] || linePattern.lastIndex < source.length)) {
+    const start = match.index;
+    const text = match[1];
+    lines.push({
+      text,
+      start,
+      contentEnd: start + text.length
+    });
+    if (!match[2]) break;
+  }
+  return lines;
+}
+
+function matchFence(line) {
+  const match = line.match(/^\s{0,3}(`{3,}|~{3,})\s*([^\s:]*)/);
+  if (!match) return null;
+  return {
+    marker: match[1][0],
+    length: match[1].length,
+    language: String(match[2] || '').toLowerCase()
+  };
+}
+
+function matchesClosingFence(line, fence) {
+  const match = line.match(/^\s{0,3}(`{3,}|~{3,})\s*$/);
+  return Boolean(match && match[1][0] === fence.marker && match[1].length >= fence.length);
+}
+
+function isZennContainerStart(line) {
+  return /^:::(?:message(?:\s+alert)?|details(?:\s+.+)?)\s*$/.test(line);
+}
+
+function listMatch(line) {
+  return /^\s*(?:[-*+]|\d+\.)\s+/.test(line);
+}
+
+function isThematicBreak(line) {
+  return /^\s{0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/.test(line);
+}
+
+function startsNewBlock(line) {
+  if (line.trim() === '') return true;
+  return Boolean(matchFence(line))
+    || isZennContainerStart(line)
+    || /^#{1,6}\s+/.test(line)
+    || /^\|.+\|\s*$/.test(line)
+    || /^>\s?/.test(line)
+    || listMatch(line)
+    || isThematicBreak(line);
 }
 
 function escapeHtml(value) {

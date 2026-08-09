@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Markdown Review</title>
+    <link rel="stylesheet" href="/zenn-content.css">
     <link rel="stylesheet" href="/style.css">
   </head>
   <body>
@@ -21,10 +22,40 @@
         <article class="document-pane card">
           <div class="document-toolbar">
             <button id="back-button" type="button">← ファイル一覧</button>
-            <button id="document-comment-button" type="button">文書全体にコメント</button>
+            <div class="document-toolbar-actions">
+              <div class="mode-switch" role="group" aria-label="操作モード">
+                <button id="comment-mode-button" class="active" type="button" aria-pressed="true" aria-keyshortcuts="Control+Shift+E Meta+Shift+E" title="コメントモード（Ctrl/⌘+Shift+Eで切り替え）">コメント</button>
+                <button id="edit-mode-button" type="button" aria-pressed="false" aria-keyshortcuts="Control+Shift+E Meta+Shift+E" title="編集モード（Ctrl/⌘+Shift+Eで切り替え）">編集</button>
+              </div>
+              <span class="mode-shortcut" title="コメント／編集を切り替え">Ctrl/⌘+Shift+E</span>
+              <button id="document-comment-button" type="button">文書全体にコメント</button>
+            </div>
           </div>
           <h2 id="document-title"></h2>
-          <div id="markdown-content" class="markdown-body"></div>
+          <div id="editor-toolbar" class="editor-toolbar hidden" role="toolbar" aria-label="文章の書式">
+            <select id="block-format" aria-label="段落スタイル">
+              <option value="p">段落</option>
+              <option value="h1">見出し1</option>
+              <option value="h2">見出し2</option>
+              <option value="h3">見出し3</option>
+              <option value="h4">見出し4</option>
+            </select>
+            <button type="button" data-editor-command="bold" title="太字"><strong>B</strong></button>
+            <button type="button" data-editor-command="italic" title="斜体"><em>I</em></button>
+            <button type="button" data-editor-action="inline-code" title="インラインコード">&lt;/&gt;</button>
+            <button type="button" data-editor-action="link" title="リンク">リンク</button>
+            <button type="button" data-editor-command="insertUnorderedList" title="箇条書き">・リスト</button>
+            <button type="button" data-editor-command="insertOrderedList" title="番号付きリスト">1. リスト</button>
+            <button type="button" data-editor-action="blockquote" title="引用">引用</button>
+            <button type="button" data-editor-action="code-block" title="コードブロック">コード</button>
+            <button type="button" data-editor-command="undo" title="元に戻す">↶</button>
+            <button type="button" data-editor-command="redo" title="やり直す">↷</button>
+          </div>
+          <div id="editor-save-row" class="editor-save-row hidden" aria-live="polite">
+            <span id="editor-save-status">保存済み</span>
+            <button id="retry-save-button" class="hidden" type="button">再試行</button>
+          </div>
+          <div id="markdown-content" class="markdown-body znc"></div>
         </article>
         <aside class="comments-pane card">
           <div class="comments-header">
@@ -32,9 +63,9 @@
               <p class="eyebrow">Review comments</p>
               <h2>コメント</h2>
             </div>
-            <button id="save-button" type="button">保存</button>
+            <button id="save-button" type="button" title="自動保存を待たずにすぐ保存します">今すぐ保存</button>
           </div>
-          <p id="save-status" class="muted"></p>
+          <p id="save-status" class="muted" aria-live="polite"></p>
           <button id="export-button" type="button" class="wide-button">レビューMarkdownを出力</button>
           <textarea id="export-output" class="export-output" readonly hidden></textarea>
           <div id="comments-list" class="comments-list"></div>

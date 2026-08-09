@@ -26,7 +26,7 @@ export function exportPathFor(rootDir, relativeFile) {
 
 export async function readReview(rootDir, relativeFile) {
   const targetFile = relativeFile.split(path.sep).join('/');
-  const filePath = reviewPathFor(rootDir, targetFile);
+  const { filePath } = await findExistingReviewLocation(rootDir, targetFile);
   try {
     const raw = await fs.readFile(filePath, 'utf8');
     const parsed = JSON.parse(raw);
@@ -42,8 +42,8 @@ export async function readReview(rootDir, relativeFile) {
 }
 
 export async function writeReview(rootDir, relativeFile, comments) {
-  const targetFile = relativeFile.split(path.sep).join('/');
-  const filePath = reviewPathFor(rootDir, targetFile);
+  const requestedTargetFile = relativeFile.split(path.sep).join('/');
+  const { filePath, targetFile } = await findExistingReviewLocation(rootDir, requestedTargetFile);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const payload = {
     targetFile,
@@ -56,6 +56,38 @@ export async function writeReview(rootDir, relativeFile, comments) {
   };
   await fs.writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
   return payload;
+}
+
+export async function findExistingReviewPath(rootDir, relativeFile) {
+  return (await findExistingReviewLocation(rootDir, relativeFile)).filePath;
+}
+
+async function findExistingReviewLocation(rootDir, relativeFile) {
+  const primaryPath = reviewPathFor(rootDir, relativeFile);
+  const absoluteTargetFile = path.resolve(rootDir, relativeFile);
+  let currentDir = path.resolve(rootDir);
+
+  while (true) {
+    const currentRelativeFile = path.relative(currentDir, absoluteTargetFile).split(path.sep).join('/');
+    if (!currentRelativeFile.startsWith('..') && !path.isAbsolute(currentRelativeFile)) {
+      const candidatePath = reviewPathFor(currentDir, currentRelativeFile);
+      if (await fileExists(candidatePath)) return { filePath: candidatePath, targetFile: currentRelativeFile };
+    }
+
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) return { filePath: primaryPath, targetFile: relativeFile };
+    currentDir = parentDir;
+  }
+}
+
+async function fileExists(filePath) {
+  try {
+    const stat = await fs.stat(filePath);
+    return stat.isFile();
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return false;
+    throw error;
+  }
 }
 
 export function createCommentId() {

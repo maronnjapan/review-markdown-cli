@@ -53,9 +53,26 @@ server.on('error', (error) => {
   process.exit(1);
 });
 
-process.on('SIGINT', () => {
-  server.close(() => process.exit(0));
-});
+let isShuttingDown = false;
+const forceExitAfterMs = 500;
+
+process.on('SIGINT', shutdown);
+
+function shutdown() {
+  if (isShuttingDown) {
+    process.exit(0);
+  }
+  isShuttingDown = true;
+
+  const forceExitTimer = setTimeout(() => process.exit(0), forceExitAfterMs);
+  forceExitTimer.unref();
+
+  server.close(() => {
+    clearTimeout(forceExitTimer);
+    process.exit(0);
+  });
+  server.closeAllConnections();
+}
 
 function printUsage() {
   console.log('Usage: review-markdown [targetDir] [--port 3000] [--no-open]');
