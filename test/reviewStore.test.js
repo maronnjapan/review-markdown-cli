@@ -26,6 +26,7 @@ test('writeReview and readReview persist comments under .review', async () => {
   assert.equal(review.targetFile, 'docs/example.md');
   assert.equal(review.comments.length, 1);
   assert.equal(review.comments[0].comment, '結論を先に書く');
+  assert.equal(review.comments[0].status, 'open', '状態のない既存コメントは未解決として扱う');
 });
 
 test('writeReview preserves existing comment metadata and target fields', async () => {
@@ -40,6 +41,7 @@ test('writeReview preserves existing comment metadata and target fields', async 
       contextAfter: '後ろの文脈',
       headingPath: ['概要'],
       comment: '具体例を追加してほしい',
+      status: 'resolved',
       createdAt: '2026-06-11T00:00:00.000Z',
       customField: 'preserved'
     }
@@ -49,6 +51,7 @@ test('writeReview preserves existing comment metadata and target fields', async 
   assert.equal(review.comments[0].id, 'comment-existing');
   assert.equal(review.comments[0].targetText, '対象として選択された文章');
   assert.equal(review.comments[0].contextBefore, '前の文脈');
+  assert.equal(review.comments[0].status, 'resolved');
   assert.equal(review.comments[0].customField, 'preserved');
 });
 
@@ -115,8 +118,18 @@ test('buildReviewMarkdown groups comments for AI handoff', () => {
 
   assert.match(markdown, /# Review for example\.md/);
   assert.match(markdown, /## 文書全体へのコメント/);
+  assert.match(markdown, /状態: 未解決/);
   assert.match(markdown, /> 抽象的な説明/);
   assert.match(markdown, /対象見出し: 実装方針/);
+});
+
+test('buildReviewMarkdown identifies resolved comments', () => {
+  const markdown = buildReviewMarkdown({
+    targetFile: 'example.md',
+    comments: [{ type: 'document', status: 'resolved', comment: '対応済み' }]
+  });
+
+  assert.match(markdown, /状態: 解決済み/);
 });
 
 test('buildReviewMarkdown keeps repeated comments for the same target', () => {

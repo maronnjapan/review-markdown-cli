@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { serveAsset } from './assets.js';
 import { applyBlockEdits } from './editorMarkdown.js';
-import { httpError, readJsonBody, sendBuffer, sendJson } from './http.js';
+import { httpError, readJsonBody, sendBuffer, sendJson, startNdjson } from './http.js';
 import { assetUrlFor, isMarkdownPath, resolveDocumentLink } from './links.js';
 import { renderMarkdown } from './markdown.js';
 import { listMarkdownFiles } from './markdownFiles.js';
@@ -27,16 +27,23 @@ const ROUTES = [
   { methods: ['POST'], pathname: '/api/file', handle: saveFile },
   { methods: ['GET', 'HEAD'], pathname: '/api/asset', handle: openAsset },
   { methods: ['POST'], pathname: '/api/review', handle: saveReview },
-  { methods: ['GET'], pathname: '/api/export', handle: exportReview }
+  { methods: ['GET'], pathname: '/api/export', handle: exportReview },
+  { methods: ['GET'], pathname: '/api/ai/status', handle: aiStatus },
+  { methods: ['GET'], pathname: '/api/ai/conversations', handle: listAiConversations },
+  { methods: ['POST', 'DELETE'], pathname: '/api/ai/conversation', handle: aiConversation },
+  { methods: ['POST'], pathname: '/api/ai/translate', handle: translateWithAi },
+  { methods: ['POST'], pathname: '/api/ai/message', handle: sendAiMessage }
 ];
 
-export function createRequestHandler({ rootDir, filter }) {
+export function createRequestHandler({ rootDir, filter, aiService, aiToken }) {
   return async function handleRequest(request, response) {
     const url = new URL(request.url, 'http://localhost');
     const route = ROUTES.find((candidate) => (
       candidate.pathname === url.pathname && candidate.methods.includes(request.method)
     ));
-    const context = { rootDir, filter, request, response, url, headOnly: request.method === 'HEAD' };
+    const context = {
+      rootDir, filter, aiService, aiToken, request, response, url, headOnly: request.method === 'HEAD'
+    };
 
     if (route) return route.handle(context);
     if (request.method === 'GET' || request.method === 'HEAD') {
@@ -44,6 +51,111 @@ export function createRequestHandler({ rootDir, filter }) {
     }
     throw httpError('Not found', 404);
   };
+}
+
+async function aiStatus({ aiService, aiToken, request, response }) {
+  assertLocalAiRequest(request);
+  response.setHeader('Cache-Control', 'no-store');
+  return sendJson(response, { token: aiToken, ...await aiService.status() });
+}
+
+async function listAiConversations(context) {
+  const { rootDir, filter, aiService, request, response, url } = context;
+  authorizeAiRequest(context);
+  const relativeFile = reviewTarget(rootDir, filter, url.searchParams.get('path'));
+  return sendJson(response, { conversations: await aiService.listConversations(relativeFile) });
+}
+
+async function aiConversation(context) {
+  const { rootDir, filter, aiService, request, response } = context;
+  authorizeAiRequest(context);
+  const body = await readJsonBody(request);
+  if (request.method === 'DELETE') {
+    await aiService.deleteConversation(body.id);
+    return sendJson(response, { deleted: true });
+  }
+  const relativeFile = reviewTarget(rootDir, filter, body.path);
+  return sendJson(response, {
+    conversation: await aiService.createConversation({ documentPath: relativeFile, target: body.target })
+  });
+}
+
+async function translateWithAi(context) {
+  const { rootDir, filter, aiService, request, response } = context;
+  authorizeAiRequest(context);
+  const body = await readJsonBody(request);
+  const relativeFile = reviewTarget(rootDir, filter, body.path);
+  return streamAiResponse(request, response, async ({ send, signal }) => {
+    send({ type: 'started' });
+    const translation = await aiService.translate(relativeFile, body.target, {
+      signal,
+      onDelta: (delta) => send({ type: 'delta', delta })
+    });
+    send({ type: 'result', translation });
+  });
+}
+
+async function sendAiMessage(context) {
+  const { aiService, request, response } = context;
+  authorizeAiRequest(context);
+  const body = await readJsonBody(request);
+  return streamAiResponse(request, response, async ({ send, signal }) => {
+    send({ type: 'started' });
+    const result = await aiService.sendMessage(body.conversationId, body.message, {
+      signal,
+      onDelta: (delta) => send({ type: 'delta', delta })
+    });
+    send({ type: 'result', ...result });
+  });
+}
+
+async function streamAiResponse(request, response, run) {
+  const send = startNdjson(response);
+  const controller = new AbortController();
+  const abort = () => {
+    if (!response.writableEnded) controller.abort();
+  };
+  request.once('aborted', abort);
+  response.once('close', abort);
+  try {
+    await run({ send, signal: controller.signal });
+  } catch (error) {
+    send({ type: 'error', error: error.message || 'AI request failed' });
+  } finally {
+    request.removeListener('aborted', abort);
+    response.end();
+  }
+}
+
+function authorizeAiRequest({ request, response, aiToken }) {
+  assertLocalAiRequest(request);
+  if (request.headers['x-review-markdown-token'] !== aiToken) {
+    throw httpError('Invalid AI request token', 403);
+  }
+  response.setHeader('Cache-Control', 'no-store');
+}
+
+function assertLocalAiRequest(request) {
+  const host = request.headers.host;
+  let hostUrl;
+  try {
+    hostUrl = new URL(`http://${host}`);
+  } catch {
+    throw httpError('Invalid host', 403);
+  }
+  if (!['localhost', '127.0.0.1', '[::1]', '::1'].includes(hostUrl.hostname)) {
+    throw httpError('AI endpoints are available on localhost only', 403);
+  }
+  const origin = request.headers.origin;
+  if (origin) {
+    let originUrl;
+    try {
+      originUrl = new URL(origin);
+    } catch {
+      throw httpError('Invalid origin', 403);
+    }
+    if (originUrl.host !== host) throw httpError('Cross-origin AI requests are not allowed', 403);
+  }
 }
 
 async function listFiles({ rootDir, filter, response }) {

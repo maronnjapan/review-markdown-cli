@@ -26,6 +26,16 @@ export function createState() {
     commentsVersion: 0,
     commentSaveFailed: false,
 
+    // Read-only Codex translation and chat
+    sidePane: 'comments',
+    aiStatus: null,
+    aiTarget: null,
+    aiConversations: [],
+    activeConversationId: null,
+    translation: null,
+    translationPrefetch: null,
+    aiAbortController: null,
+
     // Edit mode bookkeeping
     dirtyBlocks: new Set(),
     blockVersions: new Map(),
@@ -45,6 +55,15 @@ export function resetDocumentState(state, filePath) {
   state.currentSelectionTarget = null;
   state.commentsDirty = false;
   state.commentSaveFailed = false;
+  state.sidePane = 'comments';
+  state.aiTarget = null;
+  state.aiConversations = [];
+  state.activeConversationId = null;
+  state.translation = null;
+  state.translationPrefetch?.controller?.abort();
+  state.translationPrefetch = null;
+  state.aiAbortController?.abort();
+  state.aiAbortController = null;
   state.commentsVersion += 1;
   state.dirtyBlocks.clear();
   state.blockVersions.clear();

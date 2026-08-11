@@ -32,7 +32,7 @@ export async function readReview(rootDir, relativeFile) {
     const parsed = JSON.parse(raw);
     return {
       targetFile,
-      comments: Array.isArray(parsed.comments) ? parsed.comments : [],
+      comments: Array.isArray(parsed.comments) ? parsed.comments.map(withCommentStatus) : [],
       updatedAt: parsed.updatedAt
     };
   } catch (error) {
@@ -49,7 +49,7 @@ export async function writeReview(rootDir, relativeFile, comments) {
     targetFile,
     updatedAt: new Date().toISOString(),
     comments: comments.map((comment) => ({
-      ...comment,
+      ...withCommentStatus(comment),
       id: comment.id || createCommentId(),
       createdAt: comment.createdAt || new Date().toISOString()
     }))
@@ -94,6 +94,14 @@ export function createCommentId() {
   return `comment-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function withCommentStatus(comment) {
+  return {
+    ...comment,
+    // Reviews written before statuses were introduced are still actionable.
+    status: comment?.status === 'resolved' ? 'resolved' : 'open'
+  };
+}
+
 export function buildReviewMarkdown(review) {
   const comments = Array.isArray(review.comments) ? review.comments : [];
   const documentComments = comments.filter((comment) => comment.type === 'document');
@@ -118,6 +126,7 @@ function appendCommentGroup(lines, title, comments, renderer) {
   lines.push(`## ${title}`, '');
   comments.forEach((comment, index) => {
     lines.push(`### コメント${index + 1}`, '');
+    lines.push(`状態: ${comment.status === 'resolved' ? '解決済み' : '未解決'}`, '');
     lines.push(...renderer(comment));
     lines.push('');
   });

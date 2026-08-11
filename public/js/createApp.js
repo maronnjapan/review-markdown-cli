@@ -1,7 +1,14 @@
 import { api as defaultApi } from './api.js';
+import { createAiController } from './ai.js';
 import { createAutosave } from './autosave.js';
 import { renderCommentHighlights } from './commentAnchors.js';
-import { copyCommentTarget, createCommentDialog, newComment, renderCommentList } from './comments.js';
+import {
+  copyCommentTarget,
+  createCommentDialog,
+  newComment,
+  renderCommentList,
+  statusForComment
+} from './comments.js';
 import { renderDiagrams } from './diagrams.js';
 import { queryRefs } from './dom.js';
 import { createEditor } from './editor.js';
@@ -45,12 +52,14 @@ export function createApp(document, { api = defaultApi } = {}) {
     state,
     onError: (message) => toaster.error(message)
   });
+  const ai = createAiController({ refs, state, api, toaster });
 
   let pendingAnchor = '';
   let pendingDeleteId = null;
 
   function start() {
     bindGlobalEvents();
+    ai.prepare();
     return route();
   }
 
@@ -121,6 +130,7 @@ export function createApp(document, { api = defaultApi } = {}) {
     refs.documentTitle.textContent = filePath;
     setCommentStatus('idle', 'コメントは自動保存されます。');
     content.innerHTML = '<p class="muted">Markdownをレンダリング中...</p>';
+    ai.showPane('comments');
     renderComments();
 
     try {
@@ -129,6 +139,7 @@ export function createApp(document, { api = defaultApi } = {}) {
       adoptSavedDocument(data);
       renderCommentMode();
       updateModeControls();
+      ai.loadDocument();
     } catch (error) {
       content.innerHTML = `<p class="load-error">このファイルを開けませんでした: ${escapeText(error.message)}</p>`;
       toaster.error(`このファイルを開けませんでした: ${error.message}`);
@@ -170,54 +181,131 @@ export function createApp(document, { api = defaultApi } = {}) {
 
   function addCommentAffordance(element, type, label) {
     element.classList.add('review-target');
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'inline-comment-button';
-    button.textContent = label;
-    button.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const text = targetTextOf(element).trim();
-      dialog.open({
-        type,
-        selectedText: text,
-        targetText: text,
-        heading: type === 'section' ? text : undefined,
-        headingPath: collectHeadingPath(content, element)
+    element.append(
+      createTargetAction('inline-translate-button', '翻訳', (target) => ai.translate(target)),
+      createTargetAction('inline-ai-button', 'AIに質問', (target) => ai.ask(target)),
+      createTargetAction(
+        'inline-comment-button',
+        label,
+        (target) => dialog.open(target),
+        () => buildCommentElementTarget(element, type)
+      )
+    );
+
+    function createTargetAction(className, text, action, buildTarget = () => buildElementTarget(element, type)) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `${className} inline-target-action`;
+      button.textContent = text;
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        action(buildTarget());
       });
-    });
-    element.append(button);
+      return button;
+    }
+  }
+
+  function buildCommentElementTarget(element, type) {
+    const text = targetTextOf(element).trim();
+    return {
+      type,
+      selectedText: text,
+      targetText: text,
+      heading: type === 'section' ? text : undefined,
+      headingPath: collectHeadingPath(content, element)
+    };
+  }
+
+  function buildElementTarget(element, type) {
+    const nodes = type === 'section' ? sectionNodes(element) : [element];
+    const selectedText = nodes.map((node) => targetTextOf(node).trim()).filter(Boolean).join('\n\n');
+    const context = contextAroundNodes(nodes);
+    return {
+      type,
+      selectedText,
+      targetText: selectedText,
+      heading: type === 'section' ? targetTextOf(element).trim() : undefined,
+      headingPath: collectHeadingPath(content, element),
+      contextBefore: context.before,
+      contextAfter: context.after
+    };
+  }
+
+  function sectionNodes(heading) {
+    const nodes = [heading];
+    const level = Number(heading.tagName.slice(1));
+    let next = heading.nextElementSibling;
+    while (next) {
+      if (/^H[1-6]$/.test(next.tagName) && Number(next.tagName.slice(1)) <= level) break;
+      nodes.push(next);
+      next = next.nextElementSibling;
+    }
+    return nodes;
+  }
+
+  function contextAroundNodes(nodes) {
+    const beforeRange = document.createRange();
+    beforeRange.selectNodeContents(content);
+    beforeRange.setEndBefore(nodes[0]);
+    const afterRange = document.createRange();
+    afterRange.selectNodeContents(content);
+    afterRange.setStartAfter(nodes.at(-1));
+    return {
+      before: cleanRangeText(beforeRange).slice(-SELECTION_CONTEXT_LENGTH).trim(),
+      after: cleanRangeText(afterRange).slice(0, SELECTION_CONTEXT_LENGTH).trim()
+    };
+  }
+
+  function cleanRangeText(range) {
+    const fragment = range.cloneContents();
+    fragment.querySelectorAll?.('.inline-target-action').forEach((button) => button.remove());
+    const wrapper = document.createElement('div');
+    wrapper.append(fragment);
+    return wrapper.innerText || wrapper.textContent || '';
   }
 
   function handleSelectionChange() {
     const selection = window.getSelection();
-    const insideDocument = selection && !selection.isCollapsed && content.contains(selection.anchorNode);
-    state.currentSelectionTarget = state.mode === 'comment' && insideDocument ? buildSelectionTarget(selection) : null;
+    const range = selection && !selection.isCollapsed && selection.rangeCount > 0
+      ? selection.getRangeAt(0)
+      : null;
+    const insideDocument = range
+      && content.contains(selection.anchorNode)
+      && content.contains(selection.focusNode)
+      && content.contains(range.commonAncestorContainer);
+    state.currentSelectionTarget = state.mode === 'comment' && insideDocument
+      ? buildSelectionTarget(selection, range)
+      : null;
 
     if (!state.currentSelectionTarget) {
       refs.selectionToolbar.classList.add('hidden');
       return;
     }
-    const rect = selection.getRangeAt(0).getBoundingClientRect();
+    ai.prefetchTranslation(state.currentSelectionTarget);
+    const rect = range.getBoundingClientRect();
     refs.selectionToolbar.style.left = `${rect.left + window.scrollX}px`;
     refs.selectionToolbar.style.top = `${rect.bottom + window.scrollY + 8}px`;
     refs.selectionToolbar.classList.remove('hidden');
   }
 
-  function buildSelectionTarget(selection) {
+  function buildSelectionTarget(selection, range) {
     const selectedText = selection.toString().trim();
     if (!selectedText) return null;
-    const anchorNode = selection.anchorNode;
-    const container = anchorNode.nodeType === 3 ? anchorNode.parentElement : anchorNode;
-    const fullText = content.innerText;
-    const index = fullText.indexOf(selectedText);
-    const after = index + selectedText.length;
+    const containerNode = range.commonAncestorContainer;
+    const containerElement = containerNode.nodeType === 3 ? containerNode.parentElement : containerNode;
+    const beforeRange = document.createRange();
+    beforeRange.selectNodeContents(content);
+    beforeRange.setEnd(range.startContainer, range.startOffset);
+    const afterRange = document.createRange();
+    afterRange.selectNodeContents(content);
+    afterRange.setStart(range.endContainer, range.endOffset);
     return {
       type: 'text-selection',
       selectedText,
-      contextBefore: index > -1 ? fullText.slice(Math.max(0, index - SELECTION_CONTEXT_LENGTH), index).trim() : '',
-      contextAfter: index > -1 ? fullText.slice(after, after + SELECTION_CONTEXT_LENGTH).trim() : '',
-      headingPath: collectHeadingPath(content, container)
+      contextBefore: cleanRangeText(beforeRange).slice(-SELECTION_CONTEXT_LENGTH).trim(),
+      contextAfter: cleanRangeText(afterRange).slice(0, SELECTION_CONTEXT_LENGTH).trim(),
+      headingPath: collectHeadingPath(content, containerElement)
     };
   }
 
@@ -246,6 +334,16 @@ export function createApp(document, { api = defaultApi } = {}) {
         },
         onRepeat(index) {
           dialog.open(copyCommentTarget(state.comments[index]));
+        },
+        onToggleStatus(index) {
+          const comment = state.comments[index];
+          if (!comment) return;
+          const wasResolved = statusForComment(comment) === 'resolved';
+          comment.status = wasResolved ? 'open' : 'resolved';
+          pendingDeleteId = null;
+          renderComments();
+          markCommentsDirty();
+          toaster.info(wasResolved ? 'コメントを未解決に戻しました。' : 'コメントを解決済みにしました。');
         },
         onRequestDelete(index) {
           pendingDeleteId = state.comments[index]?.id ?? null;
@@ -354,6 +452,8 @@ export function createApp(document, { api = defaultApi } = {}) {
     refs.editorToolbar.classList.toggle('hidden', !editing);
     refs.editorSaveRow.classList.toggle('hidden', !editing);
     refs.documentCommentButton.disabled = editing;
+    refs.documentTranslateButton.disabled = editing;
+    refs.documentAiButton.disabled = editing;
     refs.reviewView.classList.toggle('editing-mode', editing);
     if (!editing) editor.setStatus('saved', '保存済み');
   }
@@ -404,6 +504,8 @@ export function createApp(document, { api = defaultApi } = {}) {
       navigateBack();
     });
     refs.documentCommentButton.addEventListener('click', () => dialog.open({ type: 'document' }));
+    refs.documentTranslateButton.addEventListener('click', () => ai.translate({ type: 'document' }));
+    refs.documentAiButton.addEventListener('click', () => ai.ask({ type: 'document' }));
     refs.saveButton.addEventListener('click', () => commentSaves.run());
     refs.exportButton.addEventListener('click', exportReviewMarkdown);
     refs.commentModeButton.addEventListener('click', () => setMode('comment'));
@@ -411,6 +513,14 @@ export function createApp(document, { api = defaultApi } = {}) {
     refs.selectionToolbarButton.addEventListener('click', () => {
       refs.selectionToolbar.classList.add('hidden');
       if (state.currentSelectionTarget) dialog.open(state.currentSelectionTarget);
+    });
+    refs.selectionTranslateButton.addEventListener('click', () => {
+      refs.selectionToolbar.classList.add('hidden');
+      if (state.currentSelectionTarget) ai.translate(state.currentSelectionTarget);
+    });
+    refs.selectionAiButton.addEventListener('click', () => {
+      refs.selectionToolbar.classList.add('hidden');
+      if (state.currentSelectionTarget) ai.ask(state.currentSelectionTarget);
     });
   }
 

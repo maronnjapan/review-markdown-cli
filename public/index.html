@@ -29,6 +29,8 @@
               </div>
               <span class="mode-shortcut" title="コメント／編集を切り替え">Ctrl/⌘+Shift+E</span>
               <button id="document-comment-button" type="button">文書全体にコメント</button>
+              <button id="document-translate-button" type="button">文書全体を翻訳</button>
+              <button id="document-ai-button" type="button">文書全体をAIに相談</button>
             </div>
           </div>
           <h2 id="document-title"></h2>
@@ -58,23 +60,63 @@
           <div id="markdown-content" class="markdown-body znc"></div>
         </article>
         <aside class="comments-pane card">
-          <div class="comments-header">
-            <div>
-              <p class="eyebrow">Review comments</p>
-              <h2>コメント <span id="comment-count" class="comment-count">0</span></h2>
-            </div>
-            <button id="save-button" type="button" title="自動保存を待たずにすぐ保存します">今すぐ保存</button>
+          <div class="side-pane-tabs" role="tablist" aria-label="サイドパネル">
+            <button id="comments-tab-button" class="active" type="button" role="tab" aria-selected="true">コメント</button>
+            <button id="ai-tab-button" type="button" role="tab" aria-selected="false">AI</button>
           </div>
-          <p id="save-status" class="save-status" aria-live="polite"></p>
-          <button id="export-button" type="button" class="wide-button">レビューMarkdownを出力</button>
-          <textarea id="export-output" class="export-output" readonly hidden></textarea>
-          <div id="comments-list" class="comments-list"></div>
+          <section id="comments-panel">
+            <div class="comments-header">
+              <div>
+                <p class="eyebrow">Review comments</p>
+                <h2>コメント <span id="comment-count" class="comment-count">0</span></h2>
+              </div>
+              <button id="save-button" type="button" title="自動保存を待たずにすぐ保存します">今すぐ保存</button>
+            </div>
+            <p id="save-status" class="save-status" aria-live="polite"></p>
+            <button id="export-button" type="button" class="wide-button">レビューMarkdownを出力</button>
+            <textarea id="export-output" class="export-output" readonly hidden></textarea>
+            <div id="comments-list" class="comments-list"></div>
+          </section>
+          <section id="ai-panel" class="ai-panel hidden" aria-live="polite">
+            <div class="ai-header">
+              <div>
+                <p class="eyebrow">Read-only Codex</p>
+                <h2>翻訳・AIチャット</h2>
+              </div>
+              <span id="ai-provider-status" class="ai-provider-status">準備中</span>
+            </div>
+            <div class="ai-conversation-controls">
+              <select id="ai-conversation-select" aria-label="保存された会話">
+                <option value="">新しい会話</option>
+              </select>
+              <button id="ai-new-conversation" type="button">新規</button>
+              <button id="ai-delete-conversation" type="button" disabled>削除</button>
+            </div>
+            <section id="ai-target" class="ai-target hidden">
+              <span id="ai-target-type" class="target-badge"></span>
+              <p id="ai-target-path" class="ai-target-path"></p>
+              <blockquote id="ai-target-text"></blockquote>
+            </section>
+            <section id="translation-result" class="translation-result hidden"></section>
+            <div id="ai-messages" class="ai-messages">
+              <p class="muted">文章を選択して「AIに質問」、または文書全体について相談できます。</p>
+            </div>
+            <form id="ai-chat-form" class="ai-chat-form">
+              <textarea id="ai-chat-input" rows="3" placeholder="選択した文章について質問する"></textarea>
+              <div class="ai-chat-actions">
+                <button id="ai-stop-button" class="hidden" type="button">停止</button>
+                <button id="ai-send-button" type="submit">送信</button>
+              </div>
+            </form>
+          </section>
         </aside>
       </section>
     </main>
 
     <div id="selection-toolbar" class="selection-toolbar hidden">
-      <button type="button">選択範囲にコメント</button>
+      <button id="selection-translate-button" type="button">翻訳</button>
+      <button id="selection-ai-button" type="button">AIに質問</button>
+      <button id="selection-comment-button" type="button">コメント</button>
     </div>
 
     <dialog id="comment-dialog" aria-labelledby="dialog-title">

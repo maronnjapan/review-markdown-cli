@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { assertTargetDirectory, parseArgs, USAGE } from '../src/cli.js';
-import { createServer } from '../src/server.js';
+import { createServer, listenOnAvailablePort } from '../src/server.js';
 
 const options = readOptions();
 if (options.help) {
@@ -9,17 +9,20 @@ if (options.help) {
 }
 
 const { app, rootDir, filter } = createServer(options.targetDir, options);
-const server = app.listen(options.port, () => {
-  const url = `http://localhost:${options.port}`;
-  console.log(`Markdown Review is serving ${rootDir}`);
-  if (filter.include.length) console.log(`  include: ${filter.include.join(', ')}`);
-  if (filter.exclude.length) console.log(`  exclude: ${filter.exclude.join(', ')}`);
-  console.log(`Open ${url}`);
-  if (options.open) openBrowser(url);
-});
+const { server, port } = await startServer();
+const url = `http://localhost:${port}`;
+
+console.log(`Markdown Review is serving ${rootDir}`);
+if (filter.include.length) console.log(`  include: ${filter.include.join(', ')}`);
+if (filter.exclude.length) console.log(`  exclude: ${filter.exclude.join(', ')}`);
+if (port !== options.port) {
+  console.log(`Port ${options.port} is already in use; using ${port} instead.`);
+}
+console.log(`Open ${url}`);
+if (options.open) openBrowser(url);
 
 server.on('error', (error) => {
-  console.error(`Error: failed to start server on port ${options.port}: ${error.message}`);
+  console.error(`Error: server failed on port ${port}: ${error.message}`);
   process.exit(1);
 });
 
@@ -37,6 +40,15 @@ function readOptions() {
     console.error(`Error: ${error.message}`);
     console.error(`\n${USAGE}`);
     return process.exit(1);
+  }
+}
+
+async function startServer() {
+  try {
+    return await listenOnAvailablePort(app, options.port);
+  } catch (error) {
+    console.error(`Error: failed to start server: ${error.message}`);
+    process.exit(1);
   }
 }
 

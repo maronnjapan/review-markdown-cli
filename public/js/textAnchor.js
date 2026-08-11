@@ -48,7 +48,7 @@ export function contextAroundNode(root, node) {
  */
 export function targetTextOf(element) {
   const clone = element.cloneNode(true);
-  clone.querySelectorAll('.inline-comment-button').forEach((button) => button.remove());
+  clone.querySelectorAll('.inline-target-action').forEach((button) => button.remove());
   return clone.textContent || '';
 }
 

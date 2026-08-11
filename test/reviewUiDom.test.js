@@ -91,6 +91,175 @@ test('the comment dialog names its target, and a link outside the root reports a
   assert.match(document.querySelector('#toast-region').textContent, /レビュー対象ディレクトリの外/);
 });
 
+test('paragraph translation and chat use the same read-only target without leaking UI labels', async (t) => {
+  const markdown = '# Guide\n\nClick this button to run the program.\n';
+  const requests = [];
+  const conversation = {
+    id: 'conversation-ui-test',
+    documentPath: 'guide.md',
+    title: 'run the program',
+    target: { type: 'paragraph', selectedText: 'Click this button to run the program.' },
+    messages: []
+  };
+  const { document } = await startApp(t, 'http://localhost/#/review/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'guide.md', comments: [] },
+      reviewFile: '.review/guide.md.review.json'
+    }),
+    '/api/ai/status': () => ({
+      token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model', effort: 'low'
+    }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/translate': (_input, options) => {
+      requests.push(['translate', JSON.parse(options.body), options.headers]);
+      return ndjsonResponse([
+        { type: 'started' },
+        {
+          type: 'result',
+          translation: {
+            kind: 'passage',
+            result: { translation: 'このボタンをクリックしてプログラムを実行します。', notes: [] }
+          }
+        }
+      ]);
+    },
+    '/api/ai/conversation': (_input, options) => {
+      requests.push(['conversation', JSON.parse(options.body), options.headers]);
+      return { conversation };
+    },
+    '/api/ai/message': (_input, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(['message', body, options.headers]);
+      return ndjsonResponse([
+        { type: 'started' },
+        { type: 'delta', delta: 'ここでは実行する、' },
+        {
+          type: 'result',
+          conversation: {
+            ...conversation,
+            messages: [
+              { id: 'user-1', role: 'user', content: body.message },
+              { id: 'assistant-1', role: 'assistant', content: 'ここでは実行する、という意味です。' }
+            ]
+          },
+          message: { id: 'assistant-1', role: 'assistant', content: 'ここでは実行する、という意味です。' }
+        }
+      ]);
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-translate-button'));
+
+  const paragraph = document.querySelector('#markdown-content p');
+  paragraph.querySelector('.inline-translate-button').click();
+  await waitFor(() => document.querySelector('.translated-passage'));
+  assert.equal(document.querySelector('.translated-passage').textContent, 'このボタンをクリックしてプログラムを実行します。');
+  assert.equal(requests[0][1].target.selectedText, 'Click this button to run the program.');
+  assert.equal(requests[0][2]['X-Review-Markdown-Token'], 'ui-ai-token');
+
+  paragraph.querySelector('.inline-ai-button').click();
+  const input = document.querySelector('#ai-chat-input');
+  input.value = 'run はここではどういう意味？';
+  document.querySelector('#ai-chat-form').requestSubmit();
+  await waitFor(() => document.querySelectorAll('.ai-message').length === 2);
+
+  assert.equal(requests.find(([type]) => type === 'conversation')[1].target.selectedText, 'Click this button to run the program.');
+  assert.equal(requests.find(([type]) => type === 'message')[1].message, 'run はここではどういう意味？');
+  assert.match(document.querySelector('#ai-messages').textContent, /ここでは実行する、という意味です/);
+  assert.equal(document.querySelector('#ai-panel').textContent.includes('本文に反映'), false);
+});
+
+test('a repeated text selection keeps the context of the range that was actually selected', async (t) => {
+  const markdown = '# Repeated\n\nFirst run here.\n\nSecond run here.\n';
+  const savedRequests = [];
+  const { document, window } = await startApp(t, 'http://localhost/#/review/repeated.md', {
+    '/api/file': async () => ({
+      path: 'repeated.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'repeated.md', comments: [] },
+      reviewFile: '.review/repeated.md.review.json'
+    }),
+    '/api/review': (_input, options) => {
+      const body = JSON.parse(options.body);
+      if (body.path === 'repeated.md') savedRequests.push(body);
+      return {
+        review: { targetFile: body.path, comments: body.comments },
+        reviewFile: '.review/repeated.md.review.json'
+      };
+    }
+  });
+  await waitFor(() => document.querySelectorAll('#markdown-content p').length === 2);
+
+  window.Range.prototype.getBoundingClientRect = () => ({ left: 10, bottom: 20 });
+  const secondText = document.querySelectorAll('#markdown-content p')[1].firstChild;
+  const range = document.createRange();
+  range.setStart(secondText, 7);
+  range.setEnd(secondText, 10);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+  document.dispatchEvent(new window.Event('selectionchange'));
+  document.querySelector('#selection-comment-button').click();
+
+  const input = document.querySelector('#comment-input');
+  input.value = 'Second の run を確認';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  document.querySelector('#comment-dialog form').requestSubmit();
+  await waitFor(() => savedRequests.length === 1, 1600);
+
+  const target = savedRequests[0].comments[0];
+  assert.equal(target.selectedText, 'run');
+  assert.match(target.contextBefore, /Second$/);
+  assert.doesNotMatch(target.contextBefore, /First$/);
+  assert.match(target.contextAfter, /^here/);
+});
+
+test('comments are separated by status and can be resolved or reopened', async (t) => {
+  const markdown = '# Status review\n';
+  const comments = [
+    { id: 'comment-open', type: 'document', status: 'open', comment: '未対応の指摘' },
+    { id: 'comment-resolved', type: 'document', status: 'resolved', comment: '対応済みの指摘' }
+  ];
+  const savedRequests = [];
+  const { document } = await startApp(t, 'http://localhost/#/review/status.md', {
+    '/api/file': async () => ({
+      path: 'status.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'status.md', comments },
+      reviewFile: '.review/status.md.review.json'
+    }),
+    '/api/review': async (_input, options) => {
+      const body = JSON.parse(options.body);
+      if (body.path === 'status.md') savedRequests.push(body);
+      return {
+        review: { targetFile: body.path, comments: body.comments },
+        reviewFile: '.review/status.md.review.json'
+      };
+    }
+  });
+  await waitFor(() => document.querySelector('[data-comment-id="comment-open"]'));
+
+  assert.equal(document.querySelector('.comment-group[data-status="open"] .comment-group-count').textContent, '1');
+  assert.equal(document.querySelector('.comment-group[data-status="resolved"] .comment-group-count').textContent, '1');
+  assert.match(document.querySelector('[data-comment-id="comment-open"]').textContent, /未解決/);
+  assert.match(document.querySelector('[data-comment-id="comment-resolved"]').textContent, /解決済み/);
+
+  document.querySelector('[data-comment-id="comment-open"] [data-action="onToggleStatus"]').click();
+  assert.equal(document.querySelector('.comment-group[data-status="open"]'), null);
+  assert.equal(document.querySelector('.comment-group[data-status="resolved"] .comment-group-count').textContent, '2');
+  await waitFor(() => savedRequests.length === 1, 1600);
+  assert.equal(savedRequests[0].comments[0].status, 'resolved');
+
+  document.querySelector('[data-comment-id="comment-open"] [data-action="onToggleStatus"]').click();
+  assert.equal(document.querySelector('.comment-group[data-status="open"] .comment-group-count').textContent, '1');
+  await waitFor(() => savedRequests.length === 2, 1600);
+  assert.equal(savedRequests[1].comments[0].status, 'open');
+});
+
 async function renderViews(markdown) {
   const options = {
     resolveLink: (href) => resolveDocumentLink(href, { relativeFile: 'docs/note.md' })
@@ -114,11 +283,13 @@ async function startApp(t, url, responses) {
   dialog.showModal = () => { dialog.open = true; };
   dialog.close = () => { dialog.open = false; };
 
-  globalThis.fetch = async (input) => {
+  globalThis.fetch = async (input, options = {}) => {
     const requested = String(input).split('?')[0];
     const handler = responses[requested];
     if (!handler) throw new Error(`Unexpected fetch: ${input}`);
-    return new Response(JSON.stringify(await handler()), {
+    const result = await handler(input, options);
+    if (result instanceof Response) return result;
+    return new Response(JSON.stringify(result), {
       status: 200,
       headers: { 'Content-Type': 'application/json' }
     });
@@ -127,6 +298,13 @@ async function startApp(t, url, responses) {
   t.after(() => window.close());
   await import(`${pathToFileURL(path.join(projectDir, 'public', 'app.js')).href}?ui-test=${Date.now()}-${Math.random()}`);
   return { document: window.document, window };
+}
+
+function ndjsonResponse(events) {
+  return new Response(`${events.map((event) => JSON.stringify(event)).join('\n')}\n`, {
+    status: 200,
+    headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8' }
+  });
 }
 
 function installDomGlobals(window) {

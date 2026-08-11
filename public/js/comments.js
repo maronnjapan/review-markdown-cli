@@ -14,6 +14,11 @@ const TYPE_HINTS = {
   'text-selection': '選択した文字列に対する指摘として保存します。'
 };
 
+const STATUS_LABELS = {
+  open: '未解決',
+  resolved: '解決済み'
+};
+
 export function labelForType(type) {
   return TYPE_LABELS[type] || type || 'コメント';
 }
@@ -30,18 +35,29 @@ export function describeTarget(target) {
   return labelForType(target.type);
 }
 
+export function statusForComment(comment) {
+  return comment?.status === 'resolved' ? 'resolved' : 'open';
+}
+
 /** A fresh comment aimed at the same place as an existing one. */
 export function copyCommentTarget(comment) {
   const target = { ...comment };
   delete target.id;
   delete target.comment;
   delete target.createdAt;
+  delete target.status;
   delete target.targetDetached;
   return target;
 }
 
 export function newComment(target, text) {
-  return { id: createId(), ...target, comment: text, createdAt: new Date().toISOString() };
+  return {
+    id: createId(),
+    ...target,
+    comment: text,
+    status: 'open',
+    createdAt: new Date().toISOString()
+  };
 }
 
 /**
@@ -112,7 +128,13 @@ export function renderCommentList(container, { comments, mode, pendingDeleteId, 
   const readOnly = mode === 'edit';
   container.innerHTML = comments.length === 0
     ? '<p class="muted">まだコメントはありません。</p>'
-    : comments.map((comment, index) => commentCardHtml(comment, index, readOnly, pendingDeleteId)).join('');
+    : ['open', 'resolved'].map((status) => commentGroupHtml(
+      status,
+      comments.map((comment, index) => ({ comment, index }))
+        .filter(({ comment }) => statusForComment(comment) === status),
+      readOnly,
+      pendingDeleteId
+    )).join('');
 
   container.querySelectorAll('textarea[data-comment-index]').forEach((textarea) => {
     textarea.addEventListener('input', () => handlers.onEdit(Number(textarea.dataset.commentIndex), textarea.value));
@@ -123,26 +145,45 @@ export function renderCommentList(container, { comments, mode, pendingDeleteId, 
   });
 }
 
+function commentGroupHtml(status, entries, readOnly, pendingDeleteId) {
+  if (entries.length === 0) return '';
+  return `
+    <section class="comment-group" data-status="${status}" aria-label="${STATUS_LABELS[status]}のコメント">
+      <div class="comment-group-header">
+        <h3>${STATUS_LABELS[status]}</h3>
+        <span class="comment-group-count">${entries.length}</span>
+      </div>
+      <div class="comment-group-items">
+        ${entries.map(({ comment, index }) => commentCardHtml(comment, index, readOnly, pendingDeleteId)).join('')}
+      </div>
+    </section>`;
+}
+
 function commentCardHtml(comment, index, readOnly, pendingDeleteId) {
   const disabled = readOnly ? ' disabled' : '';
   const confirming = comment.id && comment.id === pendingDeleteId;
+  const status = statusForComment(comment);
   return `
-    <article class="comment-card${comment.targetDetached ? ' detached' : ''}${confirming ? ' confirming' : ''}" data-comment-id="${escapeHtml(comment.id || '')}">
+    <article class="comment-card${comment.targetDetached ? ' detached' : ''}${confirming ? ' confirming' : ''}" data-comment-id="${escapeHtml(comment.id || '')}" data-status="${status}">
       <div class="comment-meta">
-        <strong><span class="target-badge" data-type="${escapeHtml(comment.type || '')}">${escapeHtml(labelForType(comment.type))}</span> ${index + 1}</strong>
-        <span>${escapeHtml(formatTimestamp(comment.createdAt))}</span>
+        <div class="comment-meta-labels">
+          <strong><span class="target-badge" data-type="${escapeHtml(comment.type || '')}">${escapeHtml(labelForType(comment.type))}</span> ${index + 1}</strong>
+          <span class="comment-status" data-status="${status}">${STATUS_LABELS[status]}</span>
+        </div>
+        <time>${escapeHtml(formatTimestamp(comment.createdAt))}</time>
       </div>
       <p class="target-summary">${escapeHtml(describeTarget(comment))}</p>
       ${comment.targetDetached ? '<span class="detached-label">編集後の対象を特定できません</span>' : ''}
       <textarea data-comment-index="${index}" rows="4"${disabled}>${escapeHtml(comment.comment || '')}</textarea>
-      ${confirming ? deleteConfirmHtml(index) : actionsHtml(index, disabled)}
+      ${confirming ? deleteConfirmHtml(index) : actionsHtml(index, disabled, status)}
     </article>`;
 }
 
-function actionsHtml(index, disabled) {
+function actionsHtml(index, disabled, status) {
   return `
     <div class="comment-actions">
       <button type="button" data-action="onRepeat" data-index="${index}"${disabled}>同じ対象に追加</button>
+      <button type="button" class="status-action" data-action="onToggleStatus" data-index="${index}"${disabled}>${status === 'resolved' ? '未解決に戻す' : '解決済みにする'}</button>
       <button type="button" data-action="onRequestDelete" data-index="${index}"${disabled}>削除</button>
     </div>`;
 }

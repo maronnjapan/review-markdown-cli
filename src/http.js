@@ -37,6 +37,17 @@ export function sendBuffer(response, data, headers, headOnly) {
   response.end(headOnly ? undefined : data);
 }
 
+export function startNdjson(response) {
+  response.writeHead(200, {
+    'Content-Type': 'application/x-ndjson; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff'
+  });
+  return (event) => {
+    if (!response.writableEnded && !response.destroyed) response.write(`${JSON.stringify(event)}\n`);
+  };
+}
+
 export function sendError(response, error) {
   const statusCode = error.statusCode || (error.code === 'ENOENT' ? 404 : 500);
   sendJson(response, { error: error.message || 'Internal Server Error' }, statusCode);
