@@ -10,7 +10,7 @@ const MAX_MESSAGE_CHARS = 12_000;
 const TERM_SCHEMA = {
   type: 'object',
   properties: {
-    source: { type: 'string' },
+    contextualMeaning: { type: 'string' },
     meanings: {
       type: 'array',
       items: {
@@ -23,10 +23,9 @@ const TERM_SCHEMA = {
         additionalProperties: false
       }
     },
-    contextualMeaning: { type: 'string' },
     explanation: { type: 'string' }
   },
-  required: ['source', 'meanings', 'contextualMeaning', 'explanation'],
+  required: ['contextualMeaning', 'meanings', 'explanation'],
   additionalProperties: false
 };
 
@@ -219,7 +218,7 @@ function isTerm(text) {
 
 function translationPrompt(target, term) {
   const task = term
-    ? 'List up to four materially different Japanese meanings, then choose the best meaning in this context.'
+    ? 'Put the best Japanese meaning for this context in contextualMeaning first. Then list up to four materially different meanings and briefly explain the contextual choice.'
     : 'Translate the selected English passage naturally into Japanese. Add only indispensable nuance notes.';
   return [
     'Translate English to Japanese. Respond only with the requested JSON object.',

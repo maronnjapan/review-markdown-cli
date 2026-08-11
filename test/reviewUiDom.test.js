@@ -171,6 +171,81 @@ test('paragraph translation and chat use the same read-only target without leaki
   assert.equal(document.querySelector('#ai-panel').textContent.includes('本文に反映'), false);
 });
 
+test('finishing a text selection prefetches its translation and streams the contextual meaning first', async (t) => {
+  const markdown = '# Guide\n\nClick to run the program.\n';
+  const stream = controlledNdjsonResponse();
+  let translationRequests = 0;
+  const { document, window } = await startApp(t, 'http://localhost/#/review/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'guide.md', comments: [] },
+      reviewFile: '.review/guide.md.review.json'
+    }),
+    '/api/ai/status': () => ({
+      token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model', effort: 'low'
+    }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/translate': () => {
+      translationRequests += 1;
+      return stream.response;
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-translate-button'));
+
+  window.Range.prototype.getBoundingClientRect = () => ({ left: 10, bottom: 20 });
+  document.querySelector('#markdown-content').dispatchEvent(new window.Event('pointerdown'));
+  const text = document.querySelector('#markdown-content p').firstChild;
+  const range = document.createRange();
+  range.setStart(text, 9);
+  range.setEnd(text, 12);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+  document.dispatchEvent(new window.Event('selectionchange'));
+
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(translationRequests, 0, 'dragging through an unfinished selection should not translate');
+
+  document.dispatchEvent(new window.Event('pointerup'));
+  await waitFor(() => translationRequests === 1);
+  assert.equal(document.querySelector('#ai-panel').classList.contains('hidden'), true);
+  const translateButton = document.querySelector('#selection-translate-button');
+  translateButton.click();
+  assert.equal(translationRequests, 1, 'opening a selected translation should reuse its request');
+
+  stream.send({ type: 'started' });
+  stream.send({ type: 'delta', delta: '{"contextualMeaning":"実行する",' });
+
+  await waitFor(() => document.querySelector('.contextual-meaning'));
+  assert.equal(document.querySelector('.contextual-meaning').textContent, '実行する');
+  assert.match(document.querySelector('#translation-result').textContent, /ほかの意味と説明を生成中/);
+  assert.equal(document.querySelector('#translation-result details').hidden, true);
+
+  const meanings = [
+    { translation: '実行する', nuance: 'プログラムを動かす' },
+    { translation: '走る', nuance: '人や動物が移動する' }
+  ];
+  stream.send({ type: 'delta', delta: `"meanings":${JSON.stringify(meanings)},` });
+  await waitFor(() => document.querySelector('#translation-result details').hidden === false);
+  assert.match(document.querySelector('#translation-result details').textContent, /走る/);
+
+  stream.send({ type: 'delta', delta: '"explanation":"program が目的語だからです。"}' });
+  stream.send({
+    type: 'result',
+    translation: {
+      kind: 'term',
+      result: { contextualMeaning: '実行する', meanings, explanation: 'program が目的語だからです。' }
+    }
+  });
+  stream.close();
+
+  await waitFor(() => !document.querySelector('.translation-details-loading'));
+  assert.match(document.querySelector('#translation-result').textContent, /program が目的語だからです/);
+  assert.equal(translationRequests, 1, 'opening the prefetched translation should reuse the active request');
+});
+
 test('a repeated text selection keeps the context of the range that was actually selected', async (t) => {
   const markdown = '# Repeated\n\nFirst run here.\n\nSecond run here.\n';
   const savedRequests = [];
@@ -305,6 +380,28 @@ function ndjsonResponse(events) {
     status: 200,
     headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8' }
   });
+}
+
+function controlledNdjsonResponse() {
+  const encoder = new TextEncoder();
+  let controller;
+  const response = new Response(new ReadableStream({
+    start(streamController) {
+      controller = streamController;
+    }
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8' }
+  });
+  return {
+    response,
+    send(event) {
+      controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+    },
+    close() {
+      controller.close();
+    }
+  };
 }
 
 function installDomGlobals(window) {

@@ -1,5 +1,7 @@
 import { escapeHtml, truncate } from './util.js';
 
+const TRANSLATION_PREFETCH_DELAY_MS = 0;
+
 const TARGET_LABELS = {
   document: '文書全体',
   section: 'セクション',
@@ -8,7 +10,6 @@ const TARGET_LABELS = {
 };
 
 export function createAiController({ refs, state, api, toaster }) {
-  let prefetchTimer = null;
   let preparePromise = null;
 
   bindEvents();
@@ -81,19 +82,23 @@ export function createAiController({ refs, state, api, toaster }) {
     renderTranslation();
 
     const key = targetKey(target);
-    const prefetched = state.translationPrefetch?.key === key
-      ? state.translationPrefetch.promise
+    const prefetch = state.translationPrefetch?.key === key
+      ? state.translationPrefetch
       : null;
+    prefetch?.start();
+    const progress = prefetch?.progress || createTranslationProgress(key);
+    progress.show();
     try {
-      const event = prefetched
-        ? await prefetched
-        : await requestTranslation(target);
+      const event = prefetch
+        ? await prefetch.promise
+        : await requestTranslation(target, undefined, progress.onEvent);
       state.translation = { status: 'ready', ...event.translation };
       renderTranslation();
     } catch (error) {
-      if (error.name === 'AbortError' && prefetched) {
+      if (error.name === 'AbortError' && prefetch) {
         try {
-          const event = await requestTranslation(target);
+          const retryProgress = createTranslationProgress(key);
+          const event = await requestTranslation(target, undefined, retryProgress.onEvent);
           state.translation = { status: 'ready', ...event.translation };
         } catch (retryError) {
           state.translation = { status: 'error', error: retryError.message };
@@ -106,34 +111,107 @@ export function createAiController({ refs, state, api, toaster }) {
   }
 
   function prefetchTranslation(target) {
-    clearTimeout(prefetchTimer);
-    if (!target) return;
-    if (!isShortTarget(target)) {
-      state.translationPrefetch?.controller?.abort();
-      state.translationPrefetch = null;
-      return;
-    }
+    const text = String(target?.selectedText || target?.targetText || '').trim();
+    if (!text) return;
     const key = targetKey(target);
     if (state.translationPrefetch?.key === key) return;
-    state.translationPrefetch?.controller?.abort();
+    state.translationPrefetch?.cancel();
+
     const controller = new AbortController();
+    const progress = createTranslationProgress(key);
+    let resolvePromise;
+    let rejectPromise;
     const promise = new Promise((resolve, reject) => {
-      const abort = () => {
-        clearTimeout(prefetchTimer);
-        reject(Object.assign(new Error('翻訳を中止しました'), { name: 'AbortError' }));
-      };
-      controller.signal.addEventListener('abort', abort, { once: true });
-      prefetchTimer = setTimeout(() => {
-        controller.signal.removeEventListener('abort', abort);
-        requestTranslation(target, controller.signal).then(resolve, reject);
-      }, 80);
+      resolvePromise = resolve;
+      rejectPromise = reject;
     });
-    promise.catch(() => {});
-    state.translationPrefetch = { key, promise, controller };
+    const prefetch = {
+      key,
+      promise,
+      controller,
+      progress,
+      started: false,
+      settled: false,
+      timer: null,
+      start() {
+        if (prefetch.started || prefetch.settled || controller.signal.aborted) return;
+        prefetch.started = true;
+        clearTimeout(prefetch.timer);
+        requestTranslation(target, controller.signal, progress.onEvent).then(
+          (event) => settle(resolvePromise, event),
+          (error) => settle(rejectPromise, error)
+        );
+      },
+      cancel() {
+        if (prefetch.started || prefetch.settled) return false;
+        controller.abort();
+        return true;
+      }
+    };
+
+    function settle(callback, value) {
+      if (prefetch.settled) return;
+      prefetch.settled = true;
+      clearTimeout(prefetch.timer);
+      callback(value);
+    }
+
+    controller.signal.addEventListener('abort', () => {
+      if (!prefetch.started) {
+        settle(rejectPromise, Object.assign(new Error('翻訳を中止しました'), { name: 'AbortError' }));
+      }
+    }, { once: true });
+    prefetch.timer = setTimeout(prefetch.start, TRANSLATION_PREFETCH_DELAY_MS);
+    promise.catch(() => {
+      if (state.translationPrefetch === prefetch) state.translationPrefetch = null;
+    });
+    state.translationPrefetch = prefetch;
   }
 
-  async function requestTranslation(target, signal) {
-    return api.translateWithAi({ path: state.currentPath, target }, { signal });
+  function cancelTranslationPrefetch(target) {
+    const prefetch = state.translationPrefetch;
+    if (!prefetch) return;
+    if (target && prefetch.key !== targetKey(target)) return;
+    if (prefetch.cancel() && state.translationPrefetch === prefetch) {
+      state.translationPrefetch = null;
+    }
+  }
+
+  async function requestTranslation(target, signal, onEvent) {
+    return api.translateWithAi({ path: state.currentPath, target }, { signal, onEvent });
+  }
+
+  function createTranslationProgress(key) {
+    let streamed = '';
+    let lastResult = null;
+
+    function show() {
+      if (!lastResult || targetKey(state.aiTarget || {}) !== key) return;
+      if (['ready', 'error'].includes(state.translation?.status)) return;
+      state.translation = {
+        status: 'streaming',
+        kind: 'term',
+        result: lastResult
+      };
+      renderTranslation();
+    }
+
+    function onEvent(event) {
+      if (event.type !== 'delta') return;
+      streamed += event.delta || '';
+      const contextualMeaning = completeJsonField(streamed, 'contextualMeaning');
+      if (typeof contextualMeaning !== 'string' || !contextualMeaning) return;
+      const meanings = completeJsonField(streamed, 'meanings');
+      const explanation = completeJsonField(streamed, 'explanation');
+      lastResult = {
+        contextualMeaning,
+        ...(Array.isArray(meanings) ? { meanings } : {}),
+        ...(typeof explanation === 'string' ? { explanation } : {})
+      };
+      show();
+    }
+
+    return { onEvent, show };
   }
 
   async function sendMessage() {
@@ -308,16 +386,19 @@ export function createAiController({ refs, state, api, toaster }) {
     refs.aiStopButton.addEventListener('click', () => state.aiAbortController?.abort());
   }
 
-  return { prepare, loadDocument, showPane, ask, translate, prefetchTranslation };
+  return {
+    prepare,
+    loadDocument,
+    showPane,
+    ask,
+    translate,
+    prefetchTranslation,
+    cancelTranslationPrefetch
+  };
 }
 
 function cloneTarget(target) {
   return target ? JSON.parse(JSON.stringify(target)) : null;
-}
-
-function isShortTarget(target) {
-  const text = String(target.selectedText || target.targetText || '');
-  return text.length > 0 && text.length <= 80 && text.split(/\s+/).filter(Boolean).length <= 6;
 }
 
 function targetKey(target) {
@@ -327,6 +408,64 @@ function targetKey(target) {
     target.contextAfter || '',
     target.headingPath || []
   ]);
+}
+
+function completeJsonField(text, field) {
+  const marker = `"${field}"`;
+  const markerIndex = text.indexOf(marker);
+  if (markerIndex < 0) return undefined;
+  const colonIndex = text.indexOf(':', markerIndex + marker.length);
+  if (colonIndex < 0) return undefined;
+  let start = colonIndex + 1;
+  while (/\s/.test(text[start] || '')) start += 1;
+  const end = completeJsonValueEnd(text, start);
+  if (end === null) return undefined;
+  try {
+    return JSON.parse(text.slice(start, end));
+  } catch {
+    return undefined;
+  }
+}
+
+function completeJsonValueEnd(text, start) {
+  const opening = text[start];
+  if (opening === '"') {
+    for (let index = start + 1, escaped = false; index < text.length; index += 1) {
+      const character = text[index];
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === '"') {
+        return index + 1;
+      }
+    }
+    return null;
+  }
+  if (opening !== '[' && opening !== '{') return null;
+
+  const closing = opening === '[' ? ']' : '}';
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+    } else if (character === opening) {
+      depth += 1;
+    } else if (character === closing) {
+      depth -= 1;
+      if (depth === 0) return index + 1;
+    }
+  }
+  return null;
 }
 
 function translationHtml(translation) {
@@ -340,7 +479,8 @@ function translationHtml(translation) {
       <header><h3>この文脈での意味 ${cached}</h3></header>
       <p class="contextual-meaning">${escapeHtml(result.contextualMeaning || '')}</p>
       <p>${escapeHtml(result.explanation || '')}</p>
-      <details${meanings ? '' : ' hidden'}><summary>ほかの意味</summary><ul>${meanings}</ul></details>`;
+      <details${meanings ? '' : ' hidden'}><summary>ほかの意味</summary><ul>${meanings}</ul></details>
+      ${translation.status === 'streaming' ? '<p class="ai-loading translation-details-loading">ほかの意味と説明を生成中…</p>' : ''}`;
   }
   const result = translation.result || {};
   return `

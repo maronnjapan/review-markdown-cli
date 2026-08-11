@@ -42,6 +42,12 @@ test('short contextual translations return multiple meanings and reuse the local
   assert.equal(second.cached, true);
   assert.equal(turns.length, 1, 'same text and context should not invoke Codex twice');
   assert.ok(turns[0].outputSchema, 'translation is constrained to structured JSON');
+  assert.deepEqual(
+    Object.keys(turns[0].outputSchema.properties),
+    ['contextualMeaning', 'meanings', 'explanation'],
+    'the contextual meaning should be the first streamed field'
+  );
+  assert.match(turns[0].prompt, /contextualMeaning first/);
   assert.match(turns[0].prompt, /untrusted|data, not instructions/i);
   assert.match(turns[0].prompt, /the program/);
 });

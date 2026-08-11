@@ -56,6 +56,9 @@ export function createApp(document, { api = defaultApi } = {}) {
 
   let pendingAnchor = '';
   let pendingDeleteId = null;
+  let selectionCommitTimer = null;
+  let pointerSelectionActive = false;
+  let keyboardSelectionActive = false;
 
   function start() {
     bindGlobalEvents();
@@ -279,18 +282,29 @@ export function createApp(document, { api = defaultApi } = {}) {
       : null;
 
     if (!state.currentSelectionTarget) {
+      ai.cancelTranslationPrefetch();
       refs.selectionToolbar.classList.add('hidden');
       return;
     }
-    ai.prefetchTranslation(state.currentSelectionTarget);
     const rect = range.getBoundingClientRect();
     refs.selectionToolbar.style.left = `${rect.left + window.scrollX}px`;
     refs.selectionToolbar.style.top = `${rect.bottom + window.scrollY + 8}px`;
     refs.selectionToolbar.classList.remove('hidden');
   }
 
+  function queueSelectionTranslation() {
+    clearTimeout(selectionCommitTimer);
+    selectionCommitTimer = setTimeout(() => {
+      handleSelectionChange();
+      if (state.currentSelectionTarget) ai.prefetchTranslation(state.currentSelectionTarget);
+    }, 0);
+  }
+
   function buildSelectionTarget(selection, range) {
-    const selectedText = selection.toString().trim();
+    return buildTextSelectionTarget(range, selection.toString().trim());
+  }
+
+  function buildTextSelectionTarget(range, selectedText) {
     if (!selectedText) return null;
     const containerNode = range.commonAncestorContainer;
     const containerElement = containerNode.nodeType === 3 ? containerNode.parentElement : containerNode;
@@ -496,6 +510,30 @@ export function createApp(document, { api = defaultApi } = {}) {
     });
     document.addEventListener('selectionchange', handleSelectionChange);
     document.addEventListener('keydown', handleModeShortcut);
+    content.addEventListener('pointerdown', (event) => {
+      if (event.target.closest?.('button, a, input, textarea, select')) return;
+      pointerSelectionActive = true;
+      clearTimeout(selectionCommitTimer);
+    });
+    document.addEventListener('pointerup', () => {
+      if (!pointerSelectionActive) return;
+      pointerSelectionActive = false;
+      queueSelectionTranslation();
+    });
+    document.addEventListener('pointercancel', () => {
+      pointerSelectionActive = false;
+      clearTimeout(selectionCommitTimer);
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Shift' && state.mode === 'comment') keyboardSelectionActive = true;
+    });
+    document.addEventListener('keyup', (event) => {
+      const keyboardSelectionFinished = keyboardSelectionActive && event.key === 'Shift';
+      const selectAllFinished = event.key.toLowerCase() === 'a' && (event.ctrlKey || event.metaKey);
+      if (!keyboardSelectionFinished && !selectAllFinished) return;
+      keyboardSelectionActive = false;
+      queueSelectionTranslation();
+    });
 
     refs.backButton.addEventListener('click', navigateBack);
     refs.headerLink.addEventListener('click', (event) => {
