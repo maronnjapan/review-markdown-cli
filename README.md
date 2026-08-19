@@ -2,41 +2,57 @@
 
 Markdownファイルをローカルブラウザで読みやすく表示し、レビューコメントの追加と本文の直接編集を行うためのCLIです。
 
-## 使い方
+## インストール
+
+Node.js 20 以上が必要です。グローバルにインストールすると、どのディレクトリからでも `review-markdown` コマンドを実行できます。
 
 ```bash
-npm install
-npm start
+# GitHub から直接インストールする
+npm install -g github:maronnjapan/review-markdown-cli
+
+# npm に公開済みのパッケージからインストールする
+npm install -g review-markdown
 ```
 
-ブラウザで `http://localhost:3000` を開くと、指定ディレクトリ配下のMarkdownファイル一覧が表示されます。
-
-別ディレクトリ配下の Markdown をこのローカル開発版でレビューする場合は、対象ディレクトリでこのパッケージのパスを指定して実行します。
+インストールせずに単発で実行することもできます。
 
 ```bash
-cd /path/to/markdown-project
-npx /path/to/review-markdown-cli .
+npx github:maronnjapan/review-markdown-cli .
+npx review-markdown .
 ```
 
-どこからでも `review-markdown .` と実行したい場合は、開発中のパッケージをリンクします。
+ローカルのクローンから開発版を使う場合は `npm link` でコマンドを登録します。
 
 ```bash
 cd /path/to/review-markdown-cli
-npm link
+npm install
+npm link          # review-markdown コマンドが使えるようになる
+npm unlink -g review-markdown   # 解除する場合
+```
+
+## 使い方
+
+レビューしたいディレクトリで実行します。
+
+```bash
 cd /path/to/markdown-project
 review-markdown .
 ```
 
-npm に `review-markdown` として公開した後は、任意のディレクトリで次の形式でも実行できます。
+ブラウザで `http://localhost:3000` を開くと、指定ディレクトリ配下のMarkdownファイル一覧が表示されます（`--no-open` を付けない限り自動で開きます）。
+
+除外したいディレクトリは `config` コマンドで設定ファイルに保存できます。一度設定すれば、次回以降は `review-markdown .` だけで同じ設定が適用されます。
 
 ```bash
-npx review-markdown .
+review-markdown config add exclude 'drafts/**' node_modules
+review-markdown .
 ```
 
 ## 主な機能
 
 - 対象ディレクトリ配下の Markdown ファイル一覧表示（ディレクトリは既定で折りたたみ）
-- `--include` / `--exclude` によるレビュー対象の絞り込み（ワイルドカード対応）
+- `--include` / `--exclude` と設定ファイルによるレビュー対象の絞り込み（ワイルドカード対応）
+- `review-markdown config` による設定ファイルの読み書き
 - `zenn-markdown-html` による Zenn Markdown のHTMLレンダリング
 - `zenn-content-css` による Zenn と同じ本文スタイル
 - Markdown に書かれた相対パス画像（`./images/foo.png`、`../assets/foo.png`）のローカル表示
@@ -122,21 +138,112 @@ review-markdown . --include 'book/**/*.md'
 review-markdown . --exclude 'tmp,archive,**/node_modules'
 ```
 
-使えるワイルドカードは次のとおりです。
+使えるワイルドカードは次のとおりです。部分一致はこのワイルドカードで表現します。
 
 | 記法 | 意味 | 例 |
 | --- | --- | --- |
-| `*` | スラッシュ以外の0文字以上 | `docs/*.md` |
+| `*` | スラッシュ以外の0文字以上 | `docs/*.md`、`*draft*` |
 | `**` | ディレクトリをまたぐ任意の階層 | `**/draft-*.md` |
 | `?` | 任意の1文字 | `chapter-?.md` |
 | `{a,b}` | いずれかに一致 | `{docs,notes}/**` |
 
 - パターンは対象ディレクトリからの相対パス（`docs/guide/intro.md`）に対して照合します。
 - ディレクトリに一致するパターンは、その配下すべてに一致します（`--exclude drafts` で `drafts/` 以下をすべて除外）。
+- スラッシュを含まないパターンは、どの階層にも一致します（`--exclude drafts` は `book/drafts/` も除外、`--exclude '*.wip.md'` はすべての階層の `*.wip.md` を除外）。
+- 先頭に `/` を付けると、対象ディレクトリ直下だけに一致します（`--exclude /drafts` は `drafts/` だけを除外し、`book/drafts/` は残します）。
 - `--include` を指定した場合は、いずれかに一致するファイルだけがレビュー対象になります。
 - `--exclude` は `--include` より優先されます。
 - `.git`、`node_modules`、`.review` は指定に関係なく常に除外します。
 - 対象外のファイルは一覧に出ないだけでなく、URLを直接開いてもエラーになります。コメントの保存もできません。
+
+同じパターンは設定ファイルにも書けます。次の「設定ファイル」を参照してください。
+
+## 設定ファイル
+
+毎回オプションを打ち込まなくてよいように、`include` / `exclude` / `port` / `open` を設定ファイルに保存できます。設定は `review-markdown config` コマンドで読み書きします（エディタで直接編集しても構いません）。
+
+```bash
+# 除外パターンを追加する（複数指定・カンマ区切り可）
+review-markdown config add exclude 'drafts/**' '**/*.wip.md'
+
+# どの階層にある node_modules も除外する
+review-markdown config add exclude node_modules
+
+# 追加した設定を確認する
+review-markdown config list
+
+# 除外パターンを1つ取り消す
+review-markdown config remove exclude 'drafts/**'
+
+# ポートや自動起動の既定値を決める
+review-markdown config set port 4000
+review-markdown config set open false
+```
+
+設定後は、オプションなしで実行するだけで同じ絞り込みが適用されます。
+
+```bash
+review-markdown .
+# Markdown Review is serving /path/to/markdown-project
+#   config: /path/to/markdown-project/.review-markdown.json
+#   exclude: drafts/**, **/*.wip.md
+```
+
+### 設定ファイルの場所
+
+| 種類 | 場所 | 用途 |
+| --- | --- | --- |
+| プロジェクト設定 | 対象ディレクトリから親へ遡って最初に見つかる `.review-markdown.json` | そのプロジェクト固有の除外設定 |
+| ユーザー全体の設定 | `~/.config/review-markdown/config.json`（Windows は `%APPDATA%\review-markdown\config.json`） | すべてのプロジェクトで常に除外したいもの |
+
+- ユーザー全体の設定を編集するときは `--global`（`-g`）を付けます。
+- 環境変数 `XDG_CONFIG_HOME` / `REVIEW_MARKDOWN_CONFIG_HOME` でユーザー全体の設定の場所を変更できます。
+- `--dir <path>`（`-C`）で、設定ファイルを探すディレクトリを指定できます（既定はカレントディレクトリ）。
+
+### 設定ファイルの書式
+
+```json
+{
+  "include": [],
+  "exclude": ["drafts/**", "**/*.wip.md", "node_modules"],
+  "port": 4000,
+  "open": true
+}
+```
+
+| キー | 型 | 内容 |
+| --- | --- | --- |
+| `include` | 文字列の配列 | レビュー対象に含めるパスのパターン |
+| `exclude` | 文字列の配列 | レビュー対象から外すパスのパターン |
+| `port` | 数値 | ローカルサーバーのポート番号 |
+| `open` | 真偽値 | 起動時にブラウザを開くかどうか |
+
+### 優先順位
+
+- `include` / `exclude` は、ユーザー全体の設定・プロジェクト設定・コマンドラインの指定をすべて合成します。
+- `port` と `open` は「コマンドライン > 環境変数 `PORT` > プロジェクト設定 > ユーザー全体の設定 > 既定値」の順で決まります。
+- `--config <file>` で設定ファイルを直接指定すると、そのファイルだけを読み込みます。
+- `--no-config` を付けると、設定ファイルを一切読み込みません。
+- 知らないキーは警告を出して無視します。JSONとして壊れている場合や値の型が違う場合は、起動せずにエラーを表示します。
+
+### config サブコマンド
+
+```bash
+review-markdown config <command> [options]
+```
+
+| コマンド | 内容 |
+| --- | --- |
+| `init` | 設定ファイルを作成する |
+| `path` | 読み込まれる設定ファイルのパスを表示する |
+| `list` | 適用される設定内容を表示する |
+| `get <key>` | 設定値を表示する |
+| `set <key> <value...>` | 設定値を置き換える |
+| `add <key> <value...>` | 一覧（`include` / `exclude`）に値を追加する |
+| `remove <key> <value...>` | 一覧から値を削除する |
+| `unset <key>` | 設定値を削除する |
+
+オプションは `--dir <path>`（`-C`）、`--global`（`-g`）、`--json`、`--help`（`-h`）です。`--json` を付けると `list` と `get` の結果をJSONで出力します。
 
 ## 相対リンクの移動
 
@@ -189,22 +296,29 @@ npm test    # node --test（サーバー、Markdown変換、jsdomによる画面
 ## CLIオプション
 
 ```bash
-review-markdown [targetDir] [--port 3000] [--include <glob>] [--exclude <glob>] [--no-open]
+review-markdown [targetDir] [--port 3000] [--include <glob>] [--exclude <glob>] [--config <file>] [--no-config] [--no-open]
+review-markdown config <command> [options]
 ```
 
 - `targetDir`: レビュー対象ディレクトリ。省略時はカレントディレクトリです。
 - `--port`, `-p`: ローカルサーバーのポート番号です。環境変数 `PORT` でも指定できます。指定ポートが使用中の場合は、空いているポートを自動的に選択します。
 - `--include`: レビュー対象に含めるパスのパターンです。複数指定・カンマ区切りに対応します。
 - `--exclude`: レビュー対象から外すパスのパターンです。複数指定・カンマ区切りに対応します。
+- `--config <file>`: 使用する設定ファイルを直接指定します。
+- `--no-config`: 設定ファイルを読み込みません。
 - `--no-open`: ブラウザの自動起動をスキップします。
 - `--help`, `-h`: 使い方とワイルドカードの一覧を表示します。
+
+`config` はサブコマンドとして扱うため、`config` という名前のディレクトリをレビューする場合は `review-markdown ./config` のように指定してください。
 
 ## ディレクトリ構成
 
 ```
 bin/markdown-review.js   CLIエントリポイント（起動と終了処理）
 src/cli.js               コマンドライン引数の解析
-src/pathFilter.js        --include / --exclude のグロブ照合
+src/config.js            設定ファイルの探索・検証・オプションへの反映
+src/configCommand.js     review-markdown config サブコマンド
+src/pathFilter.js        --include / --exclude / 設定ファイルのグロブ照合
 src/server.js            HTTPサーバーの組み立て
 src/routes.js            APIエンドポイントの定義
 src/markdownFiles.js     対象ディレクトリのMarkdownファイル探索
