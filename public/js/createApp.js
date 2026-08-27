@@ -56,7 +56,15 @@ export function createApp(document, { api = defaultApi } = {}) {
     onError: (message) => toaster.error(message)
   });
   const panes = createSidePanes({ refs, state });
-  const ai = createAiController({ refs, state, api, toaster, panes });
+  const ai = createAiController({
+    refs,
+    state,
+    api,
+    toaster,
+    panes,
+    // A question about a comment the reviewer just typed needs it saved first.
+    flushComments: () => commentSaves.flush()
+  });
   const placement = createCommentPlacementController({
     refs,
     state,
@@ -391,6 +399,7 @@ export function createApp(document, { api = defaultApi } = {}) {
   }
 
   function renderComments() {
+    ai.refreshTarget();
     renderCommentList(refs.commentsList, {
       comments: state.comments,
       mode: state.mode,

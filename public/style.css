@@ -516,6 +516,11 @@ button.danger:hover { background: #9b2116; border-color: #9b2116; color: #fff; }
   padding-left: 0.65rem;
   white-space: pre-wrap;
 }
+.ai-target-comments {
+  color: var(--muted);
+  font-size: 0.75rem;
+  margin: 0.5rem 0 0;
+}
 .translation-result {
   background: #f4fbf7;
   border-bottom: 1px solid #b9ddc8;
