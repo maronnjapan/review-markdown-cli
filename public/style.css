@@ -875,6 +875,9 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   padding: 0.55rem 0.65rem;
   white-space: pre-wrap;
 }
+/* 参照ファイルも渡すので、どこからどこまでが1つのファイルなのかを分かるようにします。 */
+.review-skill-reference { color: var(--muted); font-size: 0.72rem; margin: 0.35rem 0 0.2rem; }
+.review-skill-reference span { color: #8a5b00; }
 .review-skill-status {
   color: var(--muted);
   font-size: 0.75rem;
@@ -962,6 +965,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   padding: 0.7rem 0.85rem;
   white-space: pre-wrap;
 }
+/* 反証で何件落ちたか。残った指摘をどれだけ信じてよいかの目安なので、結果の先頭に出します。 */
+.review-verification { color: var(--muted); font-size: 0.76rem; margin: 0; }
+.review-verification[data-state="skipped"] { color: #8a5b00; }
+.review-run-hint { color: #8a5b00; font-size: 0.76rem; margin: 0 0 0.5rem; }
 .reveal-flash {
   background: #eef6ff;
   outline-color: var(--primary);

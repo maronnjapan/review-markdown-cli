@@ -51,7 +51,57 @@ test('Codex turns are started with read-only filesystem and network disabled', a
   await client.close();
 });
 
-function createFakeProtocol() {
+const DEFAULT_MODEL = {
+  id: 'gpt-5.6-luna',
+  isDefault: true,
+  supportedReasoningEfforts: [{ reasoningEffort: 'low' }],
+  defaultReasoningEffort: 'low'
+};
+
+test('a review thread reads deeper than a translation thread, and its turns stay on that model', async (t) => {
+  const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'review-codex-runtime-'));
+  t.after(() => fs.rm(runtimeDir, { recursive: true, force: true }));
+  const protocol = createFakeProtocol({
+    models: [
+      {
+        id: 'gpt-5.6-luna',
+        supportedReasoningEfforts: [{ reasoningEffort: 'none' }, { reasoningEffort: 'low' }],
+        defaultReasoningEffort: 'low'
+      },
+      {
+        id: 'gpt-5.6-codex',
+        isDefault: true,
+        supportedReasoningEfforts: [
+          { reasoningEffort: 'low' }, { reasoningEffort: 'medium' }, { reasoningEffort: 'high' }
+        ],
+        defaultReasoningEffort: 'medium'
+      }
+    ]
+  });
+  const client = new CodexAppServer({ runtimeDir, spawnProcess: () => protocol.child });
+
+  const threadId = await client.createThread({ ephemeral: true, purpose: 'review' });
+  await client.runTurn({ threadId, prompt: 'Review this document.' });
+
+  // 翻訳とチャットは待ち時間が体感を決めるので速いモデル、レビューは読み落としが結果から抜けるので深く読むモデル。
+  assert.equal(client.model, 'gpt-5.6-luna');
+  assert.equal(client.effort, 'none');
+  assert.equal(client.reviewModel, 'gpt-5.6-codex');
+  assert.equal(client.reviewEffort, 'high');
+
+  const threadStart = protocol.messages.find(({ method }) => method === 'thread/start');
+  assert.equal(threadStart.params.model, 'gpt-5.6-codex');
+  assert.match(threadStart.params.baseInstructions, /reviewer of Markdown documents/);
+  assert.match(threadStart.params.developerInstructions, /Ground every finding in text you can quote/);
+
+  const turnStart = protocol.messages.find(({ method }) => method === 'turn/start');
+  assert.equal(turnStart.params.model, 'gpt-5.6-codex', 'スレッドの途中でモデルが入れ替わると読みを引き継げない');
+  assert.equal(turnStart.params.effort, 'high');
+
+  await client.close();
+});
+
+function createFakeProtocol({ models = [DEFAULT_MODEL] } = {}) {
   const child = new EventEmitter();
   const stdout = new PassThrough();
   const stderr = new PassThrough();
@@ -80,19 +130,7 @@ function createFakeProtocol() {
   function respond(message) {
     if (message.id === undefined) return;
     if (message.method === 'initialize') send({ id: message.id, result: {} });
-    if (message.method === 'model/list') {
-      send({
-        id: message.id,
-        result: {
-          data: [{
-            id: 'gpt-5.6-luna',
-            isDefault: true,
-            supportedReasoningEfforts: [{ reasoningEffort: 'low' }],
-            defaultReasoningEffort: 'low'
-          }]
-        }
-      });
-    }
+    if (message.method === 'model/list') send({ id: message.id, result: { data: models } });
     if (message.method === 'thread/start') {
       send({ id: message.id, result: { thread: { id: 'thread-read-only' } } });
     }

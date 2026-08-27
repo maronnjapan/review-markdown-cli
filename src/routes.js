@@ -164,7 +164,9 @@ async function reviewWithAi(context) {
     send({ type: 'started' });
     const review = await aiService.reviewDocument(relativeFile, { skillIds: body.skillIds ?? body.skillId }, {
       signal,
-      onDelta: (delta) => send({ type: 'delta', delta })
+      onDelta: (delta) => send({ type: 'delta', delta }),
+      // レビューは2周するので、いまどちらを読んでいるかを待っている画面へ流します。
+      onPhase: (phase) => send({ type: 'phase', phase })
     });
     send({ type: 'result', ...review });
   });

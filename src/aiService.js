@@ -5,7 +5,14 @@ import { aiContextBlock, hasAiContext, normalizeAiContext, resolveAiContext } fr
 import { AiStore, defaultAiDataDir, translationCacheKey } from './aiStore.js';
 import { CodexAppServer } from './codexAppServer.js';
 import { collectCommentContext, commentContextBlock } from './commentContext.js';
-import { buildReviewFindings, reviewPrompt, reviewSchema } from './documentReview.js';
+import {
+  applyVerification,
+  buildReviewFindings,
+  reviewPrompt,
+  reviewSchema,
+  verificationPrompt,
+  verificationSchema
+} from './documentReview.js';
 import { PERSONA_SCHEMA, buildPersona, normalizePersonaInput, personaPrompt } from './persona.js';
 import { listReviewSkills, readReviewSkill, readReviewSkills } from './reviewSkills.js';
 import { readReview } from './reviewStore.js';
@@ -165,6 +172,9 @@ export class AiService {
   /**
    * レビュアーの走り書きを、読み手ペルソナへ組み直します。
    * 保存はしません。組み直した結果を確認したレビュアーが保存します。
+   *
+   * レビューと同じ用途で読ませます。ここで組んだ読み手が、以後のレビューの
+   * 判断基準そのものになるからです。
    */
   async composePersona(documentPath, input, { onDelta, signal } = {}) {
     const notes = normalizePersonaInput(input);
@@ -173,7 +183,7 @@ export class AiService {
     // 組み直しの材料は走り書きだけです。保存済みのペルソナは前提に混ぜません。
     const { aiContext } = await readReview(this.rootDir, documentPath);
     const readingContext = resolveAiContext({ project: this.projectContext, document: aiContext });
-    const threadId = await this.codex.createThread({ ephemeral: true });
+    const threadId = await this.codex.createThread({ ephemeral: true, purpose: 'review' });
     const { text } = await this.codex.runTurn({
       threadId,
       prompt: personaPrompt(notes, aiContextBlock(readingContext)),
@@ -193,8 +203,11 @@ export class AiService {
   /**
    * 選んだレビュースキル（複数可）と、保存済みの読み手ペルソナで文書をレビューします。
    * 返すのはコメント候補で、レビューファイルへは何も書きません。
+   *
+   * 読みは2周します。1周目で指摘を出させ、2周目で同じスレッドにその指摘を反証させます。
+   * `onPhase` はいまどちらを読んでいるかで、待っている画面へ出すためのものです。
    */
-  async reviewDocument(documentPath, { skillIds, skillId } = {}, { onDelta, signal } = {}) {
+  async reviewDocument(documentPath, { skillIds, skillId } = {}, { onDelta, onPhase = () => {}, signal } = {}) {
     const skills = await readReviewSkills(this.rootDir, skillIds ?? skillId);
     const markdown = await fs.readFile(path.join(this.rootDir, documentPath), 'utf8');
     if (markdown.length > MAX_TARGET_CHARS) throw new Error('文書全体が長すぎます。ファイルを分割してください');
@@ -202,7 +215,8 @@ export class AiService {
     if (segments.length === 0) throw new Error('レビューできる本文が見つかりません');
 
     const readingContext = await this.readingContext(documentPath);
-    const threadId = await this.codex.createThread({ ephemeral: true });
+    const threadId = await this.codex.createThread({ ephemeral: true, purpose: 'review' });
+    onPhase('reading');
     const { text } = await this.codex.runTurn({
       threadId,
       prompt: reviewPrompt(segments, skills, readingContext),
@@ -216,11 +230,44 @@ export class AiService {
     } catch {
       throw new Error('Codexのレビュー結果を解析できませんでした');
     }
+
+    const verification = await this.verifyFindings(
+      threadId, answer, segments, skills, readingContext, { onDelta, onPhase, signal }
+    );
+    const { answer: checked, refuted } = applyVerification(answer, verification);
     return {
       skills: skills.map(({ id, name, source }) => ({ id, name, source })),
       persona: readingContext.persona,
-      ...buildReviewFindings(segments, answer, skills)
+      // 反証まで通ったかどうかは、指摘をどれだけ信じてよいかの目安になるので画面へ出します。
+      verified: verification !== null,
+      refuted,
+      ...buildReviewFindings(segments, checked, skills)
     };
+  }
+
+  /**
+   * 2周目。1周目の指摘を、同じスレッドに反証させます。
+   * 失敗しても投げません。反証は指摘の精度を上げる工程であって、レビューそのものでは
+   * ないので、ここで止めるとレビュアーは1周目の指摘まで受け取れなくなります。
+   */
+  async verifyFindings(threadId, answer, segments, skills, readingContext, { onDelta, onPhase, signal }) {
+    const findings = (answer?.placements?.length || 0) + (answer?.unplaced?.length || 0);
+    // 指摘が1件も出なかったレビューには、確かめる対象がありません。失敗とは別のことです。
+    if (findings === 0) return { verdicts: [], unplacedVerdicts: [] };
+    onPhase('verifying');
+    try {
+      const { text } = await this.codex.runTurn({
+        threadId,
+        prompt: verificationPrompt(answer, segments, skills, readingContext),
+        outputSchema: verificationSchema(),
+        onDelta,
+        signal
+      });
+      return JSON.parse(text);
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      return null;
+    }
   }
 
   async listConversations(documentPath) {

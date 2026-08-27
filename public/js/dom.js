@@ -66,6 +66,7 @@ const SELECTORS = {
   personaClearButton: '#persona-clear-button',
   personaResult: '#persona-result',
   reviewForm: '#review-form',
+  reviewPersonaHint: '#review-run-hint',
   reviewRunButton: '#review-run-button',
   reviewStopButton: '#review-stop-button',
   reviewResults: '#review-results',
