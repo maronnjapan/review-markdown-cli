@@ -82,3 +82,65 @@ test('AI routes require a per-launch token and stream read-only results', async 
   });
   assert.equal(applyAttempt.status, 404, 'there is no endpoint that applies AI output to the document');
 });
+
+test('comment placement streams proposals and never writes them itself', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-ai-place-'));
+  await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\nRun the program.\n', 'utf8');
+  const calls = [];
+  const aiService = {
+    async status() { return { available: true, provider: 'codex' }; },
+    async placeComments(documentPath, notes, { onDelta }) {
+      calls.push([documentPath, notes]);
+      onDelta('{"placements":');
+      return {
+        placements: [{
+          comment: '手順を具体的に',
+          reason: '対象の段落です',
+          confidence: 'high',
+          target: { type: 'paragraph', selectedText: 'Run the program.', targetText: 'Run the program.', headingPath: ['Guide'] }
+        }],
+        unplaced: [],
+        droppedPlacements: 0
+      };
+    },
+    close() {}
+  };
+  const { app } = createServer(root, { aiService, aiToken: 'place-token' });
+  const server = app.listen(0);
+  await new Promise((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  const unauthorized = await fetch(`${baseUrl}/api/ai/place-comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: 'guide.md', notes: '手順を具体的に' })
+  });
+  assert.equal(unauthorized.status, 403);
+
+  const placed = await fetch(`${baseUrl}/api/ai/place-comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Review-Markdown-Token': 'place-token' },
+    body: JSON.stringify({ path: 'guide.md', notes: '手順を具体的に' })
+  });
+  const events = (await placed.text()).trim().split('\n').map(JSON.parse);
+  assert.deepEqual(events.map(({ type }) => type), ['started', 'delta', 'result']);
+  assert.equal(events.at(-1).placements[0].target.selectedText, 'Run the program.');
+  assert.deepEqual(calls, [['guide.md', '手順を具体的に']]);
+
+  const outsideRoot = await fetch(`${baseUrl}/api/ai/place-comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Review-Markdown-Token': 'place-token' },
+    body: JSON.stringify({ path: '../secret.md', notes: '手順を具体的に' })
+  });
+  assert.equal(outsideRoot.status, 400, 'レビュー対象ディレクトリの外は配置対象にできない');
+
+  assert.deepEqual(await fs.readdir(root), ['guide.md'], '配置だけでは何も保存しない');
+});

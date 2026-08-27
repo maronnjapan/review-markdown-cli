@@ -32,7 +32,8 @@ const ROUTES = [
   { methods: ['GET'], pathname: '/api/ai/conversations', handle: listAiConversations },
   { methods: ['POST', 'DELETE'], pathname: '/api/ai/conversation', handle: aiConversation },
   { methods: ['POST'], pathname: '/api/ai/translate', handle: translateWithAi },
-  { methods: ['POST'], pathname: '/api/ai/message', handle: sendAiMessage }
+  { methods: ['POST'], pathname: '/api/ai/message', handle: sendAiMessage },
+  { methods: ['POST'], pathname: '/api/ai/place-comments', handle: placeAiComments }
 ];
 
 export function createRequestHandler({ rootDir, filter, aiService, aiToken }) {
@@ -92,6 +93,22 @@ async function translateWithAi(context) {
       onDelta: (delta) => send({ type: 'delta', delta })
     });
     send({ type: 'result', translation });
+  });
+}
+
+/** Proposes where the reviewer's notes belong. Saving stays with /api/review. */
+async function placeAiComments(context) {
+  const { rootDir, filter, aiService, request, response } = context;
+  authorizeAiRequest(context);
+  const body = await readJsonBody(request);
+  const relativeFile = reviewTarget(rootDir, filter, body.path);
+  return streamAiResponse(request, response, async ({ send, signal }) => {
+    send({ type: 'started' });
+    const placement = await aiService.placeComments(relativeFile, body.notes, {
+      signal,
+      onDelta: (delta) => send({ type: 'delta', delta })
+    });
+    send({ type: 'result', ...placement });
   });
 }
 

@@ -47,6 +47,8 @@ export function copyCommentTarget(comment) {
   delete target.createdAt;
   delete target.status;
   delete target.targetDetached;
+  // The reviewer is writing this one, whoever placed the comment it reuses.
+  delete target.source;
   return target;
 }
 
@@ -169,6 +171,7 @@ function commentCardHtml(comment, index, readOnly, pendingDeleteId) {
         <div class="comment-meta-labels">
           <strong><span class="target-badge" data-type="${escapeHtml(comment.type || '')}">${escapeHtml(labelForType(comment.type))}</span> ${index + 1}</strong>
           <span class="comment-status" data-status="${status}">${STATUS_LABELS[status]}</span>
+          ${comment.source === 'ai' ? '<span class="comment-source">AI配置</span>' : ''}
         </div>
         <time>${escapeHtml(formatTimestamp(comment.createdAt))}</time>
       </div>

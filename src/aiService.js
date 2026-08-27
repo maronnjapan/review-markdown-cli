@@ -3,6 +3,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { AiStore, defaultAiDataDir, translationCacheKey } from './aiStore.js';
 import { CodexAppServer } from './codexAppServer.js';
+import {
+  MAX_NOTES_CHARS,
+  PLACEMENT_SCHEMA,
+  buildPlacements,
+  extractDocumentSegments,
+  placementPrompt
+} from './commentPlacement.js';
 
 const MAX_TARGET_CHARS = 100_000;
 const MAX_MESSAGE_CHARS = 12_000;
@@ -88,6 +95,37 @@ export class AiService {
     const value = { kind: term ? 'term' : 'passage', result, cached: false };
     await this.store.saveTranslation(cacheKey, value);
     return value;
+  }
+
+  /**
+   * Finds where the reviewer's notes belong. Nothing is saved here: the answer
+   * is a set of proposals the reviewer accepts one by one in the UI.
+   */
+  async placeComments(documentPath, notes, { onDelta, signal } = {}) {
+    const reviewerNotes = String(notes || '').trim();
+    if (!reviewerNotes) throw new Error('指摘コメントを入力してください');
+    if (reviewerNotes.length > MAX_NOTES_CHARS) throw new Error('指摘コメントが長すぎます');
+
+    const markdown = await fs.readFile(path.join(this.rootDir, documentPath), 'utf8');
+    if (markdown.length > MAX_TARGET_CHARS) throw new Error('文書全体が長すぎます。ファイルを分割してください');
+    const segments = await extractDocumentSegments(markdown);
+    if (segments.length === 0) throw new Error('コメントを付けられる本文が見つかりません');
+
+    const threadId = await this.codex.createThread({ ephemeral: true });
+    const { text } = await this.codex.runTurn({
+      threadId,
+      prompt: placementPrompt(segments, reviewerNotes),
+      outputSchema: PLACEMENT_SCHEMA,
+      onDelta,
+      signal
+    });
+    let answer;
+    try {
+      answer = JSON.parse(text);
+    } catch {
+      throw new Error('Codexの配置結果を解析できませんでした');
+    }
+    return buildPlacements(segments, answer);
   }
 
   async listConversations(documentPath) {

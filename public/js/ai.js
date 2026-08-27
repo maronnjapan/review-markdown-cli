@@ -9,7 +9,7 @@ const TARGET_LABELS = {
   'text-selection': '範囲選択'
 };
 
-export function createAiController({ refs, state, api, toaster }) {
+export function createAiController({ refs, state, api, toaster, panes }) {
   let preparePromise = null;
 
   bindEvents();
@@ -51,22 +51,11 @@ export function createAiController({ refs, state, api, toaster }) {
     }
   }
 
-  function showPane(name) {
-    state.sidePane = name;
-    const ai = name === 'ai';
-    refs.commentsPanel.classList.toggle('hidden', ai);
-    refs.aiPanel.classList.toggle('hidden', !ai);
-    refs.commentsTabButton.classList.toggle('active', !ai);
-    refs.aiTabButton.classList.toggle('active', ai);
-    refs.commentsTabButton.setAttribute('aria-selected', String(!ai));
-    refs.aiTabButton.setAttribute('aria-selected', String(ai));
-  }
-
   function ask(target) {
     state.aiTarget = cloneTarget(target);
     state.activeConversationId = null;
     state.translation = null;
-    showPane('ai');
+    panes.show('ai');
     renderTarget();
     renderTranslation();
     renderMessages();
@@ -77,7 +66,7 @@ export function createAiController({ refs, state, api, toaster }) {
   async function translate(target) {
     state.aiTarget = cloneTarget(target);
     state.translation = { status: 'loading' };
-    showPane('ai');
+    panes.show('ai');
     renderTarget();
     renderTranslation();
 
@@ -369,8 +358,6 @@ export function createAiController({ refs, state, api, toaster }) {
   }
 
   function bindEvents() {
-    refs.commentsTabButton.addEventListener('click', () => showPane('comments'));
-    refs.aiTabButton.addEventListener('click', () => showPane('ai'));
     refs.aiConversationSelect.addEventListener('change', () => selectConversation(refs.aiConversationSelect.value));
     refs.aiNewConversation.addEventListener('click', () => selectConversation(''));
     refs.aiDeleteConversation.addEventListener('click', deleteConversation);
@@ -389,7 +376,6 @@ export function createAiController({ refs, state, api, toaster }) {
   return {
     prepare,
     loadDocument,
-    showPane,
     ask,
     translate,
     prefetchTranslation,

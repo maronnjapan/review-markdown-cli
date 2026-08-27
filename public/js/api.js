@@ -66,6 +66,11 @@ export const api = {
   async sendAiMessage(payload, options = {}) {
     await ensureAiToken();
     return streamNdjson('/api/ai/message', payload, { ...options, headers: aiHeaders() });
+  },
+
+  async placeAiComments(payload, options = {}) {
+    await ensureAiToken();
+    return streamNdjson('/api/ai/place-comments', payload, { ...options, headers: aiHeaders() });
   }
 };
 

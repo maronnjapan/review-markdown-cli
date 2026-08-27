@@ -36,6 +36,10 @@ export function createState() {
     translationPrefetch: null,
     aiAbortController: null,
 
+    // AI comment placement proposals, held until the reviewer accepts them
+    placement: null,
+    placementAbortController: null,
+
     // Edit mode bookkeeping
     dirtyBlocks: new Set(),
     blockVersions: new Map(),
@@ -64,6 +68,9 @@ export function resetDocumentState(state, filePath) {
   state.translationPrefetch = null;
   state.aiAbortController?.abort();
   state.aiAbortController = null;
+  state.placement = null;
+  state.placementAbortController?.abort();
+  state.placementAbortController = null;
   state.commentsVersion += 1;
   state.dirtyBlocks.clear();
   state.blockVersions.clear();

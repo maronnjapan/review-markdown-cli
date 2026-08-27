@@ -18,8 +18,10 @@ const SELECTORS = {
 
   commentsTabButton: '#comments-tab-button',
   aiTabButton: '#ai-tab-button',
+  placementTabButton: '#placement-tab-button',
   commentsPanel: '#comments-panel',
   aiPanel: '#ai-panel',
+  placementPanel: '#placement-panel',
   aiProviderStatus: '#ai-provider-status',
   aiConversationSelect: '#ai-conversation-select',
   aiNewConversation: '#ai-new-conversation',
@@ -34,6 +36,12 @@ const SELECTORS = {
   aiChatInput: '#ai-chat-input',
   aiSendButton: '#ai-send-button',
   aiStopButton: '#ai-stop-button',
+
+  placementForm: '#placement-form',
+  placementInput: '#placement-input',
+  placementSubmitButton: '#placement-submit-button',
+  placementStopButton: '#placement-stop-button',
+  placementResults: '#placement-results',
 
   selectionToolbar: '#selection-toolbar',
   selectionToolbarButton: '#selection-comment-button',
