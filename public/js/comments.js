@@ -179,7 +179,7 @@ function commentCardHtml(comment, index, readOnly, pendingDeleteId) {
   const confirming = comment.id && comment.id === pendingDeleteId;
   const status = statusForComment(comment);
   return `
-    <article class="comment-card${comment.targetDetached ? ' detached' : ''}${confirming ? ' confirming' : ''}" data-comment-id="${escapeHtml(comment.id || '')}" data-status="${status}">
+    <article class="comment-card${comment.targetDetached ? ' detached' : ''}${confirming ? ' confirming' : ''}" data-comment-id="${escapeHtml(comment.id || '')}" data-comment-index="${index}" data-status="${status}">
       <div class="comment-meta">
         <div class="comment-meta-labels">
           <strong><span class="target-badge" data-type="${escapeHtml(comment.type || '')}">${escapeHtml(labelForType(comment.type))}</span> ${index + 1}</strong>

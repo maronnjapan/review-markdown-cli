@@ -493,6 +493,105 @@ test('comments are separated by status and can be resolved or reopened', async (
   assert.equal(savedRequests[1].comments[0].status, 'open');
 });
 
+test('clicking a commented place brings up the comment that was written there', async (t) => {
+  const markdown = [
+    '# 設計メモ',
+    '',
+    '## 背景',
+    '',
+    'この段落はレビュー対象です。',
+    '',
+    '別の段落です。'
+  ].join('\n');
+  const comments = [
+    {
+      id: 'comment-paragraph',
+      type: 'paragraph',
+      selectedText: 'この段落はレビュー対象です。',
+      targetText: 'この段落はレビュー対象です。',
+      status: 'open',
+      comment: '根拠を足してほしい'
+    },
+    {
+      id: 'comment-selection-open',
+      type: 'text-selection',
+      selectedText: '別の段落',
+      contextAfter: 'です。',
+      status: 'open',
+      comment: '言い換えたい'
+    },
+    {
+      id: 'comment-selection-resolved',
+      type: 'text-selection',
+      selectedText: '別の段落',
+      contextAfter: 'です。',
+      status: 'resolved',
+      comment: '前に見た指摘'
+    }
+  ];
+  const savedRequests = [];
+  const { document, window } = await startApp(t, 'http://localhost/#/review/docs%2Fnote.md', {
+    '/api/file': async () => ({
+      path: 'docs/note.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'docs/note.md', comments },
+      reviewFile: '.review/docs/note.md.review.json'
+    }),
+    '/api/review': (_input, options) => {
+      const body = JSON.parse(options.body);
+      savedRequests.push(body);
+      return {
+        review: { targetFile: body.path, comments: body.comments },
+        reviewFile: '.review/docs/note.md.review.json'
+      };
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content .comment-highlight-text'));
+  const revealed = () => [...document.querySelectorAll('.comment-card.revealed')].map((card) => card.dataset.commentId);
+
+  const paragraph = document.querySelector('#markdown-content .comment-highlight-target');
+  assert.match(paragraph.textContent, /この段落はレビュー対象です。/);
+  const marker = paragraph.querySelector('.comment-marker');
+  assert.equal(marker.textContent, '1件');
+  assert.equal(marker.getAttribute('aria-label'), 'コメントを確認: 根拠を足してほしい');
+
+  const mark = document.querySelector('#markdown-content .comment-highlight-text');
+  assert.equal(mark.textContent, '別の段落');
+  assert.equal(mark.title, 'コメント2件を確認', '同じ範囲の2件は1つのハイライトにまとまる');
+
+  // Reading a comment starts from the document, so the click brings the pane back.
+  document.querySelector('#placement-tab-button').click();
+  assert.equal(document.querySelector('#comments-panel').classList.contains('hidden'), true);
+
+  paragraph.click();
+  assert.equal(document.querySelector('#comments-panel').classList.contains('hidden'), false);
+  assert.deepEqual(revealed(), ['comment-paragraph']);
+
+  mark.click();
+  assert.deepEqual(
+    revealed(),
+    ['comment-paragraph', 'comment-selection-open', 'comment-selection-resolved'],
+    '同じ範囲のコメントは解決済みも含めて出す'
+  );
+
+  // The marker is an affordance, not text: what a new comment records is unchanged.
+  paragraph.querySelector('.inline-comment-button').click();
+  assert.equal(document.querySelector('#dialog-target-quote').textContent, 'この段落はレビュー対象です。');
+  document.querySelector('#cancel-dialog').click();
+
+  document.querySelector('#placement-tab-button').click();
+  mark.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  assert.equal(document.querySelector('#comments-panel').classList.contains('hidden'), false, 'キーボードでも開ける');
+
+  // Re-rendering the comment list must not leave a second marker on the block.
+  document.querySelector('[data-comment-id="comment-paragraph"] [data-action="onToggleStatus"]').click();
+  assert.equal(document.querySelectorAll('#markdown-content .comment-marker').length, 1);
+  paragraph.click();
+  assert.ok(document.querySelector('[data-comment-id="comment-paragraph"]').classList.contains('revealed'));
+  await waitFor(() => savedRequests.length === 1, 1600);
+});
+
 test('AI comment placement anchors a pasted note and only saves it once the reviewer adds it', async (t) => {
   const markdown = [
     '# 設計メモ',

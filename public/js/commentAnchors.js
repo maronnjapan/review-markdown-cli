@@ -6,7 +6,7 @@ import {
   findTextRange,
   targetTextOf
 } from './textAnchor.js';
-import { createId, cssEscape, normalizeText } from './util.js';
+import { createId, cssEscape, normalizeText, truncate } from './util.js';
 
 const BLOCK_SELECTOR = 'p, li, blockquote, pre';
 const HEADING_SELECTOR = 'h1, h2, h3, h4, h5, h6';
@@ -15,13 +15,29 @@ const HEADING_SELECTOR = 'h1, h2, h3, h4, h5, h6';
  * Comment mode: highlight what already has comments
  * ------------------------------------------------------------------ */
 
-export function renderCommentHighlights(root, comments, { onSelectExisting }) {
+/**
+ * Marks every place that already carries a comment. Each highlight names the
+ * comments it stands for in `data-comment-indexes`, so a click on it can bring
+ * them up without matching the text a second time.
+ */
+export function renderCommentHighlights(root, comments) {
   clearCommentHighlights(root);
-  highlightBlockTargets(root, comments);
-  highlightTextSelections(root, comments, onSelectExisting);
+  const entries = comments.map((comment, index) => ({ comment, index }));
+  highlightBlockTargets(root, entries);
+  highlightTextSelections(root, entries);
+}
+
+/** The comments a highlighted place stands for, as indexes into the comment list. */
+export function commentIndexesAt(element) {
+  return String(element?.dataset?.commentIndexes || '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(Number)
+    .filter((index) => Number.isInteger(index) && index >= 0);
 }
 
 function clearCommentHighlights(root) {
+  root.querySelectorAll('.comment-marker').forEach((marker) => marker.remove());
   root.querySelectorAll('.comment-highlight-text').forEach((mark) => {
     const parent = mark.parentNode;
     while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
@@ -31,18 +47,37 @@ function clearCommentHighlights(root) {
   root.querySelectorAll('.comment-highlight-target').forEach((element) => {
     element.classList.remove('comment-highlight-target');
     element.removeAttribute('data-comment-count');
+    element.removeAttribute('data-comment-indexes');
   });
 }
 
-function highlightBlockTargets(root, comments) {
+function highlightBlockTargets(root, entries) {
   root.querySelectorAll('.review-target').forEach((element) => {
     const elementText = normalizeText(targetTextOf(element));
     if (!elementText) return;
-    const matches = comments.filter((comment) => blockCommentMatches(comment, element, elementText));
+    const matches = entries.filter(({ comment }) => blockCommentMatches(comment, element, elementText));
     if (matches.length === 0) return;
     element.classList.add('comment-highlight-target');
     element.dataset.commentCount = String(matches.length);
+    element.dataset.commentIndexes = indexList(matches);
+    element.append(commentMarker(root.ownerDocument, matches));
   });
+}
+
+/**
+ * The badge on a commented block. A yellow background says a comment exists;
+ * this says how many, and that they are there to be read.
+ */
+function commentMarker(document, matches) {
+  const marker = document.createElement('button');
+  marker.type = 'button';
+  // `inline-target-action` is what every text extraction here strips, and a
+  // <button> is what the text search skips. The marker must stay out of both.
+  marker.className = 'comment-marker inline-target-action';
+  marker.textContent = `${matches.length}件`;
+  marker.title = highlightTitle(matches);
+  marker.setAttribute('aria-label', highlightTitle(matches));
+  return marker;
 }
 
 function blockCommentMatches(comment, element, elementText) {
@@ -52,39 +87,38 @@ function blockCommentMatches(comment, element, elementText) {
   return false;
 }
 
-function highlightTextSelections(root, comments, onSelectExisting) {
-  const seen = new Set();
-  for (const comment of comments) {
-    if (comment.type !== 'text-selection' || !commentTargetText(comment)) continue;
-    const key = selectionKey(comment);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    markTextSelection(root, comment, onSelectExisting);
+function highlightTextSelections(root, entries) {
+  const commented = entries.filter(({ comment }) => commentTargetText(comment));
+  for (const group of groupBySelection(commented, (entry) => entry.comment)) {
+    markTextSelection(root, group);
   }
 }
 
-function markTextSelection(root, comment, onSelectExisting) {
-  const match = findTextRange(root, commentTargetText(comment), comment.contextBefore, comment.contextAfter);
+function markTextSelection(root, matches) {
+  const reference = matches[0].comment;
+  const match = findTextRange(root, commentTargetText(reference), reference.contextBefore, reference.contextAfter);
   if (!match) return;
 
   const mark = root.ownerDocument.createElement('mark');
   mark.className = 'comment-highlight-text';
   mark.tabIndex = 0;
-  mark.title = 'この対象にコメントを追加';
-  mark.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    onSelectExisting(comment);
-  });
-  mark.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    event.preventDefault();
-    onSelectExisting(comment);
-  });
+  mark.dataset.commentIndexes = indexList(matches);
+  mark.title = highlightTitle(matches);
 
   const range = createRangeFor(root, match);
   mark.append(range.extractContents());
   range.insertNode(mark);
+}
+
+function indexList(matches) {
+  return matches.map(({ index }) => index).join(' ');
+}
+
+/** What the reviewer gets for hovering: the comment itself, when there is one. */
+function highlightTitle(matches) {
+  if (matches.length !== 1) return `コメント${matches.length}件を確認`;
+  const text = normalizeText(matches[0].comment.comment || '');
+  return text ? `コメントを確認: ${truncate(text, 40)}` : 'コメントを確認';
 }
 
 /* ------------------------------------------------------------------ *
@@ -120,20 +154,21 @@ export function prepareEditorCommentAnchors(root, comments) {
     commentBlocks.set(comment.id, blockId);
   }
 
-  for (const group of groupSelectionComments(comments)) {
+  for (const group of groupBySelection(comments, (comment) => comment)) {
     anchorSelectionGroup(root, group, commentBlocks);
   }
   return commentBlocks;
 }
 
-/** Comments on identical text share one anchor element. */
-function groupSelectionComments(comments) {
+/** Comments on identical text share one anchor element, and one highlight. */
+function groupBySelection(items, commentOf) {
   const groups = new Map();
-  for (const comment of comments) {
+  for (const item of items) {
+    const comment = commentOf(item);
     if (comment.type !== 'text-selection') continue;
     const key = selectionKey(comment);
     if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(comment);
+    groups.get(key).push(item);
   }
   return groups.values();
 }
