@@ -162,8 +162,9 @@ export function buildPlacements(segments, answer) {
       comment,
       reason: String(candidate?.reason || '').trim(),
       confidence: ['high', 'medium', 'low'].includes(candidate?.confidence) ? candidate.confidence : 'medium',
-      // AIレビューだけが重みを付けます。無い答えに既定値は足しません。
+      // AIレビューだけが重みと出どころのスキルを付けます。無い答えに既定値は足しません。
       ...(SEVERITIES.includes(candidate?.severity) ? { severity: candidate.severity } : {}),
+      ...(candidate?.skillId ? { skillId: String(candidate.skillId).trim() } : {}),
       target: quote ? selectionTarget(segment, quote) : blockTarget(segment)
     });
   }

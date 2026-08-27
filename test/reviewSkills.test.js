@@ -3,7 +3,13 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { listReviewSkills, parseSkillFile, readReviewSkill } from '../src/reviewSkills.js';
+import {
+  MAX_SELECTED_SKILLS,
+  listReviewSkills,
+  parseSkillFile,
+  readReviewSkill,
+  readReviewSkills
+} from '../src/reviewSkills.js';
 
 test('review skills come from the reviewed directory first, then from the built-in ones', async (t) => {
   const root = await testRoot(t);
@@ -80,6 +86,30 @@ test('the front matter of a SKILL.md is read without pulling in a YAML parser', 
   const withoutFrontMatter = parseSkillFile('# 見出しだけ\n');
   assert.deepEqual(withoutFrontMatter.meta, {});
   assert.equal(withoutFrontMatter.body, '# 見出しだけ');
+});
+
+test('several skills load together, in the order they were chosen', async (t) => {
+  const root = await testRoot(t);
+  await writeSkill(root, '.claude/skills/ops-review', { name: 'ops-review', description: '当番が実行できるか', body: '# 運用' });
+  await writeSkill(root, '.claude/skills/flow-review', { name: 'flow-review', description: '並びを見る', body: '# 構成' });
+
+  const skills = await readReviewSkills(root, ['flow-review', 'ops-review']);
+  assert.deepEqual(skills.map(({ id }) => id), ['flow-review', 'ops-review']);
+  assert.equal(skills[0].instructions, '# 構成');
+
+  assert.deepEqual(
+    (await readReviewSkills(root, ['ops-review', 'ops-review', ' '])).map(({ id }) => id),
+    ['ops-review'],
+    '同じスキルを二重に選んでも1つとして扱う'
+  );
+  assert.deepEqual((await readReviewSkills(root, 'ops-review')).map(({ id }) => id), ['ops-review']);
+
+  await assert.rejects(() => readReviewSkills(root, []), /1つ以上選んでください/);
+  await assert.rejects(
+    () => readReviewSkills(root, Array.from({ length: MAX_SELECTED_SKILLS + 1 }, (_, i) => `skill-${i}`)),
+    new RegExp(`${MAX_SELECTED_SKILLS}個まで`)
+  );
+  await assert.rejects(() => readReviewSkills(root, ['no-such-skill']), /見つかりません/);
 });
 
 async function testRoot(t) {

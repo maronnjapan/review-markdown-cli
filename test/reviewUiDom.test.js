@@ -599,7 +599,7 @@ test('AI comment placement anchors a pasted note and only saves it once the revi
   );
 });
 
-test('an AI review runs with the chosen skill and the reader the AI rebuilt from the reviewer\'s notes', async (t) => {
+test('an AI review runs with the chosen skills and the reader the AI rebuilt from the reviewer\'s notes', async (t) => {
   const markdown = [
     '# デプロイ手順',
     '',
@@ -610,6 +610,7 @@ test('an AI review runs with the chosen skill and the reader the AI rebuilt from
   const savedRequests = [];
   const personaRequests = [];
   const reviewRequests = [];
+  const skillDetailRequests = [];
   const { document, window } = await startApp(t, 'http://localhost/#/review/docs%2Fnote.md', {
     '/api/file': async () => ({
       path: 'docs/note.md',
@@ -626,6 +627,10 @@ test('an AI review runs with the chosen skill and the reader the AI rebuilt from
         { id: 'ops-review', name: '運用レビュー', description: '当番が実行できるかを見る。', source: 'project' }
       ]
     }),
+    '/api/ai/review-skill': (input) => {
+      skillDetailRequests.push(new URL(input, 'http://localhost').searchParams.get('id'));
+      return { skill: { id: 'ops-review', name: '運用レビュー', source: 'project', instructions: '# 運用レビュー\n\n1. 開始条件が書かれているか' } };
+    },
     '/api/ai/persona': (_input, options) => {
       personaRequests.push(JSON.parse(options.body));
       return ndjsonResponse([
@@ -652,12 +657,16 @@ test('an AI review runs with the chosen skill and the reader the AI rebuilt from
         { type: 'started' },
         {
           type: 'result',
-          skill: { id: 'ops-review', name: '運用レビュー', source: 'project' },
+          skills: [
+            { id: 'reader-fit-review', name: '読み手適合レビュー', source: 'builtin' },
+            { id: 'ops-review', name: '運用レビュー', source: 'project' }
+          ],
           persona: { label: '運用当番の新人' },
           summary: 'この読み手には実行前の前提が足りません。',
           placements: [{
             comment: '実行前に確認することを書いてください',
             reason: 'この読み手は製品を知らないためです',
+            skill: { id: 'ops-review', name: '運用レビュー' },
             severity: 'must',
             confidence: 'high',
             target: {
@@ -688,15 +697,26 @@ test('an AI review runs with the chosen skill and the reader the AI rebuilt from
   assert.equal(document.querySelector('#review-panel').classList.contains('hidden'), false);
   assert.equal(document.querySelector('#comments-panel').classList.contains('hidden'), true);
 
-  const skillSelect = document.querySelector('#review-skill-select');
-  await waitFor(() => skillSelect.options.length === 2);
-  assert.deepEqual([...skillSelect.options].map((option) => option.textContent),
-    ['読み手適合レビュー（標準）', '運用レビュー']);
-  assert.equal(document.querySelector('#review-skill-description').textContent, '読み手に届くかを見る。');
+  const skillList = document.querySelector('#review-skill-list');
+  await waitFor(() => skillList.querySelectorAll('input[data-skill-id]').length === 2);
+  const skillNames = () => [...skillList.querySelectorAll('.review-skill-choice')].map((label) => label.textContent.trim().replace(/\s+/g, ' '));
+  assert.deepEqual(skillNames(), ['読み手適合レビュー 標準', '運用レビュー']);
+  assert.deepEqual([...skillList.querySelectorAll('.review-skill-description')].map((node) => node.textContent),
+    ['読み手に届くかを見る。', '当番が実行できるかを見る。']);
+  assert.equal(document.querySelector('#review-skill-state').textContent, '1個選択中', '最初のスキルは選ばれている');
 
-  skillSelect.value = 'ops-review';
-  skillSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-  assert.equal(document.querySelector('#review-skill-description').textContent, '当番が実行できるかを見る。');
+  // どの観点で読むスキルなのかは、選ぶ前に画面のなかで開いて確かめられる。
+  skillList.querySelector('[data-skill-detail="ops-review"]').click();
+  await waitFor(() => document.querySelector('.review-skill-detail')?.textContent.includes('開始条件'));
+  assert.deepEqual(skillDetailRequests, ['ops-review']);
+  skillList.querySelector('[data-skill-detail="ops-review"]').click();
+  assert.equal(document.querySelector('.review-skill-detail'), null, 'もう一度押すと閉じる');
+
+  // スキルは複数選べる。選んだ順にレビューへ渡す。
+  const opsCheckbox = skillList.querySelector('input[data-skill-id="ops-review"]');
+  opsCheckbox.checked = true;
+  opsCheckbox.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.equal(document.querySelector('#review-skill-state').textContent, '2個選択中');
 
   // 読み手は走り書きのまま渡し、AIが組み直したものを画面で確かめてから使う。
   assert.equal(document.querySelector('#persona-state').textContent, '未設定');
@@ -709,30 +729,43 @@ test('an AI review runs with the chosen skill and the reader the AI rebuilt from
   await waitFor(() => document.querySelector('.persona-card'));
 
   assert.deepEqual(personaRequests, [{ path: 'docs/note.md', input: '異動したての運用担当。Linuxは触れる。' }]);
-  assert.equal(document.querySelector('.persona-card h3').textContent, '運用当番の新人');
+  assert.match(document.querySelector('.persona-card h3').textContent, /^運用当番の新人AIが組み立て$/);
   assert.match(document.querySelector('.persona-card').textContent, /この製品の構成/);
   assert.match(document.querySelector('.persona-assumptions').textContent, /経験1年未満/, 'AIが補った前提は隠さない');
   assert.equal(document.querySelector('#persona-state').textContent, '設定済み');
   assert.equal(document.querySelector('#persona-compose-button').textContent, 'AIで組み直す');
 
+
   // 組み直したペルソナはコメントと同じ自動保存でレビューファイルへ入る。
   await waitFor(() => savedRequests.length === 1, 1600);
   assert.equal(savedRequests[0].persona.label, '運用当番の新人');
 
+  // 読み手が既に固まっているなら、AIに組み直させずそのまま使える。
+  personaInput.value = '当番の新人。\nこの製品は初めて。';
+  personaInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+  document.querySelector('#persona-use-button').click();
+  assert.match(document.querySelector('.persona-card h3').textContent, /^当番の新人。そのまま使用$/);
+  assert.equal(document.querySelector('.persona-notes').textContent, '当番の新人。\nこの製品は初めて。');
+  assert.equal(document.querySelector('#persona-compose-button').textContent, 'AIで組み立てる');
+  assert.equal(personaRequests.length, 1, 'そのまま使うときはAIを呼ばない');
+  await waitFor(() => savedRequests.some((request) => request.persona?.source === 'manual'), 1600);
+
   document.querySelector('#review-form').requestSubmit();
   await waitFor(() => document.querySelector('.placement-card'));
 
-  assert.deepEqual(reviewRequests, [{ path: 'docs/note.md', skillId: 'ops-review' }]);
+  assert.deepEqual(reviewRequests, [{ path: 'docs/note.md', skillIds: ['reader-fit-review', 'ops-review'] }]);
   assert.match(document.querySelector('.review-summary').textContent, /実行前の前提が足りません/);
   assert.equal(document.querySelector('.placement-severity').textContent, '要対応');
+  assert.equal(document.querySelector('#review-results .placement-skill').textContent, '運用レビュー',
+    'どの観点から出た指摘かは候補のうちから分かる');
   assert.equal(document.querySelector('#review-results .placement-quote').textContent, 'deploy.sh');
   assert.match(document.querySelector('#review-results .placement-unplaced').textContent, /章の冒頭に前提をまとめてほしい/);
   assert.equal(document.querySelector('#comment-count').textContent, '0', '候補のうちはレビューに入らない');
 
   document.querySelector('#review-results [data-placement-action="add"]').click();
   assert.equal(document.querySelector('#comment-count').textContent, '1');
-  await waitFor(() => savedRequests.length === 2, 1600);
-  assert.deepEqual(savedRequests[1].comments.map(({ comment, selectedText, source, review }) => (
+  await waitFor(() => savedRequests.at(-1)?.comments?.length === 1, 1600);
+  assert.deepEqual(savedRequests.at(-1).comments.map(({ comment, selectedText, source, review }) => (
     { comment, selectedText, source, review }
   )), [{
     comment: '実行前に確認することを書いてください',
@@ -804,6 +837,35 @@ test('a PDF has no body to copy, so the copy button stays hidden', async (t) => 
     true,
     '本文を扱えないファイルではコピーボタンを出さない'
   );
+});
+
+test('every side pane scrolls inside itself, so nothing is cut off below the fold', async (t) => {
+  const indexHtml = await fs.readFile(path.join(projectDir, 'public', 'index.html'), 'utf8');
+  const styles = await fs.readFile(path.join(projectDir, 'public', 'style.css'), 'utf8');
+  const { window } = new JSDOM(indexHtml, { url: 'http://localhost/#/' });
+  t.after(() => window.close());
+  const { document } = window;
+
+  // パネルが伸びる部分は、外へはみ出さずここでスクロールします。
+  for (const selector of [
+    '#comments-list', '#export-button',
+    '#ai-context', '#ai-target', '#translation-result', '#ai-messages',
+    '#placement-form', '#placement-results',
+    '#review-skill-list', '#review-persona', '#review-results'
+  ]) {
+    assert.ok(
+      document.querySelector(selector)?.closest('.pane-scroll'),
+      `${selector} はスクロールする領域の中に置く`
+    );
+  }
+  // 送信欄と保存の見出しは、スクロールしても手が届く位置に残します。
+  assert.equal(document.querySelector('#ai-chat-form').closest('.pane-scroll'), null);
+  assert.equal(document.querySelector('#save-button').closest('.pane-scroll'), null);
+
+  for (const panel of ['#comments-panel', '#ai-panel', '#placement-panel', '#review-panel']) {
+    assert.equal(document.querySelectorAll(`${panel} .pane-scroll`).length, 1, `${panel} のスクロール領域は1つ`);
+  }
+  assert.match(styles, /\.pane-scroll \{[^}]*overflow-y: auto;/, '.pane-scroll が実際にスクロールする');
 });
 
 async function renderViews(markdown) {

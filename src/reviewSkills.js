@@ -19,6 +19,11 @@ import { fileURLToPath } from 'node:url';
 export const SKILL_FILE_NAME = 'SKILL.md';
 /** プロンプトへ載せる本文の上限。これを超えたスキルは末尾を落とします。 */
 export const MAX_SKILL_INSTRUCTION_CHARS = 12_000;
+/**
+ * 一度に使えるスキルの数。観点を増やすほど1件あたりの読みは浅くなるので、
+ * 「同時に持てる観点」として現実的なところで止めます。
+ */
+export const MAX_SELECTED_SKILLS = 5;
 
 const SKILL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i;
 const PROJECT_SKILL_DIRS = ['.claude/skills', '.agents/skills'];
@@ -82,6 +87,21 @@ export function parseSkillFile(raw) {
     }
   }
   return { meta, body: body.trim() };
+}
+
+/**
+ * 選ばれたスキルをまとめて読み込みます。順番は選ばれた順のままで、
+ * 同じスキルを二重に渡しても1つとして扱います。
+ */
+export async function readReviewSkills(rootDir, skillIds) {
+  const ids = [...new Set((Array.isArray(skillIds) ? skillIds : [skillIds]).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (ids.length === 0) throw new Error('レビュースキルを1つ以上選んでください');
+  if (ids.length > MAX_SELECTED_SKILLS) {
+    throw new Error(`レビュースキルは一度に${MAX_SELECTED_SKILLS}個まで選べます`);
+  }
+  const skills = [];
+  for (const id of ids) skills.push(await readReviewSkill(rootDir, id));
+  return skills;
 }
 
 function skillDirectories(rootDir) {

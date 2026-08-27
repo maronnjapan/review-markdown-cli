@@ -146,6 +146,11 @@ export function buildReviewMarkdown(review) {
 function appendPersona(lines, persona) {
   if (!persona) return;
   lines.push('## 読み手ペルソナ', '');
+  // そのまま使うペルソナは、レビュアーが書いた文章そのものが読み手の説明です。
+  if (persona.source === 'manual') {
+    lines.push('レビュアーが書いた説明をそのまま使いました。', '', quoteBlock(persona.input), '');
+    return;
+  }
   if (persona.label) lines.push(`- 読み手: ${persona.label}`);
   if (persona.summary) lines.push(`- 要約: ${persona.summary}`);
   for (const [key, label] of Object.entries(PERSONA_FIELD_LABELS)) {

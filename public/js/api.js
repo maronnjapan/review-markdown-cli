@@ -78,6 +78,11 @@ export const api = {
     return fetchJson('/api/ai/review-skills', aiOptions());
   },
 
+  async readReviewSkill(id) {
+    await ensureAiToken();
+    return fetchJson(`/api/ai/review-skill?id=${encodeURIComponent(id)}`, aiOptions());
+  },
+
   async composeAiPersona(payload, options = {}) {
     await ensureAiToken();
     return streamNdjson('/api/ai/persona', payload, { ...options, headers: aiHeaders() });

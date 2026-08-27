@@ -188,7 +188,7 @@ test('the reading context travels with the review, and a context only save keeps
   assert.match(exported, /## 読み取りコンテキスト\n\n第3章。読者は当番の担当者。/);
 });
 
-test('the review endpoints list skills, rebuild a persona, and stream proposals', async (t) => {
+test('the review endpoints list skills, read one, rebuild a persona, and stream proposals', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-ai-review-'));
   await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\nRun the program.\n', 'utf8');
   const calls = [];
@@ -198,15 +198,19 @@ test('the review endpoints list skills, rebuild a persona, and stream proposals'
       calls.push(['skills']);
       return [{ id: 'reader-fit-review', name: '読み手適合レビュー', description: '読み手に届くかを見る。', source: 'builtin' }];
     },
+    async readReviewSkill(skillId) {
+      calls.push(['skill', skillId]);
+      return { id: skillId, name: '読み手適合レビュー', source: 'builtin', instructions: '# 読み手適合レビュー\n\n読めるかを見る。' };
+    },
     async composePersona(documentPath, input) {
       calls.push(['persona', documentPath, input]);
       return { label: '運用当番の新人', goals: ['手順どおり作業する'], input };
     },
-    async reviewDocument(documentPath, { skillId }, { onDelta }) {
-      calls.push(['review', documentPath, skillId]);
+    async reviewDocument(documentPath, { skillIds }, { onDelta }) {
+      calls.push(['review', documentPath, skillIds]);
       onDelta('{"summary":');
       return {
-        skill: { id: skillId, name: '読み手適合レビュー', source: 'builtin' },
+        skills: skillIds.map((id) => ({ id, name: '読み手適合レビュー', source: 'builtin' })),
         summary: 'この読み手には前提が足りません。',
         placements: [{
           comment: '実行前の確認を書いてください',
@@ -237,8 +241,9 @@ test('the review endpoints list skills, rebuild a persona, and stream proposals'
 
   for (const [url, options] of [
     ['/api/ai/review-skills', {}],
+    ['/api/ai/review-skill?id=reader-fit-review', {}],
     ['/api/ai/persona', { method: 'POST', body: JSON.stringify({ path: 'guide.md', input: 'x' }) }],
-    ['/api/ai/review', { method: 'POST', body: JSON.stringify({ path: 'guide.md', skillId: 'reader-fit-review' }) }]
+    ['/api/ai/review', { method: 'POST', body: JSON.stringify({ path: 'guide.md', skillIds: ['reader-fit-review'] }) }]
   ]) {
     const response = await fetch(`${baseUrl}${url}`, { headers: { 'Content-Type': 'application/json' }, ...options });
     assert.equal(response.status, 403, `${url} はトークンなしでは答えない`);
@@ -246,6 +251,11 @@ test('the review endpoints list skills, rebuild a persona, and stream proposals'
 
   const skills = await fetch(`${baseUrl}/api/ai/review-skills`, { headers: withToken }).then((r) => r.json());
   assert.deepEqual(skills.skills.map(({ id }) => id), ['reader-fit-review']);
+
+  // 選ぶ前に、そのスキルが何を見るのかを画面で読めます。
+  const skill = await fetch(`${baseUrl}/api/ai/review-skill?id=reader-fit-review`, { headers: withToken })
+    .then((r) => r.json());
+  assert.match(skill.skill.instructions, /読めるかを見る。/);
 
   const personaEvents = await fetch(`${baseUrl}/api/ai/persona`, {
     method: 'POST',
@@ -258,7 +268,7 @@ test('the review endpoints list skills, rebuild a persona, and stream proposals'
   const reviewEvents = await fetch(`${baseUrl}/api/ai/review`, {
     method: 'POST',
     headers: withToken,
-    body: JSON.stringify({ path: 'guide.md', skillId: 'reader-fit-review' })
+    body: JSON.stringify({ path: 'guide.md', skillIds: ['reader-fit-review', 'ops-review'] })
   }).then(async (response) => (await response.text()).trim().split('\n').map(JSON.parse));
   assert.deepEqual(reviewEvents.map(({ type }) => type), ['started', 'delta', 'result']);
   assert.equal(reviewEvents.at(-1).summary, 'この読み手には前提が足りません。');
@@ -276,14 +286,15 @@ test('the review endpoints list skills, rebuild a persona, and stream proposals'
   assert.equal(opened.review.persona.label, '運用当番の新人', '開き直しても読み手は残る');
   assert.deepEqual(calls, [
     ['skills'],
+    ['skill', 'reader-fit-review'],
     ['persona', 'guide.md', '異動したての運用担当'],
-    ['review', 'guide.md', 'reader-fit-review']
-  ]);
+    ['review', 'guide.md', ['reader-fit-review', 'ops-review']]
+  ], 'スキルは選んだ分だけまとめて渡す');
 
   const outsideRoot = await fetch(`${baseUrl}/api/ai/review`, {
     method: 'POST',
     headers: withToken,
-    body: JSON.stringify({ path: '../secret.md', skillId: 'reader-fit-review' })
+    body: JSON.stringify({ path: '../secret.md', skillIds: ['reader-fit-review'] })
   });
   assert.equal(outsideRoot.status, 400, 'レビュー対象ディレクトリの外は読ませない');
 });

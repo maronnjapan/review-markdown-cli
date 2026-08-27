@@ -142,6 +142,7 @@ function cardHtml(proposal, index) {
         <span class="target-badge" data-type="${escapeHtml(target.type || '')}">${escapeHtml(labelForType(target.type))}</span>
         ${severityHtml(proposal.severity)}
         <span class="placement-confidence" data-confidence="${escapeHtml(proposal.confidence || 'medium')}">${escapeHtml(CONFIDENCE_LABELS[proposal.confidence] || CONFIDENCE_LABELS.medium)}</span>
+        ${skillHtml(proposal.review?.skillName)}
       </div>
       ${headingPath ? `<p class="placement-path">${escapeHtml(headingPath)}</p>` : ''}
       <blockquote class="placement-quote">${escapeHtml(commentTargetText(target))}</blockquote>
@@ -153,6 +154,12 @@ function cardHtml(proposal, index) {
         <button type="button" data-placement-action="dismiss" data-index="${index}">破棄</button>
       </div>
     </article>`;
+}
+
+/** 複数のスキルで読ませたとき、どの観点から出た指摘かはここで分かります。 */
+function skillHtml(skillName) {
+  if (!skillName) return '';
+  return `<span class="placement-skill" title="${escapeHtml(skillName)}">${escapeHtml(skillName)}</span>`;
 }
 
 /** 重みはAIレビューだけが付けます。指摘の配置の候補には出ません。 */
