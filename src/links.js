@@ -3,8 +3,25 @@ import { decodeMarkdownPath, isExternalUrl, splitUrl } from './urlPath.js';
 
 export const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkd']);
 
+/**
+ * Plain-text documents: not Markdown, but still text we can read out and hand
+ * to the clipboard. Anything outside this set and MARKDOWN_EXTENSIONS (PDFs,
+ * images, archives) has no body we can offer as text.
+ */
+export const TEXT_EXTENSIONS = new Set(['.txt', '.text', '.log', '.csv', '.tsv']);
+
 export function isMarkdownPath(relativePath) {
-  return MARKDOWN_EXTENSIONS.has(path.posix.extname(String(relativePath)).toLowerCase());
+  return MARKDOWN_EXTENSIONS.has(extensionOf(relativePath));
+}
+
+/** True when the file's body is text — Markdown or a plain-text file. */
+export function isTextDocumentPath(relativePath) {
+  const extension = extensionOf(relativePath);
+  return MARKDOWN_EXTENSIONS.has(extension) || TEXT_EXTENSIONS.has(extension);
+}
+
+function extensionOf(relativePath) {
+  return path.posix.extname(String(relativePath)).toLowerCase();
 }
 
 export function assetUrlFor(relativeFile, source) {

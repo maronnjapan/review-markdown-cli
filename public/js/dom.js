@@ -15,6 +15,7 @@ const SELECTORS = {
   documentCommentButton: '#document-comment-button',
   documentTranslateButton: '#document-translate-button',
   documentAiButton: '#document-ai-button',
+  copyBodyButton: '#copy-body-button',
 
   commentsTabButton: '#comments-tab-button',
   aiTabButton: '#ai-tab-button',

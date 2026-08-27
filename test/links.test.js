@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { htmlBlockToMarkdown } from '../src/editorMarkdown.js';
-import { resolveDocumentLink } from '../src/links.js';
+import { isTextDocumentPath, resolveDocumentLink } from '../src/links.js';
 import { renderMarkdown } from '../src/markdown.js';
 import { createServer } from '../src/server.js';
 
@@ -123,4 +123,37 @@ test('a link to another Markdown file survives a save through the server', async
   });
 
   assert.equal(await fs.readFile(path.join(root, 'docs', 'intro.md'), 'utf8'), '続きは[次章](./next.md)を参照。\n');
+});
+
+test('Markdown and plain-text files have a text body; PDFs and images do not', () => {
+  for (const textFile of ['README.md', 'docs/guide.markdown', 'notes/memo.TXT', 'data/rows.csv']) {
+    assert.equal(isTextDocumentPath(textFile), true, textFile);
+  }
+  for (const binaryFile of ['spec.pdf', 'images/diagram.png', 'archive.zip', 'LICENSE']) {
+    assert.equal(isTextDocumentPath(binaryFile), false, binaryFile);
+  }
+});
+
+test('the server tells the client which opened files have a text body', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-text-body-'));
+  await fs.writeFile(path.join(root, 'note.md'), '# メモ\n', 'utf8');
+  await fs.writeFile(path.join(root, 'memo.txt'), 'ただのテキスト\n', 'utf8');
+  await fs.writeFile(path.join(root, 'spec.pdf'), '%PDF-1.7\n', 'utf8');
+
+  const { app } = createServer(root);
+  const server = app.listen(0);
+  await new Promise((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const open = (file) => fetch(`${baseUrl}/api/file?path=${file}`).then((response) => response.json());
+
+  assert.equal((await open('note.md')).textBody, true);
+  assert.equal((await open('memo.txt')).textBody, true);
+  assert.equal((await open('spec.pdf')).textBody, false);
 });

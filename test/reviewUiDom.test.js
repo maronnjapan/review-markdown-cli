@@ -530,6 +530,55 @@ test('AI comment placement anchors a pasted note and only saves it once the revi
   );
 });
 
+test('a Markdown body gets a copy button, and a file we cannot read as text does not', async (t) => {
+  const markdown = '# 手順書\n\n最初に環境を用意します。\n';
+  const { document, window } = await startApp(t, 'http://localhost/#/review/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      textBody: true,
+      ...await renderViews(markdown),
+      review: { targetFile: 'guide.md', comments: [] },
+      reviewFile: '.review/guide.md.review.json'
+    })
+  });
+  await waitFor(() => document.querySelector('#markdown-content h1'));
+
+  const copied = [];
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async (text) => { copied.push(text); } }
+  });
+
+  const copyButton = document.querySelector('#copy-body-button');
+  assert.equal(copyButton.classList.contains('hidden'), false, 'Markdownには本文コピーボタンが出る');
+
+  copyButton.click();
+  await waitFor(() => copied.length > 0);
+  assert.equal(copied[0], markdown, '本文をそのままコピーする');
+  assert.match(document.querySelector('#toast-region').textContent, /本文をコピーしました/);
+});
+
+test('a PDF has no body to copy, so the copy button stays hidden', async (t) => {
+  const { document } = await startApp(t, 'http://localhost/#/review/spec.pdf', {
+    '/api/file': async () => ({
+      path: 'spec.pdf',
+      markdown: '%PDF-1.7',
+      textBody: false,
+      ...await renderViews('%PDF-1.7'),
+      review: { targetFile: 'spec.pdf', comments: [] },
+      reviewFile: '.review/spec.pdf.review.json'
+    })
+  });
+  await waitFor(() => document.querySelector('#markdown-content p'));
+
+  assert.equal(
+    document.querySelector('#copy-body-button').classList.contains('hidden'),
+    true,
+    '本文を扱えないファイルではコピーボタンを出さない'
+  );
+});
+
 async function renderViews(markdown) {
   const options = {
     resolveLink: (href) => resolveDocumentLink(href, { relativeFile: 'docs/note.md' })
