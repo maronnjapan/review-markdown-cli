@@ -20,6 +20,7 @@
     "bin/",
     "src/",
     "public/",
+    "skills/",
     "README.md"
   ],
   "engines": {

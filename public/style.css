@@ -331,7 +331,7 @@ button:hover { border-color: var(--primary); color: var(--primary); }
   color: var(--primary);
   font-weight: 700;
 }
-#comments-panel, .ai-panel, .placement-panel {
+#comments-panel, .ai-panel, .placement-panel, .review-panel {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -675,7 +675,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   justify-content: flex-end;
   margin-top: 0.45rem;
 }
-#placement-submit-button {
+#placement-submit-button, #review-run-button, #persona-compose-button {
   background: var(--primary);
   border-color: var(--primary);
   color: #fff;
@@ -718,6 +718,15 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .placement-confidence[data-confidence="high"] { background: #dff3e8; color: #087443; }
 .placement-confidence[data-confidence="medium"] { background: #fff3d6; color: #8a5b00; }
 .placement-confidence[data-confidence="low"] { background: #fdecea; color: #9b2116; }
+.placement-severity {
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.12rem 0.5rem;
+}
+.placement-severity[data-severity="must"] { background: #fdecea; color: #9b2116; }
+.placement-severity[data-severity="should"] { background: #fff3d6; color: #8a5b00; }
+.placement-severity[data-severity="idea"] { background: #eef2ff; color: #3538cd; }
 .placement-path { color: var(--muted); font-size: 0.75rem; margin: 0; }
 .placement-quote {
   border-left: 3px solid var(--primary);
@@ -756,6 +765,93 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 .placement-unplaced h3 { font-size: 0.82rem; margin: 0 0 0.4rem; }
 .placement-unplaced ul { font-size: 0.8rem; margin: 0; padding-left: 1.1rem; }
+
+/* AIレビュー：スキル選択・読み手ペルソナ・レビュー結果 */
+.review-skill {
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.75rem 1rem;
+}
+.review-field-label { font-size: 0.78rem; font-weight: 600; }
+.review-skill select {
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  font: inherit;
+  padding: 0.45rem 0.55rem;
+  width: 100%;
+}
+.review-skill-description {
+  color: var(--muted);
+  font-size: 0.75rem;
+  margin: 0;
+}
+.persona-form { margin-top: 0.5rem; }
+.persona-form textarea {
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  font: inherit;
+  padding: 0.55rem;
+  resize: vertical;
+  width: 100%;
+}
+.persona-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  justify-content: flex-end;
+  margin-top: 0.45rem;
+}
+.persona-result { margin-top: 0.6rem; }
+.persona-result > .muted, .persona-result > .ai-loading { font-size: 0.78rem; margin: 0; }
+.persona-card {
+  background: #f8fafc;
+  border-radius: 12px;
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem 0.85rem;
+}
+.persona-card h3 { font-size: 0.88rem; margin: 0; }
+.persona-summary { color: #475467; font-size: 0.78rem; margin: 0.2rem 0 0; }
+.persona-card dl { display: grid; gap: 0.35rem; margin: 0; }
+.persona-field dt { color: var(--muted); font-size: 0.72rem; }
+.persona-field dd { font-size: 0.8rem; margin: 0.1rem 0 0; }
+.persona-assumptions {
+  border-top: 1px dashed var(--border);
+  padding-top: 0.5rem;
+}
+.persona-assumptions h4 { font-size: 0.76rem; margin: 0 0 0.3rem; }
+.persona-assumptions ul { font-size: 0.78rem; margin: 0; padding-left: 1.1rem; }
+.persona-assumptions-hint { color: var(--muted); font-size: 0.72rem; margin: 0.35rem 0 0; }
+.comment-reviewed {
+  background: #f8fafc;
+  border-radius: 10px;
+  display: grid;
+  gap: 0.3rem;
+  margin: 0.35rem 0 0;
+  padding: 0.55rem 0.65rem;
+}
+.comment-reviewed-label { color: var(--muted); font-size: 0.72rem; margin: 0; }
+.comment-reviewed-quote {
+  border-left: 3px solid var(--primary);
+  font-size: 0.8rem;
+  margin: 0;
+  max-height: 6rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding-left: 0.6rem;
+  white-space: pre-wrap;
+}
+.comment-reviewed-meta { color: var(--muted); font-size: 0.72rem; margin: 0; }
+.comment-reviewed-reason { color: #475467; font-size: 0.76rem; margin: 0; }
+.review-summary {
+  background: #eef6ff;
+  border-radius: 12px;
+  font-size: 0.82rem;
+  margin: 0;
+  padding: 0.7rem 0.85rem;
+  white-space: pre-wrap;
+}
 .reveal-flash {
   background: #eef6ff;
   outline-color: var(--primary);

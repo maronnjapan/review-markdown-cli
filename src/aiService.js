@@ -5,6 +5,9 @@ import { aiContextBlock, hasAiContext, normalizeAiContext, resolveAiContext } fr
 import { AiStore, defaultAiDataDir, translationCacheKey } from './aiStore.js';
 import { CodexAppServer } from './codexAppServer.js';
 import { collectCommentContext, commentContextBlock } from './commentContext.js';
+import { REVIEW_SCHEMA, buildReviewFindings, reviewPrompt } from './documentReview.js';
+import { PERSONA_SCHEMA, buildPersona, normalizePersonaInput, personaPrompt } from './persona.js';
+import { listReviewSkills, readReviewSkill } from './reviewSkills.js';
 import { readReview } from './reviewStore.js';
 import {
   MAX_NOTES_CHARS,
@@ -73,8 +76,8 @@ export class AiService {
    * context plus the one saved with that document's review.
    */
   async readingContext(documentPath) {
-    const { aiContext } = await readReview(this.rootDir, documentPath);
-    return resolveAiContext({ project: this.projectContext, document: aiContext });
+    const { aiContext, persona } = await readReview(this.rootDir, documentPath);
+    return resolveAiContext({ project: this.projectContext, document: aiContext, persona });
   }
 
   async status() {
@@ -144,6 +147,72 @@ export class AiService {
       throw new Error('Codexの配置結果を解析できませんでした');
     }
     return buildPlacements(segments, answer);
+  }
+
+  /** どのレビュースキルを選べるか。Codexは要らないので、起動前でも答えられます。 */
+  listReviewSkills() {
+    return listReviewSkills(this.rootDir);
+  }
+
+  /**
+   * レビュアーの走り書きを、読み手ペルソナへ組み直します。
+   * 保存はしません。組み直した結果を確認したレビュアーが保存します。
+   */
+  async composePersona(documentPath, input, { onDelta, signal } = {}) {
+    const notes = normalizePersonaInput(input);
+    if (!notes) throw new Error('読み手ペルソナの説明を入力してください');
+
+    // 組み直しの材料は走り書きだけです。保存済みのペルソナは前提に混ぜません。
+    const { aiContext } = await readReview(this.rootDir, documentPath);
+    const readingContext = resolveAiContext({ project: this.projectContext, document: aiContext });
+    const threadId = await this.codex.createThread({ ephemeral: true });
+    const { text } = await this.codex.runTurn({
+      threadId,
+      prompt: personaPrompt(notes, aiContextBlock(readingContext)),
+      outputSchema: PERSONA_SCHEMA,
+      onDelta,
+      signal
+    });
+    let answer;
+    try {
+      answer = JSON.parse(text);
+    } catch {
+      throw new Error('Codexが組み直した読み手ペルソナを解析できませんでした');
+    }
+    return buildPersona(answer, notes);
+  }
+
+  /**
+   * 選んだレビュースキルと、保存済みの読み手ペルソナで文書をレビューします。
+   * 返すのはコメント候補で、レビューファイルへは何も書きません。
+   */
+  async reviewDocument(documentPath, { skillId } = {}, { onDelta, signal } = {}) {
+    const skill = await readReviewSkill(this.rootDir, skillId);
+    const markdown = await fs.readFile(path.join(this.rootDir, documentPath), 'utf8');
+    if (markdown.length > MAX_TARGET_CHARS) throw new Error('文書全体が長すぎます。ファイルを分割してください');
+    const segments = await extractDocumentSegments(markdown);
+    if (segments.length === 0) throw new Error('レビューできる本文が見つかりません');
+
+    const readingContext = await this.readingContext(documentPath);
+    const threadId = await this.codex.createThread({ ephemeral: true });
+    const { text } = await this.codex.runTurn({
+      threadId,
+      prompt: reviewPrompt(segments, skill, readingContext),
+      outputSchema: REVIEW_SCHEMA,
+      onDelta,
+      signal
+    });
+    let answer;
+    try {
+      answer = JSON.parse(text);
+    } catch {
+      throw new Error('Codexのレビュー結果を解析できませんでした');
+    }
+    return {
+      skill: { id: skill.id, name: skill.name, source: skill.source },
+      persona: readingContext.persona,
+      ...buildReviewFindings(segments, answer)
+    };
   }
 
   async listConversations(documentPath) {

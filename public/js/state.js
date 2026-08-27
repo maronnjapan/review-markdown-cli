@@ -47,6 +47,17 @@ export function createState() {
     placement: null,
     placementAbortController: null,
 
+    // AI review: the skill it reads with, the reader it reads as, and the
+    // proposals it produced. Proposals are held until the reviewer accepts them.
+    reviewSkills: [],
+    reviewSkillId: '',
+    persona: null,
+    personaDirty: false,
+    personaStatus: 'idle',
+    personaAbortController: null,
+    review: null,
+    reviewAbortController: null,
+
     // Edit mode bookkeeping
     dirtyBlocks: new Set(),
     blockVersions: new Map(),
@@ -81,6 +92,15 @@ export function resetDocumentState(state, filePath) {
   state.placement = null;
   state.placementAbortController?.abort();
   state.placementAbortController = null;
+  // 選んだレビュースキルは文書をまたいでも変わりません。ペルソナは文書ごとです。
+  state.persona = null;
+  state.personaDirty = false;
+  state.personaStatus = 'idle';
+  state.personaAbortController?.abort();
+  state.personaAbortController = null;
+  state.review = null;
+  state.reviewAbortController?.abort();
+  state.reviewAbortController = null;
   state.commentsVersion += 1;
   state.dirtyBlocks.clear();
   state.blockVersions.clear();

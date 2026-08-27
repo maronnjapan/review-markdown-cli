@@ -1,7 +1,8 @@
 const PANES = {
   comments: { panel: 'commentsPanel', tab: 'commentsTabButton' },
   ai: { panel: 'aiPanel', tab: 'aiTabButton' },
-  placement: { panel: 'placementPanel', tab: 'placementTabButton' }
+  placement: { panel: 'placementPanel', tab: 'placementTabButton' },
+  review: { panel: 'reviewPanel', tab: 'reviewTabButton' }
 };
 
 /**

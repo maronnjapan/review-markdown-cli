@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { normalizeAiContext } from './aiContext.js';
+import { PERSONA_FIELD_LABELS, normalizePersona } from './persona.js';
 
 export const REVIEW_DIR = '.review';
 
@@ -35,32 +36,37 @@ export async function readReview(rootDir, relativeFile) {
       targetFile,
       comments: Array.isArray(parsed.comments) ? parsed.comments.map(withCommentStatus) : [],
       aiContext: typeof parsed.aiContext === 'string' ? parsed.aiContext : '',
+      persona: normalizePersona(parsed.persona),
       updatedAt: parsed.updatedAt
     };
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
-    return { targetFile, comments: [], aiContext: '' };
+    return { targetFile, comments: [], aiContext: '', persona: null };
   }
 }
 
 /**
  * Replaces the comments of one review.
  *
- * `aiContext` is the reviewer's reading context for this document. Leaving it
- * out keeps whatever the file already holds, so a plain comment save (or the
- * beacon on the way out of the page) never drops it.
+ * `aiContext` is the reviewer's reading context for this document, and `persona`
+ * the reader it is written for. Leaving either out keeps whatever the file
+ * already holds, so a plain comment save (or the beacon on the way out of the
+ * page) never drops them.
  */
-export async function writeReview(rootDir, relativeFile, comments, { aiContext } = {}) {
+export async function writeReview(rootDir, relativeFile, comments, { aiContext, persona } = {}) {
   const requestedTargetFile = relativeFile.split(path.sep).join('/');
   const { filePath, targetFile } = await findExistingReviewLocation(rootDir, requestedTargetFile);
-  const nextAiContext = aiContext === undefined
-    ? (await readReview(rootDir, requestedTargetFile)).aiContext
-    : normalizeAiContext(aiContext);
+  const saved = aiContext === undefined || persona === undefined
+    ? await readReview(rootDir, requestedTargetFile)
+    : null;
+  const nextAiContext = aiContext === undefined ? saved.aiContext : normalizeAiContext(aiContext);
+  const nextPersona = persona === undefined ? saved.persona : normalizePersona(persona);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const payload = {
     targetFile,
     updatedAt: new Date().toISOString(),
     ...(nextAiContext ? { aiContext: nextAiContext } : {}),
+    ...(nextPersona ? { persona: nextPersona } : {}),
     comments: comments.map((comment) => ({
       ...withCommentStatus(comment),
       id: comment.id || createCommentId(),
@@ -127,6 +133,7 @@ export function buildReviewMarkdown(review) {
 
   const lines = [`# Review for ${review.targetFile}`, ''];
   if (review.aiContext) lines.push('## 読み取りコンテキスト', '', review.aiContext, '');
+  appendPersona(lines, review.persona);
   appendCommentGroup(lines, '文書全体へのコメント', documentComments, renderDocumentComment);
   appendCommentGroup(lines, '範囲選択コメント', selectionComments, renderSelectionComment);
   appendCommentGroup(lines, '段落コメント', paragraphComments, renderParagraphComment);
@@ -135,15 +142,52 @@ export function buildReviewMarkdown(review) {
   return `${lines.join('\n').trim()}\n`;
 }
 
+/** レビュー結果を渡す相手にも、どの読み手を基準に読んだかが要ります。 */
+function appendPersona(lines, persona) {
+  if (!persona) return;
+  lines.push('## 読み手ペルソナ', '');
+  if (persona.label) lines.push(`- 読み手: ${persona.label}`);
+  if (persona.summary) lines.push(`- 要約: ${persona.summary}`);
+  for (const [key, label] of Object.entries(PERSONA_FIELD_LABELS)) {
+    const value = persona[key];
+    if (Array.isArray(value) ? value.length : value) {
+      lines.push(`- ${label}: ${Array.isArray(value) ? value.join(' / ') : value}`);
+    }
+  }
+  if (persona.assumptions?.length) lines.push(`- AIが補った前提: ${persona.assumptions.join(' / ')}`);
+  lines.push('');
+}
+
 function appendCommentGroup(lines, title, comments, renderer) {
   if (comments.length === 0) return;
   lines.push(`## ${title}`, '');
   comments.forEach((comment, index) => {
     lines.push(`### コメント${index + 1}`, '');
     lines.push(`状態: ${comment.status === 'resolved' ? '解決済み' : '未解決'}`, '');
+    lines.push(...renderReviewOrigin(comment));
     lines.push(...renderer(comment));
     lines.push('');
   });
+}
+
+const SEVERITY_LABELS = { must: '要対応', should: '検討', idea: '提案' };
+
+/**
+ * AIレビューから追加したコメントは、どのスキルがどの読み手として読んだ指摘かを添えます。
+ * レビューされた部分そのものは、対象テキストとして各コメントの本体が書き出します。
+ */
+function renderReviewOrigin(comment) {
+  if (!comment.review) return [];
+  const { skillName, persona, severity, reason } = comment.review;
+  const parts = [
+    skillName ? `スキル: ${skillName}` : '',
+    persona ? `読み手: ${persona}` : '',
+    SEVERITY_LABELS[severity] ? `重大度: ${SEVERITY_LABELS[severity]}` : ''
+  ].filter(Boolean);
+  const lines = [];
+  if (parts.length) lines.push(`AIレビュー: ${parts.join(' / ')}`, '');
+  if (reason) lines.push(`判断理由: ${reason}`, '');
+  return lines;
 }
 
 function renderDocumentComment(comment) {
@@ -176,7 +220,7 @@ function renderSectionComment(comment) {
   const heading = comment.heading || comment.targetText || '(対象見出しなし)';
   const lines = [`対象見出し: ${heading}`, ''];
   if (comment.headingPath?.length) lines.push(`見出し階層: ${comment.headingPath.join(' > ')}`, '');
-  lines.push(comment.comment || '(コメント本文なし)');
+  lines.push('コメント:', '', comment.comment || '(コメント本文なし)');
   return lines;
 }
 

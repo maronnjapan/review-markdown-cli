@@ -33,7 +33,10 @@ const ROUTES = [
   { methods: ['POST', 'DELETE'], pathname: '/api/ai/conversation', handle: aiConversation },
   { methods: ['POST'], pathname: '/api/ai/translate', handle: translateWithAi },
   { methods: ['POST'], pathname: '/api/ai/message', handle: sendAiMessage },
-  { methods: ['POST'], pathname: '/api/ai/place-comments', handle: placeAiComments }
+  { methods: ['POST'], pathname: '/api/ai/place-comments', handle: placeAiComments },
+  { methods: ['GET'], pathname: '/api/ai/review-skills', handle: listAiReviewSkills },
+  { methods: ['POST'], pathname: '/api/ai/persona', handle: composeAiPersona },
+  { methods: ['POST'], pathname: '/api/ai/review', handle: reviewWithAi }
 ];
 
 export function createRequestHandler({ rootDir, filter, aiService, aiToken, projectAiContext = '' }) {
@@ -117,6 +120,45 @@ async function placeAiComments(context) {
       onDelta: (delta) => send({ type: 'delta', delta })
     });
     send({ type: 'result', ...placement });
+  });
+}
+
+/** 選べるレビュースキル。Codexを起動しないので、レビュー実行前でも一覧できます。 */
+async function listAiReviewSkills(context) {
+  const { aiService, response } = context;
+  authorizeAiRequest(context);
+  return sendJson(response, { skills: await aiService.listReviewSkills() });
+}
+
+/** レビュアーの走り書きを読み手ペルソナへ組み直します。保存は /api/review です。 */
+async function composeAiPersona(context) {
+  const { rootDir, filter, aiService, request, response } = context;
+  authorizeAiRequest(context);
+  const body = await readJsonBody(request);
+  const relativeFile = reviewTarget(rootDir, filter, body.path);
+  return streamAiResponse(request, response, async ({ send, signal }) => {
+    send({ type: 'started' });
+    const persona = await aiService.composePersona(relativeFile, body.input, {
+      signal,
+      onDelta: (delta) => send({ type: 'delta', delta })
+    });
+    send({ type: 'result', persona });
+  });
+}
+
+/** Reviews one document with the chosen skill. Saving stays with /api/review. */
+async function reviewWithAi(context) {
+  const { rootDir, filter, aiService, request, response } = context;
+  authorizeAiRequest(context);
+  const body = await readJsonBody(request);
+  const relativeFile = reviewTarget(rootDir, filter, body.path);
+  return streamAiResponse(request, response, async ({ send, signal }) => {
+    send({ type: 'started' });
+    const review = await aiService.reviewDocument(relativeFile, { skillId: body.skillId }, {
+      signal,
+      onDelta: (delta) => send({ type: 'delta', delta })
+    });
+    send({ type: 'result', ...review });
   });
 }
 
@@ -214,7 +256,7 @@ async function saveFile({ rootDir, filter, projectAiContext, request, response }
   const filePath = path.join(rootDir, relativeFile);
   const currentMarkdown = await fs.readFile(filePath, 'utf8');
   const { markdown, appliedEdits } = applyBlockEdits(currentMarkdown, body.edits);
-  const review = await writeReview(rootDir, relativeFile, commentsOf(body), aiContextOf(body));
+  const review = await writeReview(rootDir, relativeFile, commentsOf(body), reviewPremiseOf(body));
   await fs.writeFile(filePath, markdown, 'utf8');
 
   return sendJson(response, {
@@ -237,12 +279,12 @@ function openAsset({ rootDir, filter, url, response, headOnly }) {
 async function saveReview({ rootDir, filter, request, response }) {
   const body = await readJsonBody(request);
   const relativeFile = reviewTarget(rootDir, filter, body.path);
-  // A request carrying only the reading context keeps the comments already on file.
+  // A request carrying only the reading context or the persona keeps the comments already on file.
   const comments = Array.isArray(body.comments)
     ? body.comments
     : (await readReview(rootDir, relativeFile)).comments;
   return sendJson(response, {
-    review: await writeReview(rootDir, relativeFile, comments, aiContextOf(body)),
+    review: await writeReview(rootDir, relativeFile, comments, reviewPremiseOf(body)),
     reviewFile: await relativeReviewPath(rootDir, relativeFile)
   });
 }
@@ -271,11 +313,15 @@ function commentsOf(body) {
 }
 
 /**
- * A request that says nothing about the reading context keeps the saved one:
- * the page beacon on the way out carries comments only.
+ * A request that says nothing about the reading context or the reader persona
+ * keeps the saved ones: the page beacon on the way out carries comments only.
+ * `persona: null` is how the reviewer clears the persona.
  */
-function aiContextOf(body) {
-  return typeof body.aiContext === 'string' ? { aiContext: body.aiContext } : {};
+function reviewPremiseOf(body) {
+  return {
+    ...(typeof body.aiContext === 'string' ? { aiContext: body.aiContext } : {}),
+    ...(body.persona !== undefined ? { persona: body.persona } : {})
+  };
 }
 
 

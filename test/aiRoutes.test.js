@@ -187,3 +187,103 @@ test('the reading context travels with the review, and a context only save keeps
   const exported = await fetch(`${baseUrl}/api/export?path=guide.md`).then((response) => response.text());
   assert.match(exported, /## 読み取りコンテキスト\n\n第3章。読者は当番の担当者。/);
 });
+
+test('the review endpoints list skills, rebuild a persona, and stream proposals', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-ai-review-'));
+  await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\nRun the program.\n', 'utf8');
+  const calls = [];
+  const aiService = {
+    async status() { return { available: true, provider: 'codex' }; },
+    async listReviewSkills() {
+      calls.push(['skills']);
+      return [{ id: 'reader-fit-review', name: '読み手適合レビュー', description: '読み手に届くかを見る。', source: 'builtin' }];
+    },
+    async composePersona(documentPath, input) {
+      calls.push(['persona', documentPath, input]);
+      return { label: '運用当番の新人', goals: ['手順どおり作業する'], input };
+    },
+    async reviewDocument(documentPath, { skillId }, { onDelta }) {
+      calls.push(['review', documentPath, skillId]);
+      onDelta('{"summary":');
+      return {
+        skill: { id: skillId, name: '読み手適合レビュー', source: 'builtin' },
+        summary: 'この読み手には前提が足りません。',
+        placements: [{
+          comment: '実行前の確認を書いてください',
+          reason: '対象の段落です',
+          severity: 'must',
+          confidence: 'high',
+          target: { type: 'paragraph', selectedText: 'Run the program.', headingPath: ['Guide'] }
+        }],
+        unplaced: [],
+        droppedPlacements: 0
+      };
+    },
+    close() {}
+  };
+  const { app } = createServer(root, { aiService, aiToken: 'review-token' });
+  const server = app.listen(0);
+  await new Promise((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const withToken = { 'Content-Type': 'application/json', 'X-Review-Markdown-Token': 'review-token' };
+
+  for (const [url, options] of [
+    ['/api/ai/review-skills', {}],
+    ['/api/ai/persona', { method: 'POST', body: JSON.stringify({ path: 'guide.md', input: 'x' }) }],
+    ['/api/ai/review', { method: 'POST', body: JSON.stringify({ path: 'guide.md', skillId: 'reader-fit-review' }) }]
+  ]) {
+    const response = await fetch(`${baseUrl}${url}`, { headers: { 'Content-Type': 'application/json' }, ...options });
+    assert.equal(response.status, 403, `${url} はトークンなしでは答えない`);
+  }
+
+  const skills = await fetch(`${baseUrl}/api/ai/review-skills`, { headers: withToken }).then((r) => r.json());
+  assert.deepEqual(skills.skills.map(({ id }) => id), ['reader-fit-review']);
+
+  const personaEvents = await fetch(`${baseUrl}/api/ai/persona`, {
+    method: 'POST',
+    headers: withToken,
+    body: JSON.stringify({ path: 'guide.md', input: '異動したての運用担当' })
+  }).then(async (response) => (await response.text()).trim().split('\n').map(JSON.parse));
+  assert.deepEqual(personaEvents.map(({ type }) => type), ['started', 'result']);
+  assert.equal(personaEvents.at(-1).persona.label, '運用当番の新人');
+
+  const reviewEvents = await fetch(`${baseUrl}/api/ai/review`, {
+    method: 'POST',
+    headers: withToken,
+    body: JSON.stringify({ path: 'guide.md', skillId: 'reader-fit-review' })
+  }).then(async (response) => (await response.text()).trim().split('\n').map(JSON.parse));
+  assert.deepEqual(reviewEvents.map(({ type }) => type), ['started', 'delta', 'result']);
+  assert.equal(reviewEvents.at(-1).summary, 'この読み手には前提が足りません。');
+  assert.equal(reviewEvents.at(-1).placements[0].severity, 'must');
+
+  // 組み直したペルソナは、レビューではなく保存の要求で初めてファイルへ入ります。
+  const saved = await fetch(`${baseUrl}/api/review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: 'guide.md', persona: personaEvents.at(-1).persona })
+  }).then((response) => response.json());
+  assert.equal(saved.review.persona.label, '運用当番の新人');
+
+  const opened = await fetch(`${baseUrl}/api/file?path=guide.md`).then((response) => response.json());
+  assert.equal(opened.review.persona.label, '運用当番の新人', '開き直しても読み手は残る');
+  assert.deepEqual(calls, [
+    ['skills'],
+    ['persona', 'guide.md', '異動したての運用担当'],
+    ['review', 'guide.md', 'reader-fit-review']
+  ]);
+
+  const outsideRoot = await fetch(`${baseUrl}/api/ai/review`, {
+    method: 'POST',
+    headers: withToken,
+    body: JSON.stringify({ path: '../secret.md', skillId: 'reader-fit-review' })
+  });
+  assert.equal(outsideRoot.status, 400, 'レビュー対象ディレクトリの外は読ませない');
+});

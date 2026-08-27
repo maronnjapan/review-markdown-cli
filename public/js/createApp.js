@@ -12,6 +12,7 @@ import {
 } from './comments.js';
 import { createCommentPlacementController } from './commentPlacement.js';
 import { renderDiagrams } from './diagrams.js';
+import { createDocumentReviewController } from './documentReview.js';
 import { queryRefs } from './dom.js';
 import { createEditor } from './editor.js';
 import { createFileListView } from './fileListView.js';
@@ -43,7 +44,8 @@ export function createApp(document, { api = defaultApi } = {}) {
     save: pushComments,
     // Edit mode saves comments alongside the document, so there is nothing to
     // flush here. The reading context has no other writer, so it always does.
-    hasPendingWork: () => (state.mode !== 'edit' && state.commentsDirty) || state.aiContextDirty
+    hasPendingWork: () => (state.mode !== 'edit' && state.commentsDirty)
+      || state.aiContextDirty || state.personaDirty
   });
   const aiContext = createAiContextController({ refs, state, onChange: markAiContextDirty });
   const editor = createEditor({
@@ -76,6 +78,17 @@ export function createApp(document, { api = defaultApi } = {}) {
     prepareAi: () => ai.prepare(),
     // The AI reads the saved context, so hand it whatever is on screen first.
     flushComments: () => commentSaves.flush(),
+    onAddComments: addComments,
+    onRevealTarget: revealTarget
+  });
+  const documentReview = createDocumentReviewController({
+    refs,
+    state,
+    api,
+    toaster,
+    prepareAi: () => ai.prepare(),
+    flushComments: () => commentSaves.flush(),
+    onPersonaChanged: markPersonaDirty,
     onAddComments: addComments,
     onRevealTarget: revealTarget
   });
@@ -128,11 +141,12 @@ export function createApp(document, { api = defaultApi } = {}) {
       if (await editor.flush()) return true;
       return window.confirm('本文を保存できていません。編集内容を破棄して移動しますか？');
     }
-    if (state.commentsDirty || state.aiContextDirty || commentSaves.isBusy()) {
+    if (state.commentsDirty || state.aiContextDirty || state.personaDirty || commentSaves.isBusy()) {
       if (await commentSaves.flush()) return true;
       if (!window.confirm('コメントを保存できていません。破棄して移動しますか？')) return false;
       state.commentsDirty = false;
       state.aiContextDirty = false;
+      state.personaDirty = false;
     }
     return true;
   }
@@ -164,6 +178,7 @@ export function createApp(document, { api = defaultApi } = {}) {
     content.innerHTML = '<p class="muted">Markdownをレンダリング中...</p>';
     panes.show('comments');
     placement.reset();
+    documentReview.load();
     renderComments();
 
     try {
@@ -188,8 +203,10 @@ export function createApp(document, { api = defaultApi } = {}) {
     if (typeof data.projectAiContext === 'string') state.projectAiContext = data.projectAiContext;
     // A save that carried the context back confirms it; nothing typed since is lost.
     if (!state.aiContextDirty) state.aiContext = data.review?.aiContext || '';
+    if (!state.personaDirty) state.persona = data.review?.persona || null;
     state.commentsDirty = false;
     aiContext.load();
+    documentReview.refresh();
     updateCopyBodyControl();
   }
 
@@ -528,6 +545,15 @@ export function createApp(document, { api = defaultApi } = {}) {
     commentSaves.schedule();
   }
 
+  /** 組み直したペルソナは、コメントと同じ自動保存でレビューファイルへ入ります。 */
+  function markPersonaDirty() {
+    state.personaDirty = true;
+    // Every edit invalidates in-flight saves: their response must not overwrite newer text.
+    state.commentsVersion += 1;
+    if (!state.currentPath) return;
+    commentSaves.schedule();
+  }
+
   function markCommentsDirty() {
     state.commentsDirty = true;
     // Every edit invalidates in-flight saves: their response must not overwrite newer text.
@@ -544,10 +570,11 @@ export function createApp(document, { api = defaultApi } = {}) {
    */
   async function pushComments() {
     if (!state.currentPath) return true;
-    if (state.mode === 'edit' && !state.aiContextDirty) return true;
+    if (state.mode === 'edit' && !state.aiContextDirty && !state.personaDirty) return true;
     const version = state.commentsVersion;
     const path = state.currentPath;
     const savedContext = state.aiContext;
+    const savedPersona = state.persona;
     // Leaving the comments out keeps the ones on file, which is what edit mode wants.
     const savingComments = state.mode !== 'edit';
     setCommentStatus('saving', '保存中…');
@@ -557,10 +584,13 @@ export function createApp(document, { api = defaultApi } = {}) {
       const result = await api.saveComments({
         path,
         comments: savingComments ? state.comments : undefined,
-        aiContext: savedContext
+        aiContext: savedContext,
+        // null は「ペルソナを消す」なので、未変更の undefined と区別して送ります。
+        ...(state.personaDirty ? { persona: savedPersona } : {})
       });
       state.commentSaveFailed = false;
       if (state.currentPath === path && state.aiContext === savedContext) state.aiContextDirty = false;
+      if (state.currentPath === path && state.persona === savedPersona) state.personaDirty = false;
       if (state.commentsVersion !== version || state.currentPath !== path) return true;
       if (savingComments) {
         adoptSavedCommentIds(result.review.comments);
@@ -643,6 +673,7 @@ export function createApp(document, { api = defaultApi } = {}) {
     return editor.hasUnsavedChanges()
       || state.commentsDirty
       || state.aiContextDirty
+      || state.personaDirty
       || state.commentSaveFailed
       || commentSaves.isBusy();
   }
@@ -650,12 +681,13 @@ export function createApp(document, { api = defaultApi } = {}) {
   function beaconComments() {
     if (!state.currentPath) return;
     const savingComments = state.mode === 'comment' && state.commentsDirty;
-    if (!savingComments && !state.aiContextDirty) return;
+    if (!savingComments && !state.aiContextDirty && !state.personaDirty) return;
     api.beaconComments({
       path: state.currentPath,
       // Edit mode owns the comments; only the reading context is ours to send.
       comments: savingComments ? state.comments : undefined,
-      aiContext: state.aiContext
+      aiContext: state.aiContext,
+      ...(state.personaDirty ? { persona: state.persona } : {})
     });
   }
 

@@ -326,7 +326,9 @@ export function createAiController({ refs, state, api, toaster, panes, flushComm
     const hasContext = Boolean((state.aiContext || '').trim() || (state.projectAiContext || '').trim());
     const notes = [
       count ? `この文書のコメント${count}件` : '',
-      hasContext ? '読み取りコンテキスト' : ''
+      hasContext ? '読み取りコンテキスト' : '',
+      // 読み手ペルソナも前提の一部なので、翻訳やチャットにも一緒に渡します。
+      state.persona ? '読み手ペルソナ' : ''
     ].filter(Boolean);
     refs.aiTargetComments.textContent = notes.length ? `${notes.join('と')}も渡します。` : '';
     refs.aiTargetComments.hidden = notes.length === 0;
