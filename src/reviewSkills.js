@@ -14,11 +14,20 @@ import { fileURLToPath } from 'node:url';
  *
  * つまり、原稿と同じリポジトリに置いたスキルが常に勝ちます。同じ id で置き直せば
  * 組み込みスキルの内容も差し替えられます。
+ *
+ * スキルは `references/*.md` に判断材料を分けて置けます。この書き方をしたスキルの
+ * 本文は「references/failure-patterns.md を全文読む」のように参照側を指すので、
+ * こちらが渡さなければ手順の半分が欠けたままレビューが走ります。そのため
+ * `SKILL.md` と同じディレクトリの `references/*.md` も一緒に読み込みます。
  */
 
 export const SKILL_FILE_NAME = 'SKILL.md';
 /** プロンプトへ載せる本文の上限。これを超えたスキルは末尾を落とします。 */
 export const MAX_SKILL_INSTRUCTION_CHARS = 12_000;
+/** 参照ファイルの上限。1スキルの参照全体でこの長さまでを渡します。 */
+export const MAX_SKILL_REFERENCE_CHARS = 12_000;
+/** 参照として読むファイル数。これ以上置いてあるスキルは、名前の順に先頭から読みます。 */
+export const MAX_SKILL_REFERENCE_FILES = 10;
 /**
  * 一度に使えるスキルの数。観点を増やすほど1件あたりの読みは浅くなるので、
  * 「同時に持てる観点」として現実的なところで止めます。
@@ -26,6 +35,7 @@ export const MAX_SKILL_INSTRUCTION_CHARS = 12_000;
 export const MAX_SELECTED_SKILLS = 5;
 
 const SKILL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i;
+const REFERENCE_DIR = 'references';
 const PROJECT_SKILL_DIRS = ['.claude/skills', '.agents/skills'];
 const BUILTIN_SKILL_DIR = fileURLToPath(new URL('../skills/', import.meta.url));
 
@@ -65,7 +75,8 @@ export async function readReviewSkill(rootDir, skillId) {
       name: displayName(meta, id),
       description: meta.description || '',
       source,
-      instructions: body.slice(0, MAX_SKILL_INSTRUCTION_CHARS)
+      instructions: body.slice(0, MAX_SKILL_INSTRUCTION_CHARS),
+      references: await readSkillReferences(path.dirname(filePath))
     };
   }
   throw new Error(`レビュースキルが見つかりません: ${id}`);
@@ -102,6 +113,45 @@ export async function readReviewSkills(rootDir, skillIds) {
   const skills = [];
   for (const id of ids) skills.push(await readReviewSkill(rootDir, id));
   return skills;
+}
+
+/**
+ * `references/*.md` を名前の順に読みます。読めないもの、Markdown でないものは飛ばします。
+ * 参照ファイルを置かないスキルのほうが普通なので、ディレクトリが無いのは異常ではありません。
+ */
+async function readSkillReferences(skillDir) {
+  const dir = path.join(skillDir, REFERENCE_DIR);
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const names = entries
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.md'))
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b, 'en'))
+    .slice(0, MAX_SKILL_REFERENCE_FILES);
+
+  const references = [];
+  let remaining = MAX_SKILL_REFERENCE_CHARS;
+  for (const name of names) {
+    if (remaining <= 0) break;
+    let raw;
+    try {
+      raw = await fs.readFile(path.join(dir, name), 'utf8');
+    } catch {
+      continue;
+    }
+    const body = raw.trim();
+    if (!body) continue;
+    const text = body.slice(0, remaining);
+    remaining -= text.length;
+    // 途中までしか渡せなかったことは隠しません。判断材料が欠けたまま読ませることになるからです。
+    references.push({ name, text, truncated: text.length < body.length });
+  }
+  return references;
 }
 
 function skillDirectories(rootDir) {

@@ -6,7 +6,6 @@ const MAX_PERSONA_INPUT_CHARS = 2_000;
 const MAX_SELECTED_SKILLS = 5;
 
 const EMPTY_HTML = '<p class="muted">レビュースキルを選んで「レビューを実行」を押すと、AIがそのスキルの観点でコメント候補を作ります。</p>';
-const LOADING_HTML = '<p class="ai-loading">レビュー中…</p>';
 
 const PERSONA_FIELDS = [
   ['background', '立場・経験'],
@@ -29,6 +28,10 @@ const PERSONA_FIELDS = [
  * 目的・気にする点へ組み直させるか。組み直した場合は何を補ったかも画面へ出すので、
  * レビュアーは組み直しを見てから採用できます。
  *
+ * レビューは2周します。指摘を出す1周目と、その指摘をAI自身に反証させる2周目です。
+ * どちらを読んでいるかは待ちの表示に出し、2周目で何件落ちたかは結果の先頭に出します。
+ * どれだけ絞り込まれた指摘なのかが分からないと、レビュアーは結局全部読み直すからです。
+ *
  * レビュー結果は「指摘の配置」と同じコメント候補で、追加するまで保存しません。
  */
 export function createDocumentReviewController({
@@ -42,10 +45,13 @@ export function createDocumentReviewController({
     onAddComments,
     onRevealTarget,
     emptyHtml: EMPTY_HTML,
-    loadingHtml: LOADING_HTML,
+    loadingHtml,
     errorPrefix: 'レビューできませんでした',
     read: (current) => current.review,
-    extraHtml: (result) => (result.summary ? `<p class="review-summary">${escapeHtml(result.summary)}</p>` : '')
+    extraHtml: (result) => [
+      result.summary ? `<p class="review-summary">${escapeHtml(result.summary)}</p>` : '',
+      verificationHtml(result)
+    ].join('')
   });
 
   // 書きかけの説明を、保存の往復で消さないための目印です。
@@ -109,7 +115,7 @@ export function createDocumentReviewController({
   }
 
   /**
-   * スキルの本文をその場で開きます。本文はプロンプトへ載せるものと同じで、
+   * スキルの本文をその場で開きます。本文も参照ファイルもプロンプトへ載せるものと同じで、
    * 一度読んだら画面を閉じるまで持っておきます。
    */
   async function toggleSkillDetail(id) {
@@ -123,9 +129,12 @@ export function createDocumentReviewController({
     if (state.reviewSkillDetails.has(id)) return;
     try {
       const result = await api.readReviewSkill(id);
-      state.reviewSkillDetails.set(id, result.skill?.instructions || '');
+      state.reviewSkillDetails.set(id, {
+        instructions: result.skill?.instructions || '',
+        references: result.skill?.references || []
+      });
     } catch (error) {
-      state.reviewSkillDetails.set(id, `スキルの内容を読み込めませんでした: ${error.message}`);
+      state.reviewSkillDetails.set(id, { error: `スキルの内容を読み込めませんでした: ${error.message}` });
     }
     if (state.openReviewSkillIds.has(id)) renderSkills();
   }
@@ -159,8 +168,26 @@ export function createDocumentReviewController({
             ${open ? '詳細を閉じる' : '詳細を見る'}
           </button>
         </div>
-        ${open ? `<pre class="review-skill-detail">${escapeHtml(detail ?? '読み込み中…')}</pre>` : ''}
+        ${open ? skillDetailHtml(detail) : ''}
       </div>`;
+  }
+
+  /**
+   * 開いたスキルの中身。本文のあとに、そのスキルが名指しした参照ファイルを続けます。
+   * ここに出ているものが、そのままレビューのプロンプトへ載ります。
+   */
+  function skillDetailHtml(detail) {
+    if (!detail) return '<pre class="review-skill-detail">読み込み中…</pre>';
+    if (detail.error) return `<pre class="review-skill-detail">${escapeHtml(detail.error)}</pre>`;
+    return [
+      `<pre class="review-skill-detail">${escapeHtml(detail.instructions)}</pre>`,
+      ...detail.references.map((reference) => [
+        `<p class="review-skill-reference">references/${escapeHtml(reference.name)}`,
+        reference.truncated ? '<span>（長いため途中まで渡します）</span>' : '',
+        '</p>',
+        `<pre class="review-skill-detail">${escapeHtml(reference.text)}</pre>`
+      ].join(''))
+    ].join('');
   }
 
   /* ---------------------------------------------------------------- *
@@ -243,6 +270,9 @@ export function createDocumentReviewController({
     refs.personaClearButton.disabled = composing || !state.persona;
     refs.personaState.textContent = state.persona ? '設定済み' : '未設定';
     refs.personaState.dataset.state = state.persona ? 'set' : 'unset';
+    // 読み手が決まっていないレビューは「一般に良い文章か」を見る読みになります。
+    // 実行はできるので止めませんが、何が変わるかは実行前に言っておきます。
+    refs.reviewPersonaHint.classList.toggle('hidden', Boolean(state.persona));
     refs.personaResult.innerHTML = composing
       ? '<p class="ai-loading">読み手ペルソナを組み立て中…</p>'
       : personaHtml(state.persona);
@@ -257,7 +287,7 @@ export function createDocumentReviewController({
     const skillIds = [...state.reviewSkillIds];
     if (skillIds.length === 0) return;
 
-    state.review = { status: 'loading' };
+    state.review = { status: 'loading', phase: 'reading' };
     proposals.render();
     if (!(await prepareAi())) {
       state.review = { status: 'error', error: state.aiStatus?.error || 'Codexを利用できません' };
@@ -272,12 +302,22 @@ export function createDocumentReviewController({
     try {
       // ペルソナと読み取りコンテキストは保存済みのものを読むので、先に保存します。
       await flushComments();
-      const result = await api.reviewWithAi({ path: documentPath, skillIds }, { signal: controller.signal });
+      const result = await api.reviewWithAi({ path: documentPath, skillIds }, {
+        signal: controller.signal,
+        onEvent: (event) => {
+          if (event.type !== 'phase' || state.currentPath !== documentPath) return;
+          state.review = { status: 'loading', phase: event.phase };
+          proposals.render();
+        }
+      });
       if (state.currentPath !== documentPath) return;
       const skills = result.skills || [];
       state.review = {
         status: 'ready',
         summary: result.summary || '',
+        // 2周目まで通ったか、そこで何件落ちたか。残った指摘の重みが変わります。
+        verified: result.verified,
+        refuted: result.refuted || 0,
         // 採用したコメントには、どのスキルがどう判断した指摘かを残します。
         placements: (result.placements || []).map((placement) => ({
           ...placement,
@@ -346,6 +386,31 @@ export function createDocumentReviewController({
   }
 
   return { load, refresh };
+}
+
+/** 2周のうちどちらを読んでいるか。待たされる長さの理由が分かるようにします。 */
+function loadingHtml(result) {
+  return result.phase === 'verifying'
+    ? '<p class="ai-loading">指摘を検証中…（根拠の弱い指摘は取り下げます）</p>'
+    : '<p class="ai-loading">レビュー中…</p>';
+}
+
+/**
+ * AIが自分の指摘を反証した結果。何件落ちたかを出すのは、残った指摘をどれだけ
+ * 信じてよいかがそこで変わるからです。検証できなかったときも黙っては済ませません。
+ */
+function verificationHtml(result) {
+  if (result.verified === undefined) return '';
+  // 指摘が1件も出なかったレビューには、検証する対象もありませんでした。
+  const findings = (result.placements?.length || 0) + (result.unplaced?.length || 0);
+  if (findings === 0 && !result.refuted) return '';
+  if (!result.verified) {
+    return '<p class="review-verification" data-state="skipped">指摘の検証は完了しませんでした。根拠は候補ごとに確かめてください。</p>';
+  }
+  const message = result.refuted > 0
+    ? `AIが自分の指摘を検証し、根拠の弱い${result.refuted}件を取り下げました。`
+    : 'AIが自分の指摘を検証し、取り下げた指摘はありませんでした。';
+  return `<p class="review-verification" data-state="done">${escapeHtml(message)}</p>`;
 }
 
 function personaHtml(persona) {

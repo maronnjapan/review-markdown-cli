@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   MAX_SELECTED_SKILLS,
+  MAX_SKILL_REFERENCE_CHARS,
   listReviewSkills,
   parseSkillFile,
   readReviewSkill,
@@ -112,6 +113,41 @@ test('several skills load together, in the order they were chosen', async (t) =>
   await assert.rejects(() => readReviewSkills(root, ['no-such-skill']), /見つかりません/);
 });
 
+test('a skill that points at references/ gets those files loaded with it', async (t) => {
+  const root = await testRoot(t);
+  await writeSkill(root, '.claude/skills/purpose-review', {
+    title: '目的定義レビュー',
+    description: '目的の定義品質を見る。',
+    body: '## 手順\n\n1. references/failure-patterns.md を全文読む。'
+  });
+  await writeReference(root, '.claude/skills/purpose-review', 'worked-example.md', '# 実例\n\n目的の書き直し例。');
+  await writeReference(root, '.claude/skills/purpose-review', 'failure-patterns.md', '# 失敗パターン\n\n手段の目的化。');
+  await writeReference(root, '.claude/skills/purpose-review', 'notes.txt', 'Markdownではないので渡さない');
+
+  const skill = await readReviewSkill(root, 'purpose-review');
+
+  // スキルの手順が名指しした判断材料をこちらが渡さなければ、その手順は実行できない。
+  assert.deepEqual(skill.references.map(({ name }) => name), ['failure-patterns.md', 'worked-example.md']);
+  assert.match(skill.references[0].text, /手段の目的化/);
+  assert.equal(skill.references[0].truncated, false);
+});
+
+test('a skill without references, and one with more than a prompt can carry', async (t) => {
+  const root = await testRoot(t);
+  await writeSkill(root, '.claude/skills/plain-review', { name: 'plain-review', description: '観点だけのスキル。', body: '手順' });
+  await writeSkill(root, '.claude/skills/heavy-review', { name: 'heavy-review', description: '参照の重いスキル。', body: '手順' });
+  await writeReference(root, '.claude/skills/heavy-review', 'a-long.md', 'あ'.repeat(MAX_SKILL_REFERENCE_CHARS + 500));
+  await writeReference(root, '.claude/skills/heavy-review', 'b-dropped.md', '入りきらない参照');
+
+  assert.deepEqual((await readReviewSkill(root, 'plain-review')).references, [],
+    '参照ファイルを置かないスキルのほうが普通なので、無いのは異常ではない');
+
+  const heavy = await readReviewSkill(root, 'heavy-review');
+  assert.equal(heavy.references.length, 1, '上限を超えた分は渡さない');
+  assert.equal(heavy.references[0].text.length, MAX_SKILL_REFERENCE_CHARS);
+  assert.equal(heavy.references[0].truncated, true, '途中までしか渡していないことは隠さない');
+});
+
 async function testRoot(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-skills-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
@@ -129,4 +165,10 @@ async function writeSkill(root, relativeDir, { name, title, description, body })
     '---'
   ].filter(Boolean).join('\n');
   await fs.writeFile(path.join(dir, 'SKILL.md'), `${frontMatter}\n\n${body}\n`, 'utf8');
+}
+
+async function writeReference(root, relativeDir, name, body) {
+  const dir = path.join(root, ...relativeDir.split('/'), 'references');
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, name), body, 'utf8');
 }

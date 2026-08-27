@@ -710,6 +710,13 @@ test('an AI review runs with the chosen skills and the reader the AI rebuilt fro
   const personaRequests = [];
   const reviewRequests = [];
   const skillDetailRequests = [];
+  // レビューは2周するので、途中でどちらを読んでいるかが画面へ出る。1つずつ流して確かめる。
+  const reviewStream = controlledNdjsonResponse();
+  const reviewComment = [
+    '実行前に確認することを書いてください',
+    '影響: この読み手は、実行してよい状態かを判断できません',
+    '直し方: 「稼働中のジョブを確認する」を手順の前に足してください'
+  ].join('\n');
   const { document, window } = await startApp(t, 'http://localhost/#/review/docs%2Fnote.md', {
     '/api/file': async () => ({
       path: 'docs/note.md',
@@ -728,7 +735,15 @@ test('an AI review runs with the chosen skills and the reader the AI rebuilt fro
     }),
     '/api/ai/review-skill': (input) => {
       skillDetailRequests.push(new URL(input, 'http://localhost').searchParams.get('id'));
-      return { skill: { id: 'ops-review', name: '運用レビュー', source: 'project', instructions: '# 運用レビュー\n\n1. 開始条件が書かれているか' } };
+      return {
+        skill: {
+          id: 'ops-review',
+          name: '運用レビュー',
+          source: 'project',
+          instructions: '# 運用レビュー\n\n1. 開始条件が書かれているか',
+          references: [{ name: 'checklist.md', text: '# 確認するもの\n\n- 稼働中のジョブ', truncated: false }]
+        }
+      };
     },
     '/api/ai/persona': (_input, options) => {
       personaRequests.push(JSON.parse(options.body));
@@ -752,34 +767,7 @@ test('an AI review runs with the chosen skills and the reader the AI rebuilt fro
     },
     '/api/ai/review': (_input, options) => {
       reviewRequests.push(JSON.parse(options.body));
-      return ndjsonResponse([
-        { type: 'started' },
-        {
-          type: 'result',
-          skills: [
-            { id: 'reader-fit-review', name: '読み手適合レビュー', source: 'builtin' },
-            { id: 'ops-review', name: '運用レビュー', source: 'project' }
-          ],
-          persona: { label: '運用当番の新人' },
-          summary: 'この読み手には実行前の前提が足りません。',
-          placements: [{
-            comment: '実行前に確認することを書いてください',
-            reason: 'この読み手は製品を知らないためです',
-            skill: { id: 'ops-review', name: '運用レビュー' },
-            severity: 'must',
-            confidence: 'high',
-            target: {
-              type: 'text-selection',
-              selectedText: 'deploy.sh',
-              contextBefore: '手順 まず',
-              contextAfter: 'を実行します。',
-              headingPath: ['デプロイ手順', '手順']
-            }
-          }],
-          unplaced: [{ note: '章の冒頭に前提をまとめてほしい', reason: '特定の段落に結び付かないためです' }],
-          droppedPlacements: 0
-        }
-      ]);
+      return reviewStream.response;
     },
     '/api/review': (_input, options) => {
       const body = JSON.parse(options.body);
@@ -808,6 +796,9 @@ test('an AI review runs with the chosen skills and the reader the AI rebuilt fro
   skillList.querySelector('[data-skill-detail="ops-review"]').click();
   await waitFor(() => document.querySelector('.review-skill-detail')?.textContent.includes('開始条件'));
   assert.deepEqual(skillDetailRequests, ['ops-review']);
+  // 参照ファイルもプロンプトへ載るので、選ぶ前に本文と同じ場所で読める。
+  assert.equal(document.querySelector('.review-skill-reference').textContent, 'references/checklist.md');
+  assert.match(document.querySelectorAll('.review-skill-detail')[1].textContent, /稼働中のジョブ/);
   skillList.querySelector('[data-skill-detail="ops-review"]').click();
   assert.equal(document.querySelector('.review-skill-detail'), null, 'もう一度押すと閉じる');
 
@@ -819,6 +810,8 @@ test('an AI review runs with the chosen skills and the reader the AI rebuilt fro
 
   // 読み手は走り書きのまま渡し、AIが組み直したものを画面で確かめてから使う。
   assert.equal(document.querySelector('#persona-state').textContent, '未設定');
+  assert.equal(document.querySelector('#review-run-hint').classList.contains('hidden'), false,
+    '読み手を決めないまま実行できるが、何が変わるかは実行前に言う');
   assert.equal(document.querySelector('#persona-compose-button').disabled, true, '説明が空のうちは組み立てられない');
   const personaInput = document.querySelector('#persona-input');
   personaInput.value = '異動したての運用担当。Linuxは触れる。';
@@ -833,6 +826,7 @@ test('an AI review runs with the chosen skills and the reader the AI rebuilt fro
   assert.match(document.querySelector('.persona-assumptions').textContent, /経験1年未満/, 'AIが補った前提は隠さない');
   assert.equal(document.querySelector('#persona-state').textContent, '設定済み');
   assert.equal(document.querySelector('#persona-compose-button').textContent, 'AIで組み直す');
+  assert.equal(document.querySelector('#review-run-hint').classList.contains('hidden'), true);
 
 
   // 組み直したペルソナはコメントと同じ自動保存でレビューファイルへ入る。
@@ -850,10 +844,50 @@ test('an AI review runs with the chosen skills and the reader the AI rebuilt fro
   await waitFor(() => savedRequests.some((request) => request.persona?.source === 'manual'), 1600);
 
   document.querySelector('#review-form').requestSubmit();
+  await waitFor(() => reviewRequests.length === 1);
+
+  // 待たせている間、どちらの読みで待たせているかを出す。
+  reviewStream.send({ type: 'started' });
+  reviewStream.send({ type: 'phase', phase: 'reading' });
+  await waitFor(() => document.querySelector('#review-results .ai-loading')?.textContent === 'レビュー中…');
+  reviewStream.send({ type: 'phase', phase: 'verifying' });
+  await waitFor(() => document.querySelector('#review-results .ai-loading')?.textContent.includes('検証中'));
+  reviewStream.send({
+    type: 'result',
+    skills: [
+      { id: 'reader-fit-review', name: '読み手適合レビュー', source: 'builtin' },
+      { id: 'ops-review', name: '運用レビュー', source: 'project' }
+    ],
+    persona: { label: '運用当番の新人' },
+    summary: 'この読み手には実行前の前提が足りません。',
+    verified: true,
+    refuted: 2,
+    placements: [{
+      comment: reviewComment,
+      reason: 'この読み手は製品を知らないためです',
+      skill: { id: 'ops-review', name: '運用レビュー' },
+      severity: 'must',
+      confidence: 'high',
+      target: {
+        type: 'text-selection',
+        selectedText: 'deploy.sh',
+        contextBefore: '手順 まず',
+        contextAfter: 'を実行します。',
+        headingPath: ['デプロイ手順', '手順']
+      }
+    }],
+    unplaced: [{ note: '章の冒頭に前提をまとめてほしい', reason: '特定の段落に結び付かないためです' }],
+    droppedPlacements: 0
+  });
+  reviewStream.close();
   await waitFor(() => document.querySelector('.placement-card'));
 
   assert.deepEqual(reviewRequests, [{ path: 'docs/note.md', skillIds: ['reader-fit-review', 'ops-review'] }]);
   assert.match(document.querySelector('.review-summary').textContent, /実行前の前提が足りません/);
+  assert.match(document.querySelector('.review-verification').textContent, /根拠の弱い2件を取り下げました/,
+    'どれだけ絞り込まれた指摘なのかが分からないと、レビュアーは結局全部読み直す');
+  assert.equal(document.querySelector('#review-results textarea').rows, 3,
+    '依頼・影響・直し方が採用する前に読める高さで出る');
   assert.equal(document.querySelector('.placement-severity').textContent, '要対応');
   assert.equal(document.querySelector('#review-results .placement-skill').textContent, '運用レビュー',
     'どの観点から出た指摘かは候補のうちから分かる');
@@ -867,7 +901,7 @@ test('an AI review runs with the chosen skills and the reader the AI rebuilt fro
   assert.deepEqual(savedRequests.at(-1).comments.map(({ comment, selectedText, source, review }) => (
     { comment, selectedText, source, review }
   )), [{
-    comment: '実行前に確認することを書いてください',
+    comment: reviewComment,
     selectedText: 'deploy.sh',
     source: 'ai-review',
     review: {

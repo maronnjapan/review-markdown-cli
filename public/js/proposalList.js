@@ -106,7 +106,10 @@ function commentEntry(proposal) {
 
 function resultsHtml(result, { emptyHtml, loadingHtml, errorPrefix, extraHtml }) {
   if (!result) return emptyHtml;
-  if (result.status === 'loading') return loadingHtml;
+  // 待たせる工程が複数あるパネルは、いまどこを読んでいるかで待ちの表示を変えます。
+  if (result.status === 'loading') {
+    return typeof loadingHtml === 'function' ? loadingHtml(result) : loadingHtml;
+  }
   if (result.status === 'error') return `<p class="ai-error">${errorPrefix}: ${escapeHtml(result.error)}</p>`;
 
   const placements = result.placements || [];
@@ -147,13 +150,21 @@ function cardHtml(proposal, index) {
       ${headingPath ? `<p class="placement-path">${escapeHtml(headingPath)}</p>` : ''}
       <blockquote class="placement-quote">${escapeHtml(commentTargetText(target))}</blockquote>
       ${proposal.reason ? `<p class="placement-reason">${escapeHtml(proposal.reason)}</p>` : ''}
-      <textarea data-placement-index="${index}" rows="3">${escapeHtml(proposal.comment || '')}</textarea>
+      <textarea data-placement-index="${index}" rows="${commentRows(proposal.comment)}">${escapeHtml(proposal.comment || '')}</textarea>
       <div class="placement-card-actions">
         <button type="button" data-placement-action="reveal" data-index="${index}">対象を表示</button>
         <button type="button" data-placement-action="add" data-index="${index}">コメントを追加</button>
         <button type="button" data-placement-action="dismiss" data-index="${index}">破棄</button>
       </div>
     </article>`;
+}
+
+/**
+ * 候補の本文がそのまま見える高さ。AIレビューの指摘は依頼・影響・直し方の3行なので、
+ * 固定の高さだと、採用する前に読めるのは1行目だけになってしまいます。
+ */
+function commentRows(comment) {
+  return Math.min(8, Math.max(3, String(comment || '').split('\n').length));
 }
 
 /** 複数のスキルで読ませたとき、どの観点から出た指摘かはここで分かります。 */
