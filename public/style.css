@@ -291,6 +291,21 @@ button:hover { border-color: var(--primary); color: var(--primary); }
 }
 .inline-translate-button, .inline-ai-button { color: var(--primary); }
 .review-target:hover > .inline-target-action { display: inline-block; }
+/* Unlike the hover actions, this one stays visible: it is what tells the
+   reviewer a comment is here and can be read. */
+.comment-marker {
+  background: #f0c94a;
+  border-color: #d9ab26;
+  color: #4a3600;
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.5;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.45rem;
+  vertical-align: middle;
+}
+.comment-marker:hover { background: #e0b52f; border-color: #b98f14; color: #2f2200; }
 .selection-toolbar {
   display: flex;
   gap: 0.25rem;
@@ -405,6 +420,11 @@ button:hover { border-color: var(--primary); color: var(--primary); }
 .comment-card.just-added {
   background: #eef6ff;
   border-color: var(--primary);
+}
+/* Answers "which comment did I just click on in the document?" in the pane. */
+.comment-card.revealed {
+  background: #fff8e6;
+  border-color: #f0c94a;
 }
 .comment-card.confirming { border-color: #d92d20; }
 .comment-confirm {

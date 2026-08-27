@@ -2,7 +2,7 @@ import { api as defaultApi } from './api.js';
 import { createAiController } from './ai.js';
 import { createAiContextController } from './aiContext.js';
 import { createAutosave } from './autosave.js';
-import { renderCommentHighlights } from './commentAnchors.js';
+import { commentIndexesAt, renderCommentHighlights } from './commentAnchors.js';
 import {
   copyCommentTarget,
   createCommentDialog,
@@ -520,11 +520,47 @@ export function createApp(document, { api = defaultApi } = {}) {
       }
     });
     refs.commentCount.textContent = String(state.comments.length);
-    if (state.mode === 'comment') {
-      renderCommentHighlights(content, state.comments, {
-        onSelectExisting: (comment) => dialog.open(copyCommentTarget(comment))
-      });
-    }
+    if (state.mode === 'comment') renderCommentHighlights(content, state.comments);
+  }
+
+  /**
+   * Clicking a highlighted place brings up what was written about it. The
+   * comment lives in the pane, in full and ready to edit, so the click takes the
+   * reviewer there instead of repeating the text over the document.
+   */
+  function revealCommentsFromHighlight(event) {
+    if (state.mode !== 'comment') return;
+    const spot = event.target.closest?.('.comment-highlight-text, .comment-highlight-target');
+    if (!spot) return;
+    // The marker is ours; the other buttons inside a block have their own jobs.
+    const marker = event.target.closest('.comment-marker');
+    if (!marker && event.target.closest('button, a, input, textarea, select')) return;
+    // A click that finished a selection was aimed at the text, not the comment.
+    if (!marker && window.getSelection()?.isCollapsed === false) return;
+    revealComments(commentIndexesAt(spot));
+  }
+
+  function revealCommentsFromKeyboard(event) {
+    if (state.mode !== 'comment' || (event.key !== 'Enter' && event.key !== ' ')) return;
+    const spot = event.target.closest?.('.comment-highlight-text');
+    if (!spot) return;
+    event.preventDefault();
+    revealComments(commentIndexesAt(spot));
+  }
+
+  /** Brings the comments written for one place into view, and flashes them. */
+  function revealComments(indexes) {
+    if (indexes.length === 0) return;
+    panes.show('comments');
+    const cards = indexes
+      .map((index) => refs.commentsList.querySelector(`.comment-card[data-comment-index="${index}"]`))
+      .filter(Boolean);
+    if (cards.length === 0) return;
+    cards[0].scrollIntoView?.({ block: 'nearest' });
+    cards.forEach((card) => {
+      card.classList.add('revealed');
+      setTimeout(() => card.classList.remove('revealed'), REVEAL_FLASH_MS);
+    });
   }
 
   function highlightCommentCard(commentId) {
@@ -703,6 +739,8 @@ export function createApp(document, { api = defaultApi } = {}) {
       if (document.visibilityState === 'hidden') beaconComments();
     });
     document.addEventListener('selectionchange', handleSelectionChange);
+    content.addEventListener('click', revealCommentsFromHighlight);
+    content.addEventListener('keydown', revealCommentsFromKeyboard);
     document.addEventListener('keydown', handleModeShortcut);
     content.addEventListener('pointerdown', (event) => {
       if (event.target.closest?.('button, a, input, textarea, select')) return;
