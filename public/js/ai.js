@@ -9,7 +9,7 @@ const TARGET_LABELS = {
   'text-selection': '範囲選択'
 };
 
-export function createAiController({ refs, state, api, toaster }) {
+export function createAiController({ refs, state, api, toaster, panes, flushComments = async () => true }) {
   let preparePromise = null;
 
   bindEvents();
@@ -51,22 +51,11 @@ export function createAiController({ refs, state, api, toaster }) {
     }
   }
 
-  function showPane(name) {
-    state.sidePane = name;
-    const ai = name === 'ai';
-    refs.commentsPanel.classList.toggle('hidden', ai);
-    refs.aiPanel.classList.toggle('hidden', !ai);
-    refs.commentsTabButton.classList.toggle('active', !ai);
-    refs.aiTabButton.classList.toggle('active', ai);
-    refs.commentsTabButton.setAttribute('aria-selected', String(!ai));
-    refs.aiTabButton.setAttribute('aria-selected', String(ai));
-  }
-
   function ask(target) {
     state.aiTarget = cloneTarget(target);
     state.activeConversationId = null;
     state.translation = null;
-    showPane('ai');
+    panes.show('ai');
     renderTarget();
     renderTranslation();
     renderMessages();
@@ -77,7 +66,7 @@ export function createAiController({ refs, state, api, toaster }) {
   async function translate(target) {
     state.aiTarget = cloneTarget(target);
     state.translation = { status: 'loading' };
-    showPane('ai');
+    panes.show('ai');
     renderTarget();
     renderTranslation();
 
@@ -224,6 +213,8 @@ export function createAiController({ refs, state, api, toaster }) {
 
     let conversation = activeConversation();
     try {
+      // The AI reads the saved review, so hand it whatever is on screen first.
+      await flushComments();
       if (!conversation) {
         const created = await api.createAiConversation({ path: state.currentPath, target: state.aiTarget });
         conversation = created.conversation;
@@ -324,6 +315,14 @@ export function createAiController({ refs, state, api, toaster }) {
     refs.aiTargetText.textContent = target.type === 'document'
       ? '現在の文書全体を会話開始時のスナップショットとして使用します。'
       : target.selectedText || target.targetText || '';
+    renderSharedComments();
+  }
+
+  /** Says what else goes to the AI, so the target quote is not the whole story. */
+  function renderSharedComments() {
+    const count = state.comments.length;
+    refs.aiTargetComments.textContent = count ? `この文書のコメント${count}件も渡します。` : '';
+    refs.aiTargetComments.hidden = count === 0;
   }
 
   function renderTranslation() {
@@ -348,7 +347,7 @@ export function createAiController({ refs, state, api, toaster }) {
     const conversation = activeConversation();
     const messages = conversation?.messages || [];
     if (messages.length === 0 && streaming === null) {
-      refs.aiMessages.innerHTML = '<p class="muted">質問を入力すると、対象文章を含めた読み取り専用の会話を開始します。</p>';
+      refs.aiMessages.innerHTML = '<p class="muted">質問を入力すると、対象文章とこの文書のコメントを含めた読み取り専用の会話を開始します。</p>';
       return;
     }
     refs.aiMessages.innerHTML = [
@@ -369,8 +368,6 @@ export function createAiController({ refs, state, api, toaster }) {
   }
 
   function bindEvents() {
-    refs.commentsTabButton.addEventListener('click', () => showPane('comments'));
-    refs.aiTabButton.addEventListener('click', () => showPane('ai'));
     refs.aiConversationSelect.addEventListener('change', () => selectConversation(refs.aiConversationSelect.value));
     refs.aiNewConversation.addEventListener('click', () => selectConversation(''));
     refs.aiDeleteConversation.addEventListener('click', deleteConversation);
@@ -389,11 +386,12 @@ export function createAiController({ refs, state, api, toaster }) {
   return {
     prepare,
     loadDocument,
-    showPane,
     ask,
     translate,
     prefetchTranslation,
-    cancelTranslationPrefetch
+    cancelTranslationPrefetch,
+    // Comments change while the pane is open, and the pane promises the count.
+    refreshTarget: renderTarget
   };
 }
 

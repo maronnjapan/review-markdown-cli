@@ -63,6 +63,7 @@
           <div class="side-pane-tabs" role="tablist" aria-label="サイドパネル">
             <button id="comments-tab-button" class="active" type="button" role="tab" aria-selected="true">コメント</button>
             <button id="ai-tab-button" type="button" role="tab" aria-selected="false">AI</button>
+            <button id="placement-tab-button" type="button" role="tab" aria-selected="false">指摘の配置</button>
           </div>
           <section id="comments-panel">
             <div class="comments-header">
@@ -96,6 +97,7 @@
               <span id="ai-target-type" class="target-badge"></span>
               <p id="ai-target-path" class="ai-target-path"></p>
               <blockquote id="ai-target-text"></blockquote>
+              <p id="ai-target-comments" class="ai-target-comments" hidden></p>
             </section>
             <section id="translation-result" class="translation-result hidden"></section>
             <div id="ai-messages" class="ai-messages">
@@ -108,6 +110,23 @@
                 <button id="ai-send-button" type="submit">送信</button>
               </div>
             </form>
+          </section>
+          <section id="placement-panel" class="placement-panel hidden" aria-live="polite">
+            <div class="ai-header">
+              <div>
+                <p class="eyebrow">Comment placement</p>
+                <h2>指摘の配置</h2>
+              </div>
+            </div>
+            <p class="placement-hint">指摘コメントを貼り付けると、AIが対象箇所を探してコメント候補を作ります。追加するまでレビューには保存しません。</p>
+            <form id="placement-form" class="placement-form">
+              <textarea id="placement-input" rows="5" placeholder="例：&#10;- 導入が長い。結論を先に書いてほしい&#10;- 図の説明に単位がない"></textarea>
+              <div class="placement-actions">
+                <button id="placement-stop-button" class="hidden" type="button">停止</button>
+                <button id="placement-submit-button" type="submit">対象箇所を探す</button>
+              </div>
+            </form>
+            <div id="placement-results" class="placement-results"></div>
           </section>
         </aside>
       </section>

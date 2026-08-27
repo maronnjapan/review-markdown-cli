@@ -317,7 +317,7 @@ button:hover { border-color: var(--primary); color: var(--primary); }
   border-bottom: 1px solid var(--border);
   display: grid;
   gap: 0.25rem;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   padding: 0.45rem;
 }
 .side-pane-tabs button {
@@ -331,7 +331,7 @@ button:hover { border-color: var(--primary); color: var(--primary); }
   color: var(--primary);
   font-weight: 700;
 }
-#comments-panel, .ai-panel {
+#comments-panel, .ai-panel, .placement-panel {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -426,6 +426,14 @@ button.danger:hover { background: #9b2116; border-color: #9b2116; color: #fff; }
 }
 .comment-status[data-status="open"] { background: #fff3d6; color: #8a5b00; }
 .comment-status[data-status="resolved"] { background: #dff3e8; color: #087443; }
+.comment-source {
+  background: #eef0ff;
+  border-radius: 999px;
+  color: #3b3fa8;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.12rem 0.5rem;
+}
 .target-summary {
   background: #f8fafc;
   border-radius: 10px;
@@ -508,6 +516,11 @@ button.danger:hover { background: #9b2116; border-color: #9b2116; color: #fff; }
   padding-left: 0.65rem;
   white-space: pre-wrap;
 }
+.ai-target-comments {
+  color: var(--muted);
+  font-size: 0.75rem;
+  margin: 0.5rem 0 0;
+}
 .translation-result {
   background: #f4fbf7;
   border-bottom: 1px solid #b9ddc8;
@@ -584,6 +597,112 @@ button.danger:hover { background: #9b2116; border-color: #9b2116; color: #fff; }
   color: #fff;
 }
 button:disabled { cursor: not-allowed; opacity: 0.55; }
+
+.placement-hint {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 0;
+  padding: 0.75rem 1rem 0;
+}
+.placement-form { padding: 0.75rem; }
+.placement-form textarea {
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  padding: 0.65rem;
+  resize: vertical;
+  width: 100%;
+}
+.placement-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 0.45rem;
+}
+#placement-submit-button {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.placement-results {
+  border-top: 1px solid var(--border);
+  display: grid;
+  flex: 1 1 auto;
+  gap: 0.85rem;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1rem;
+}
+.placement-results > .muted, .placement-results > .ai-loading, .placement-results > .ai-error {
+  font-size: 0.85rem;
+  margin: 0;
+}
+.placement-summary {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 0.8rem;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+.placement-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.85rem;
+}
+.placement-card-head { align-items: center; display: flex; gap: 0.4rem; }
+.placement-confidence {
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.12rem 0.5rem;
+}
+.placement-confidence[data-confidence="high"] { background: #dff3e8; color: #087443; }
+.placement-confidence[data-confidence="medium"] { background: #fff3d6; color: #8a5b00; }
+.placement-confidence[data-confidence="low"] { background: #fdecea; color: #9b2116; }
+.placement-path { color: var(--muted); font-size: 0.75rem; margin: 0; }
+.placement-quote {
+  border-left: 3px solid var(--primary);
+  font-size: 0.82rem;
+  margin: 0;
+  max-height: 7rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding-left: 0.65rem;
+  white-space: pre-wrap;
+}
+.placement-reason { color: #475467; font-size: 0.8rem; margin: 0; }
+.placement-card textarea {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.7rem;
+  resize: vertical;
+  width: 100%;
+}
+.placement-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
+.placement-card-actions [data-placement-action="add"] {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.placement-note { color: #8a5b00; font-size: 0.8rem; margin: 0; }
+.placement-unplaced {
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 0.7rem 0.85rem;
+}
+.placement-unplaced h3 { font-size: 0.82rem; margin: 0 0 0.4rem; }
+.placement-unplaced ul { font-size: 0.8rem; margin: 0; padding-left: 1.1rem; }
+.reveal-flash {
+  background: #eef6ff;
+  outline-color: var(--primary);
+}
 
 #comment-dialog {
   border: 0;

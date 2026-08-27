@@ -9,17 +9,20 @@ import {
   renderCommentList,
   statusForComment
 } from './comments.js';
+import { createCommentPlacementController } from './commentPlacement.js';
 import { renderDiagrams } from './diagrams.js';
 import { queryRefs } from './dom.js';
 import { createEditor } from './editor.js';
 import { createFileListView } from './fileListView.js';
 import { createLinkNavigator } from './links.js';
-import { collectHeadingPath, targetTextOf } from './textAnchor.js';
+import { createSidePanes } from './sidePanes.js';
+import { collectHeadingPath, createRangeFor, findTextRange, targetTextOf } from './textAnchor.js';
 import { createToaster } from './toast.js';
 import { createState, resetDocumentState } from './state.js';
 
 const ROUTE_PATTERN = /^#\/review\/([^#]+)(#.*)?$/;
 const SELECTION_CONTEXT_LENGTH = 120;
+const REVEAL_FLASH_MS = 1600;
 
 /**
  * Wires the controllers together and owns the routing between the file list and
@@ -52,7 +55,25 @@ export function createApp(document, { api = defaultApi } = {}) {
     state,
     onError: (message) => toaster.error(message)
   });
-  const ai = createAiController({ refs, state, api, toaster });
+  const panes = createSidePanes({ refs, state });
+  const ai = createAiController({
+    refs,
+    state,
+    api,
+    toaster,
+    panes,
+    // A question about a comment the reviewer just typed needs it saved first.
+    flushComments: () => commentSaves.flush()
+  });
+  const placement = createCommentPlacementController({
+    refs,
+    state,
+    api,
+    toaster,
+    prepareAi: () => ai.prepare(),
+    onAddComments: addComments,
+    onRevealTarget: revealTarget
+  });
 
   let pendingAnchor = '';
   let pendingDeleteId = null;
@@ -62,6 +83,7 @@ export function createApp(document, { api = defaultApi } = {}) {
 
   function start() {
     bindGlobalEvents();
+    panes.bind();
     ai.prepare();
     return route();
   }
@@ -133,7 +155,8 @@ export function createApp(document, { api = defaultApi } = {}) {
     refs.documentTitle.textContent = filePath;
     setCommentStatus('idle', 'コメントは自動保存されます。');
     content.innerHTML = '<p class="muted">Markdownをレンダリング中...</p>';
-    ai.showPane('comments');
+    panes.show('comments');
+    placement.reset();
     renderComments();
 
     try {
@@ -328,15 +351,55 @@ export function createApp(document, { api = defaultApi } = {}) {
    * ---------------------------------------------------------------- */
 
   function addComment(target, text) {
-    const comment = newComment(target, text);
-    state.comments.push(comment);
+    addComments([{ target, comment: text }]);
+  }
+
+  /** One save, one toast, however many comments were accepted at once. */
+  function addComments(entries) {
+    const added = entries.map(({ target, comment }) => {
+      const created = newComment(target, comment);
+      state.comments.push(created);
+      return created;
+    });
+    if (added.length === 0) return;
     renderComments();
     markCommentsDirty();
-    toaster.success(`${state.comments.length}件目のコメントを追加しました。自動保存します。`);
-    highlightCommentCard(comment.id);
+    toaster.success(added.length === 1
+      ? `${state.comments.length}件目のコメントを追加しました。自動保存します。`
+      : `${added.length}件のコメントを追加しました。自動保存します。`);
+    highlightCommentCard(added.at(-1).id);
+  }
+
+  /**
+   * Scrolls to where a proposed comment would land, so the reviewer can check
+   * the AI picked the right place before accepting it.
+   */
+  function revealTarget(target) {
+    if (state.mode !== 'comment') return false;
+    const text = target.selectedText || target.targetText || target.heading || '';
+    const match = text ? findTextRange(content, text, target.contextBefore, target.contextAfter) : null;
+    if (!match) return false;
+
+    const startElement = match.startNode.parentElement;
+    const element = startElement?.closest('.review-target') || startElement;
+    if (!element) return false;
+    element.scrollIntoView?.({ block: 'center' });
+    element.classList.add('reveal-flash');
+    setTimeout(() => element.classList.remove('reveal-flash'), REVEAL_FLASH_MS);
+    selectRange(match);
+    return true;
+  }
+
+  /** Puts the caret on the located text so the exact target is visible, not just its block. */
+  function selectRange(match) {
+    const selection = window.getSelection();
+    if (!selection) return;
+    selection.removeAllRanges();
+    selection.addRange(createRangeFor(content, match));
   }
 
   function renderComments() {
+    ai.refreshTarget();
     renderCommentList(refs.commentsList, {
       comments: state.comments,
       mode: state.mode,

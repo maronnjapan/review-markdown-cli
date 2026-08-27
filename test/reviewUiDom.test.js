@@ -171,6 +171,95 @@ test('paragraph translation and chat use the same read-only target without leaki
   assert.equal(document.querySelector('#ai-panel').textContent.includes('本文に反映'), false);
 });
 
+test('a question from the AI pane saves the comments first and says they are shared', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const requests = [];
+  const conversation = {
+    id: 'conversation-comment-context',
+    documentPath: 'guide.md',
+    title: 'Run the program.',
+    target: { type: 'paragraph', selectedText: 'Run the program.' },
+    messages: []
+  };
+  const { document, window } = await startApp(t, 'http://localhost/#/review/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'guide.md', comments: [] },
+      reviewFile: '.review/guide.md.review.json'
+    }),
+    '/api/review': (_input, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(['review', body]);
+      return {
+        review: {
+          targetFile: 'guide.md',
+          comments: body.comments.map((comment, index) => ({ ...comment, id: `comment-${index}` }))
+        },
+        reviewFile: '.review/guide.md.review.json'
+      };
+    },
+    '/api/ai/status': () => ({
+      token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model', effort: 'low'
+    }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/conversation': (_input, options) => {
+      requests.push(['conversation', JSON.parse(options.body)]);
+      return { conversation };
+    },
+    '/api/ai/message': (_input, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(['message', body]);
+      return ndjsonResponse([
+        { type: 'started' },
+        {
+          type: 'result',
+          conversation: {
+            ...conversation,
+            messages: [
+              { id: 'user-1', role: 'user', content: body.message },
+              { id: 'assistant-1', role: 'assistant', content: '前提条件を先に書くのが良さそうです。' }
+            ]
+          },
+          message: { id: 'assistant-1', role: 'assistant', content: '前提条件を先に書くのが良さそうです。' }
+        }
+      ]);
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-comment-button'));
+
+  const paragraph = document.querySelector('#markdown-content p');
+  paragraph.querySelector('.inline-comment-button').click();
+  const commentInput = document.querySelector('#comment-input');
+  commentInput.value = '実行の前提条件を書いてほしい';
+  commentInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+  document.querySelector('#comment-dialog form').requestSubmit();
+
+  paragraph.querySelector('.inline-ai-button').click();
+  assert.equal(document.querySelector('#ai-target-comments').hidden, false);
+  assert.match(document.querySelector('#ai-target-comments').textContent, /コメント1件も渡します/);
+
+  const input = document.querySelector('#ai-chat-input');
+  input.value = 'この指摘にはどう答えるべき？';
+  document.querySelector('#ai-chat-form').requestSubmit();
+  await waitFor(() => document.querySelectorAll('.ai-message').length === 2);
+
+  assert.deepEqual(
+    requests.map(([type]) => type),
+    ['review', 'conversation', 'message'],
+    'AIへ渡す前に、書いたばかりのコメントを保存する'
+  );
+  assert.equal(requests[0][1].comments[0].comment, '実行の前提条件を書いてほしい');
+
+  // A comment added while the pane is open changes what the next question carries.
+  paragraph.querySelector('.inline-comment-button').click();
+  commentInput.value = '例を足してほしい';
+  commentInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+  document.querySelector('#comment-dialog form').requestSubmit();
+  assert.match(document.querySelector('#ai-target-comments').textContent, /コメント2件も渡します/);
+});
+
 test('finishing a text selection prefetches its translation and streams the contextual meaning first', async (t) => {
   const markdown = '# Guide\n\nClick to run the program.\n';
   const stream = controlledNdjsonResponse();
@@ -333,6 +422,112 @@ test('comments are separated by status and can be resolved or reopened', async (
   assert.equal(document.querySelector('.comment-group[data-status="open"] .comment-group-count').textContent, '1');
   await waitFor(() => savedRequests.length === 2, 1600);
   assert.equal(savedRequests[1].comments[0].status, 'open');
+});
+
+test('AI comment placement anchors a pasted note and only saves it once the reviewer adds it', async (t) => {
+  const markdown = [
+    '# 設計メモ',
+    '',
+    '## 背景',
+    '',
+    'この段落は冗長な説明を含みます。',
+    '',
+    '別の段落です。'
+  ].join('\n');
+  const savedRequests = [];
+  const placementRequests = [];
+  const { document, window } = await startApp(t, 'http://localhost/#/review/docs%2Fnote.md', {
+    '/api/file': async () => ({
+      path: 'docs/note.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'docs/note.md', comments: [] },
+      reviewFile: '.review/docs/note.md.review.json'
+    }),
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model' }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/place-comments': (_input, options) => {
+      placementRequests.push([JSON.parse(options.body), options.headers]);
+      return ndjsonResponse([
+        { type: 'started' },
+        {
+          type: 'result',
+          placements: [{
+            comment: '冗長な説明を削ってほしい',
+            reason: '該当する説明です',
+            confidence: 'high',
+            target: {
+              type: 'text-selection',
+              selectedText: '冗長な説明',
+              contextBefore: '背景 この段落は',
+              contextAfter: 'を含みます。',
+              headingPath: ['設計メモ', '背景']
+            }
+          }],
+          unplaced: [{ note: '全体的に長い', reason: '特定の箇所を選べません' }],
+          droppedPlacements: 0
+        }
+      ]);
+    },
+    '/api/review': (_input, options) => {
+      const body = JSON.parse(options.body);
+      savedRequests.push(body);
+      return { review: { targetFile: 'docs/note.md', comments: body.comments }, reviewFile: '.review/docs/note.md.review.json' };
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content h1'));
+
+  document.querySelector('#placement-tab-button').click();
+  assert.equal(document.querySelector('#placement-panel').classList.contains('hidden'), false);
+  assert.equal(document.querySelector('#comments-panel').classList.contains('hidden'), true);
+
+  assert.equal(document.querySelector('#placement-submit-button').disabled, true, '指摘が空のうちは実行できない');
+  const notes = document.querySelector('#placement-input');
+  notes.value = '- 冗長な説明を削ってほしい\n- 全体的に長い';
+  notes.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(document.querySelector('#placement-submit-button').disabled, false);
+  document.querySelector('#placement-form').requestSubmit();
+  await waitFor(() => document.querySelector('.placement-card'));
+
+  assert.deepEqual(placementRequests[0][0], { path: 'docs/note.md', notes: '- 冗長な説明を削ってほしい\n- 全体的に長い' });
+  assert.equal(placementRequests[0][1]['X-Review-Markdown-Token'], 'ui-ai-token');
+  assert.equal(document.querySelector('.placement-card .target-badge').textContent, '範囲選択');
+  assert.equal(document.querySelector('.placement-quote').textContent, '冗長な説明');
+  assert.equal(document.querySelector('.placement-path').textContent, '設計メモ › 背景');
+  assert.match(document.querySelector('.placement-unplaced').textContent, /全体的に長い/);
+  assert.equal(document.querySelector('#comment-count').textContent, '0', '候補のうちはレビューに入らない');
+  assert.equal(savedRequests.length, 0);
+
+  // Before accepting, the reviewer can check where the proposal would land.
+  document.querySelector('[data-placement-action="reveal"]').click();
+  const revealed = document.querySelector('#markdown-content .reveal-flash');
+  assert.match(revealed.textContent, /この段落は冗長な説明を含みます。/);
+  assert.equal(window.getSelection().toString(), '冗長な説明');
+
+  // The reviewer can reword the proposal before accepting it.
+  const draft = document.querySelector('.placement-card textarea');
+  draft.value = '冗長な説明を削ってください';
+  draft.dispatchEvent(new window.Event('input', { bubbles: true }));
+  document.querySelector('[data-placement-action="add"]').click();
+
+  assert.equal(document.querySelector('#comment-count').textContent, '1');
+  assert.equal(document.querySelector('.placement-card'), null, '追加した候補は一覧から消える');
+  await waitFor(() => savedRequests.length === 1, 1600);
+  assert.deepEqual(savedRequests[0].comments.map(({ comment, type, selectedText, source }) => (
+    { comment, type, selectedText, source }
+  )), [{
+    comment: '冗長な説明を削ってください',
+    type: 'text-selection',
+    selectedText: '冗長な説明',
+    source: 'ai'
+  }]);
+
+  document.querySelector('#comments-tab-button').click();
+  assert.equal(document.querySelector('.comment-source').textContent, 'AI配置');
+  assert.ok(
+    document.querySelector('#markdown-content .comment-highlight-text'),
+    '追加後は本文の対象箇所がハイライトされる'
+  );
 });
 
 async function renderViews(markdown) {
