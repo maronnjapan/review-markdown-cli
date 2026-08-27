@@ -153,6 +153,7 @@ export function createApp(document, { api = defaultApi } = {}) {
     refs.reviewView.classList.remove('hidden');
     refs.exportOutput.hidden = true;
     refs.documentTitle.textContent = filePath;
+    updateCopyBodyControl();
     setCommentStatus('idle', 'コメントは自動保存されます。');
     content.innerHTML = '<p class="muted">Markdownをレンダリング中...</p>';
     panes.show('comments');
@@ -176,8 +177,60 @@ export function createApp(document, { api = defaultApi } = {}) {
     state.markdown = data.markdown;
     state.rawHtml = data.html;
     state.editableHtml = data.editableHtml;
+    state.textBody = data.textBody === true;
     if (data.review?.comments) state.comments = data.review.comments;
     state.commentsDirty = false;
+    updateCopyBodyControl();
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Copying the body
+   * ---------------------------------------------------------------- */
+
+  /**
+   * Only a text body can be handed to the clipboard. A PDF or an image has no
+   * body we could paste anywhere, so the button stays out of the toolbar
+   * instead of sitting there doing nothing.
+   */
+  function updateCopyBodyControl() {
+    refs.copyBodyButton?.classList.toggle('hidden', !state.textBody);
+  }
+
+  async function copyDocumentBody() {
+    if (!state.textBody || !state.currentPath) return;
+    // Edit mode may still hold changes, and what we copy should match the file.
+    if (state.mode === 'edit' && !(await editor.flush())) {
+      toaster.error('本文を保存できていないため、コピーを中止しました。');
+      return;
+    }
+    try {
+      await writeToClipboard(state.markdown);
+      toaster.success('本文をコピーしました。');
+    } catch (error) {
+      toaster.error(`本文をコピーできませんでした: ${error.message}`);
+    }
+  }
+
+  function writeToClipboard(text) {
+    const clipboard = window.navigator?.clipboard;
+    if (clipboard?.writeText) return clipboard.writeText(text);
+    return copyThroughHiddenField(text);
+  }
+
+  /** Fallback for browsers that withhold the async clipboard API on http://. */
+  async function copyThroughHiddenField(text) {
+    const carrier = document.createElement('textarea');
+    carrier.value = text;
+    carrier.setAttribute('readonly', '');
+    carrier.style.position = 'fixed';
+    carrier.style.top = '-1000px';
+    document.body.append(carrier);
+    try {
+      carrier.select();
+      if (!document.execCommand?.('copy')) throw new Error('クリップボードへ書き込めませんでした');
+    } finally {
+      carrier.remove();
+    }
   }
 
   /* ---------------------------------------------------------------- *
@@ -607,6 +660,7 @@ export function createApp(document, { api = defaultApi } = {}) {
     refs.documentCommentButton.addEventListener('click', () => dialog.open({ type: 'document' }));
     refs.documentTranslateButton.addEventListener('click', () => ai.translate({ type: 'document' }));
     refs.documentAiButton.addEventListener('click', () => ai.ask({ type: 'document' }));
+    refs.copyBodyButton?.addEventListener('click', copyDocumentBody);
     refs.saveButton.addEventListener('click', () => commentSaves.run());
     refs.exportButton.addEventListener('click', exportReviewMarkdown);
     refs.commentModeButton.addEventListener('click', () => setMode('comment'));

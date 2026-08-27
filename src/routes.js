@@ -3,7 +3,7 @@ import path from 'node:path';
 import { serveAsset } from './assets.js';
 import { applyBlockEdits } from './editorMarkdown.js';
 import { httpError, readJsonBody, sendBuffer, sendJson, startNdjson } from './http.js';
-import { assetUrlFor, isMarkdownPath, resolveDocumentLink } from './links.js';
+import { assetUrlFor, isMarkdownPath, isTextDocumentPath, resolveDocumentLink } from './links.js';
 import { renderMarkdown } from './markdown.js';
 import { listMarkdownFiles } from './markdownFiles.js';
 import {
@@ -190,6 +190,7 @@ async function openFile({ rootDir, filter, url, response }) {
   return sendJson(response, {
     path: relativeFile,
     markdown,
+    textBody: isTextDocumentPath(relativeFile),
     ...await renderBothViews(markdown, relativeFile, filter),
     review,
     reviewFile: await relativeReviewPath(rootDir, relativeFile)
@@ -210,6 +211,7 @@ async function saveFile({ rootDir, filter, request, response }) {
   return sendJson(response, {
     path: relativeFile,
     markdown,
+    textBody: isTextDocumentPath(relativeFile),
     ...await renderBothViews(markdown, relativeFile, filter),
     appliedEdits,
     review,

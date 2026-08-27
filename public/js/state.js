@@ -15,6 +15,8 @@ export function createState() {
     markdown: '',
     rawHtml: '',
     editableHtml: '',
+    // Only a text body (Markdown or a plain-text file) can be copied out.
+    textBody: false,
     mode: 'comment',
 
     // Review comments
@@ -51,6 +53,7 @@ export function createState() {
 export function resetDocumentState(state, filePath) {
   state.currentPath = filePath;
   state.mode = 'comment';
+  state.textBody = false;
   state.markdown = '';
   state.rawHtml = '';
   state.editableHtml = '';
