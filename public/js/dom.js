@@ -30,6 +30,7 @@ const SELECTORS = {
   aiTargetType: '#ai-target-type',
   aiTargetPath: '#ai-target-path',
   aiTargetText: '#ai-target-text',
+  aiTargetComments: '#ai-target-comments',
   translationResult: '#translation-result',
   aiMessages: '#ai-messages',
   aiChatForm: '#ai-chat-form',

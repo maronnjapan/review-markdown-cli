@@ -171,6 +171,95 @@ test('paragraph translation and chat use the same read-only target without leaki
   assert.equal(document.querySelector('#ai-panel').textContent.includes('本文に反映'), false);
 });
 
+test('a question from the AI pane saves the comments first and says they are shared', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const requests = [];
+  const conversation = {
+    id: 'conversation-comment-context',
+    documentPath: 'guide.md',
+    title: 'Run the program.',
+    target: { type: 'paragraph', selectedText: 'Run the program.' },
+    messages: []
+  };
+  const { document, window } = await startApp(t, 'http://localhost/#/review/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'guide.md', comments: [] },
+      reviewFile: '.review/guide.md.review.json'
+    }),
+    '/api/review': (_input, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(['review', body]);
+      return {
+        review: {
+          targetFile: 'guide.md',
+          comments: body.comments.map((comment, index) => ({ ...comment, id: `comment-${index}` }))
+        },
+        reviewFile: '.review/guide.md.review.json'
+      };
+    },
+    '/api/ai/status': () => ({
+      token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model', effort: 'low'
+    }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/conversation': (_input, options) => {
+      requests.push(['conversation', JSON.parse(options.body)]);
+      return { conversation };
+    },
+    '/api/ai/message': (_input, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(['message', body]);
+      return ndjsonResponse([
+        { type: 'started' },
+        {
+          type: 'result',
+          conversation: {
+            ...conversation,
+            messages: [
+              { id: 'user-1', role: 'user', content: body.message },
+              { id: 'assistant-1', role: 'assistant', content: '前提条件を先に書くのが良さそうです。' }
+            ]
+          },
+          message: { id: 'assistant-1', role: 'assistant', content: '前提条件を先に書くのが良さそうです。' }
+        }
+      ]);
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-comment-button'));
+
+  const paragraph = document.querySelector('#markdown-content p');
+  paragraph.querySelector('.inline-comment-button').click();
+  const commentInput = document.querySelector('#comment-input');
+  commentInput.value = '実行の前提条件を書いてほしい';
+  commentInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+  document.querySelector('#comment-dialog form').requestSubmit();
+
+  paragraph.querySelector('.inline-ai-button').click();
+  assert.equal(document.querySelector('#ai-target-comments').hidden, false);
+  assert.match(document.querySelector('#ai-target-comments').textContent, /コメント1件も渡します/);
+
+  const input = document.querySelector('#ai-chat-input');
+  input.value = 'この指摘にはどう答えるべき？';
+  document.querySelector('#ai-chat-form').requestSubmit();
+  await waitFor(() => document.querySelectorAll('.ai-message').length === 2);
+
+  assert.deepEqual(
+    requests.map(([type]) => type),
+    ['review', 'conversation', 'message'],
+    'AIへ渡す前に、書いたばかりのコメントを保存する'
+  );
+  assert.equal(requests[0][1].comments[0].comment, '実行の前提条件を書いてほしい');
+
+  // A comment added while the pane is open changes what the next question carries.
+  paragraph.querySelector('.inline-comment-button').click();
+  commentInput.value = '例を足してほしい';
+  commentInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+  document.querySelector('#comment-dialog form').requestSubmit();
+  assert.match(document.querySelector('#ai-target-comments').textContent, /コメント2件も渡します/);
+});
+
 test('finishing a text selection prefetches its translation and streams the contextual meaning first', async (t) => {
   const markdown = '# Guide\n\nClick to run the program.\n';
   const stream = controlledNdjsonResponse();
