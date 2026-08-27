@@ -158,6 +158,45 @@ test('renderMarkdown can rewrite image sources relative to the current document'
   assert.match(html, /src="\/api\/asset\?from=book-draft%2F02_drafts%2Fdraft_001\.md&amp;src=\.\.%2Fcaptures%2Fhome\.png"/);
 });
 
+test('the reading context lives with the review and survives a comment only save', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-store-context-'));
+  await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n', 'utf8');
+
+  await writeReview(root, 'guide.md', [], { aiContext: '  入門書の第3章。読者は初学者。  ' });
+  assert.equal((await readReview(root, 'guide.md')).aiContext, '入門書の第3章。読者は初学者。', '前後の空白は落とす');
+
+  await writeReview(root, 'guide.md', [{ type: 'document', comment: '結論を先に' }]);
+  const kept = await readReview(root, 'guide.md');
+  assert.equal(kept.aiContext, '入門書の第3章。読者は初学者。', 'コメントだけの保存では消さない');
+  assert.equal(kept.comments.length, 1);
+
+  await writeReview(root, 'guide.md', kept.comments, { aiContext: '' });
+  assert.equal((await readReview(root, 'guide.md')).aiContext, '', '空文字は取り消しとして扱う');
+  assert.equal(JSON.parse(await fs.readFile(path.join(root, '.review', 'guide.md.review.json'), 'utf8')).aiContext, undefined);
+
+  await assert.rejects(writeReview(root, 'guide.md', [], { aiContext: 'あ'.repeat(4001) }), /長すぎます/);
+});
+
+test('a review without a reading context reads back as an empty one', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-store-nocontext-'));
+  await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n', 'utf8');
+
+  assert.equal((await readReview(root, 'guide.md')).aiContext, '', 'レビューファイルがなくても読める');
+  await writeReview(root, 'guide.md', []);
+  assert.equal((await readReview(root, 'guide.md')).aiContext, '');
+});
+
+test('buildReviewMarkdown puts the reading context ahead of the comments', () => {
+  const markdown = buildReviewMarkdown({
+    targetFile: 'guide.md',
+    aiContext: '入門書の第3章。読者は初学者。',
+    comments: [{ type: 'document', comment: '結論を先に', status: 'open' }]
+  });
+
+  assert.match(markdown, /# Review for guide\.md\n\n## 読み取りコンテキスト\n\n入門書の第3章。読者は初学者。\n\n## 文書全体へのコメント/);
+  assert.doesNotMatch(buildReviewMarkdown({ targetFile: 'guide.md', comments: [] }), /読み取りコンテキスト/);
+});
+
 test('listMarkdownFiles ignores .review, .git, and node_modules directories', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-files-'));
   await fs.mkdir(path.join(root, 'docs'), { recursive: true });

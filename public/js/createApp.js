@@ -1,5 +1,6 @@
 import { api as defaultApi } from './api.js';
 import { createAiController } from './ai.js';
+import { createAiContextController } from './aiContext.js';
 import { createAutosave } from './autosave.js';
 import { renderCommentHighlights } from './commentAnchors.js';
 import {
@@ -9,17 +10,21 @@ import {
   renderCommentList,
   statusForComment
 } from './comments.js';
+import { createCommentPlacementController } from './commentPlacement.js';
 import { renderDiagrams } from './diagrams.js';
+import { createDocumentReviewController } from './documentReview.js';
 import { queryRefs } from './dom.js';
 import { createEditor } from './editor.js';
 import { createFileListView } from './fileListView.js';
 import { createLinkNavigator } from './links.js';
-import { collectHeadingPath, targetTextOf } from './textAnchor.js';
+import { createSidePanes } from './sidePanes.js';
+import { collectHeadingPath, createRangeFor, findTextRange, targetTextOf } from './textAnchor.js';
 import { createToaster } from './toast.js';
 import { createState, resetDocumentState } from './state.js';
 
 const ROUTE_PATTERN = /^#\/review\/([^#]+)(#.*)?$/;
 const SELECTION_CONTEXT_LENGTH = 120;
+const REVEAL_FLASH_MS = 1600;
 
 /**
  * Wires the controllers together and owns the routing between the file list and
@@ -37,9 +42,12 @@ export function createApp(document, { api = defaultApi } = {}) {
   const dialog = createCommentDialog(refs, { onSubmit: addComment });
   const commentSaves = createAutosave({
     save: pushComments,
-    // Edit mode saves comments alongside the document, so there is nothing to flush here.
-    hasPendingWork: () => state.mode !== 'edit' && state.commentsDirty
+    // Edit mode saves comments alongside the document, so there is nothing to
+    // flush here. The reading context has no other writer, so it always does.
+    hasPendingWork: () => (state.mode !== 'edit' && state.commentsDirty)
+      || state.aiContextDirty || state.personaDirty
   });
+  const aiContext = createAiContextController({ refs, state, onChange: markAiContextDirty });
   const editor = createEditor({
     refs,
     state,
@@ -52,7 +60,38 @@ export function createApp(document, { api = defaultApi } = {}) {
     state,
     onError: (message) => toaster.error(message)
   });
-  const ai = createAiController({ refs, state, api, toaster });
+  const panes = createSidePanes({ refs, state });
+  const ai = createAiController({
+    refs,
+    state,
+    api,
+    toaster,
+    panes,
+    // A question about a comment the reviewer just typed needs it saved first.
+    flushComments: () => commentSaves.flush()
+  });
+  const placement = createCommentPlacementController({
+    refs,
+    state,
+    api,
+    toaster,
+    prepareAi: () => ai.prepare(),
+    // The AI reads the saved context, so hand it whatever is on screen first.
+    flushComments: () => commentSaves.flush(),
+    onAddComments: addComments,
+    onRevealTarget: revealTarget
+  });
+  const documentReview = createDocumentReviewController({
+    refs,
+    state,
+    api,
+    toaster,
+    prepareAi: () => ai.prepare(),
+    flushComments: () => commentSaves.flush(),
+    onPersonaChanged: markPersonaDirty,
+    onAddComments: addComments,
+    onRevealTarget: revealTarget
+  });
 
   let pendingAnchor = '';
   let pendingDeleteId = null;
@@ -62,6 +101,7 @@ export function createApp(document, { api = defaultApi } = {}) {
 
   function start() {
     bindGlobalEvents();
+    panes.bind();
     ai.prepare();
     return route();
   }
@@ -101,10 +141,12 @@ export function createApp(document, { api = defaultApi } = {}) {
       if (await editor.flush()) return true;
       return window.confirm('本文を保存できていません。編集内容を破棄して移動しますか？');
     }
-    if (state.commentsDirty || commentSaves.isBusy()) {
+    if (state.commentsDirty || state.aiContextDirty || state.personaDirty || commentSaves.isBusy()) {
       if (await commentSaves.flush()) return true;
       if (!window.confirm('コメントを保存できていません。破棄して移動しますか？')) return false;
       state.commentsDirty = false;
+      state.aiContextDirty = false;
+      state.personaDirty = false;
     }
     return true;
   }
@@ -131,9 +173,12 @@ export function createApp(document, { api = defaultApi } = {}) {
     refs.reviewView.classList.remove('hidden');
     refs.exportOutput.hidden = true;
     refs.documentTitle.textContent = filePath;
+    updateCopyBodyControl();
     setCommentStatus('idle', 'コメントは自動保存されます。');
     content.innerHTML = '<p class="muted">Markdownをレンダリング中...</p>';
-    ai.showPane('comments');
+    panes.show('comments');
+    placement.reset();
+    documentReview.load();
     renderComments();
 
     try {
@@ -153,8 +198,66 @@ export function createApp(document, { api = defaultApi } = {}) {
     state.markdown = data.markdown;
     state.rawHtml = data.html;
     state.editableHtml = data.editableHtml;
+    state.textBody = data.textBody === true;
     if (data.review?.comments) state.comments = data.review.comments;
+    if (typeof data.projectAiContext === 'string') state.projectAiContext = data.projectAiContext;
+    // A save that carried the context back confirms it; nothing typed since is lost.
+    if (!state.aiContextDirty) state.aiContext = data.review?.aiContext || '';
+    if (!state.personaDirty) state.persona = data.review?.persona || null;
     state.commentsDirty = false;
+    aiContext.load();
+    documentReview.refresh();
+    updateCopyBodyControl();
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Copying the body
+   * ---------------------------------------------------------------- */
+
+  /**
+   * Only a text body can be handed to the clipboard. A PDF or an image has no
+   * body we could paste anywhere, so the button stays out of the toolbar
+   * instead of sitting there doing nothing.
+   */
+  function updateCopyBodyControl() {
+    refs.copyBodyButton?.classList.toggle('hidden', !state.textBody);
+  }
+
+  async function copyDocumentBody() {
+    if (!state.textBody || !state.currentPath) return;
+    // Edit mode may still hold changes, and what we copy should match the file.
+    if (state.mode === 'edit' && !(await editor.flush())) {
+      toaster.error('本文を保存できていないため、コピーを中止しました。');
+      return;
+    }
+    try {
+      await writeToClipboard(state.markdown);
+      toaster.success('本文をコピーしました。');
+    } catch (error) {
+      toaster.error(`本文をコピーできませんでした: ${error.message}`);
+    }
+  }
+
+  function writeToClipboard(text) {
+    const clipboard = window.navigator?.clipboard;
+    if (clipboard?.writeText) return clipboard.writeText(text);
+    return copyThroughHiddenField(text);
+  }
+
+  /** Fallback for browsers that withhold the async clipboard API on http://. */
+  async function copyThroughHiddenField(text) {
+    const carrier = document.createElement('textarea');
+    carrier.value = text;
+    carrier.setAttribute('readonly', '');
+    carrier.style.position = 'fixed';
+    carrier.style.top = '-1000px';
+    document.body.append(carrier);
+    try {
+      carrier.select();
+      if (!document.execCommand?.('copy')) throw new Error('クリップボードへ書き込めませんでした');
+    } finally {
+      carrier.remove();
+    }
   }
 
   /* ---------------------------------------------------------------- *
@@ -328,15 +431,55 @@ export function createApp(document, { api = defaultApi } = {}) {
    * ---------------------------------------------------------------- */
 
   function addComment(target, text) {
-    const comment = newComment(target, text);
-    state.comments.push(comment);
+    addComments([{ target, comment: text }]);
+  }
+
+  /** One save, one toast, however many comments were accepted at once. */
+  function addComments(entries) {
+    const added = entries.map(({ target, comment }) => {
+      const created = newComment(target, comment);
+      state.comments.push(created);
+      return created;
+    });
+    if (added.length === 0) return;
     renderComments();
     markCommentsDirty();
-    toaster.success(`${state.comments.length}件目のコメントを追加しました。自動保存します。`);
-    highlightCommentCard(comment.id);
+    toaster.success(added.length === 1
+      ? `${state.comments.length}件目のコメントを追加しました。自動保存します。`
+      : `${added.length}件のコメントを追加しました。自動保存します。`);
+    highlightCommentCard(added.at(-1).id);
+  }
+
+  /**
+   * Scrolls to where a proposed comment would land, so the reviewer can check
+   * the AI picked the right place before accepting it.
+   */
+  function revealTarget(target) {
+    if (state.mode !== 'comment') return false;
+    const text = target.selectedText || target.targetText || target.heading || '';
+    const match = text ? findTextRange(content, text, target.contextBefore, target.contextAfter) : null;
+    if (!match) return false;
+
+    const startElement = match.startNode.parentElement;
+    const element = startElement?.closest('.review-target') || startElement;
+    if (!element) return false;
+    element.scrollIntoView?.({ block: 'center' });
+    element.classList.add('reveal-flash');
+    setTimeout(() => element.classList.remove('reveal-flash'), REVEAL_FLASH_MS);
+    selectRange(match);
+    return true;
+  }
+
+  /** Puts the caret on the located text so the exact target is visible, not just its block. */
+  function selectRange(match) {
+    const selection = window.getSelection();
+    if (!selection) return;
+    selection.removeAllRanges();
+    selection.addRange(createRangeFor(content, match));
   }
 
   function renderComments() {
+    ai.refreshTarget();
     renderCommentList(refs.commentsList, {
       comments: state.comments,
       mode: state.mode,
@@ -392,6 +535,25 @@ export function createApp(document, { api = defaultApi } = {}) {
     setTimeout(() => card.classList.remove('just-added'), 1500);
   }
 
+  function markAiContextDirty() {
+    state.aiContextDirty = true;
+    // Every edit invalidates in-flight saves: their response must not overwrite newer text.
+    state.commentsVersion += 1;
+    // The AI pane promises to say what travels with a question; now it does.
+    ai.refreshTarget();
+    if (!state.currentPath) return;
+    commentSaves.schedule();
+  }
+
+  /** 組み直したペルソナは、コメントと同じ自動保存でレビューファイルへ入ります。 */
+  function markPersonaDirty() {
+    state.personaDirty = true;
+    // Every edit invalidates in-flight saves: their response must not overwrite newer text.
+    state.commentsVersion += 1;
+    if (!state.currentPath) return;
+    commentSaves.schedule();
+  }
+
   function markCommentsDirty() {
     state.commentsDirty = true;
     // Every edit invalidates in-flight saves: their response must not overwrite newer text.
@@ -401,25 +563,47 @@ export function createApp(document, { api = defaultApi } = {}) {
     commentSaves.schedule();
   }
 
-  /** Saves whatever `state.comments` holds right now. */
+  /**
+   * Saves whatever `state.comments` and the reading context hold right now.
+   * Edit mode saves its comments through `/api/file`, so only a changed reading
+   * context brings it here.
+   */
   async function pushComments() {
-    if (state.mode === 'edit' || !state.currentPath) return true;
+    if (!state.currentPath) return true;
+    if (state.mode === 'edit' && !state.aiContextDirty && !state.personaDirty) return true;
     const version = state.commentsVersion;
     const path = state.currentPath;
+    const savedContext = state.aiContext;
+    const savedPersona = state.persona;
+    // Leaving the comments out keeps the ones on file, which is what edit mode wants.
+    const savingComments = state.mode !== 'edit';
     setCommentStatus('saving', '保存中…');
+    aiContext.setStatus('saving');
 
     try {
-      const result = await api.saveComments({ path, comments: state.comments });
+      const result = await api.saveComments({
+        path,
+        comments: savingComments ? state.comments : undefined,
+        aiContext: savedContext,
+        // null は「ペルソナを消す」なので、未変更の undefined と区別して送ります。
+        ...(state.personaDirty ? { persona: savedPersona } : {})
+      });
       state.commentSaveFailed = false;
+      if (state.currentPath === path && state.aiContext === savedContext) state.aiContextDirty = false;
+      if (state.currentPath === path && state.persona === savedPersona) state.personaDirty = false;
       if (state.commentsVersion !== version || state.currentPath !== path) return true;
-      adoptSavedCommentIds(result.review.comments);
-      state.commentsDirty = false;
-      // Re-rendering here would replace the textarea the reviewer is typing in, so don't.
-      setCommentStatus('saved', `自動保存しました ${new Date().toLocaleTimeString()}: ${result.reviewFile}`);
+      if (savingComments) {
+        adoptSavedCommentIds(result.review.comments);
+        state.commentsDirty = false;
+        // Re-rendering here would replace the textarea the reviewer is typing in, so don't.
+        setCommentStatus('saved', `自動保存しました ${new Date().toLocaleTimeString()}: ${result.reviewFile}`);
+      }
+      aiContext.setStatus(state.aiContextDirty ? 'dirty' : 'saved');
       return true;
     } catch (error) {
       state.commentSaveFailed = true;
       setCommentStatus('error', `保存できませんでした: ${error.message}`);
+      aiContext.setStatus('error', `保存できませんでした: ${error.message}`);
       return false;
     }
   }
@@ -488,13 +672,23 @@ export function createApp(document, { api = defaultApi } = {}) {
   function hasUnsavedWork() {
     return editor.hasUnsavedChanges()
       || state.commentsDirty
+      || state.aiContextDirty
+      || state.personaDirty
       || state.commentSaveFailed
       || commentSaves.isBusy();
   }
 
   function beaconComments() {
-    if (state.mode !== 'comment' || !state.currentPath || !state.commentsDirty) return;
-    api.beaconComments({ path: state.currentPath, comments: state.comments });
+    if (!state.currentPath) return;
+    const savingComments = state.mode === 'comment' && state.commentsDirty;
+    if (!savingComments && !state.aiContextDirty && !state.personaDirty) return;
+    api.beaconComments({
+      path: state.currentPath,
+      // Edit mode owns the comments; only the reading context is ours to send.
+      comments: savingComments ? state.comments : undefined,
+      aiContext: state.aiContext,
+      ...(state.personaDirty ? { persona: state.persona } : {})
+    });
   }
 
   function bindGlobalEvents() {
@@ -544,6 +738,7 @@ export function createApp(document, { api = defaultApi } = {}) {
     refs.documentCommentButton.addEventListener('click', () => dialog.open({ type: 'document' }));
     refs.documentTranslateButton.addEventListener('click', () => ai.translate({ type: 'document' }));
     refs.documentAiButton.addEventListener('click', () => ai.ask({ type: 'document' }));
+    refs.copyBodyButton?.addEventListener('click', copyDocumentBody);
     refs.saveButton.addEventListener('click', () => commentSaves.run());
     refs.exportButton.addEventListener('click', exportReviewMarkdown);
     refs.commentModeButton.addEventListener('click', () => setMode('comment'));

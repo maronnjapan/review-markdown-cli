@@ -19,6 +19,18 @@ const STATUS_LABELS = {
   resolved: '解決済み'
 };
 
+/** どのAI機能が置いたコメントか。手で書いたコメントには印を付けません。 */
+const SOURCE_LABELS = {
+  ai: 'AI配置',
+  'ai-review': 'AIレビュー'
+};
+
+const SEVERITY_LABELS = {
+  must: '要対応',
+  should: '検討',
+  idea: '提案'
+};
+
 export function labelForType(type) {
   return TYPE_LABELS[type] || type || 'コメント';
 }
@@ -47,6 +59,9 @@ export function copyCommentTarget(comment) {
   delete target.createdAt;
   delete target.status;
   delete target.targetDetached;
+  // The reviewer is writing this one, whoever placed the comment it reuses.
+  delete target.source;
+  delete target.review;
   return target;
 }
 
@@ -169,14 +184,38 @@ function commentCardHtml(comment, index, readOnly, pendingDeleteId) {
         <div class="comment-meta-labels">
           <strong><span class="target-badge" data-type="${escapeHtml(comment.type || '')}">${escapeHtml(labelForType(comment.type))}</span> ${index + 1}</strong>
           <span class="comment-status" data-status="${status}">${STATUS_LABELS[status]}</span>
+          ${SOURCE_LABELS[comment.source] ? `<span class="comment-source">${escapeHtml(SOURCE_LABELS[comment.source])}</span>` : ''}
         </div>
         <time>${escapeHtml(formatTimestamp(comment.createdAt))}</time>
       </div>
       <p class="target-summary">${escapeHtml(describeTarget(comment))}</p>
+      ${reviewedPartHtml(comment)}
       ${comment.targetDetached ? '<span class="detached-label">編集後の対象を特定できません</span>' : ''}
       <textarea data-comment-index="${index}" rows="4"${disabled}>${escapeHtml(comment.comment || '')}</textarea>
       ${confirming ? deleteConfirmHtml(index) : actionsHtml(index, disabled, status)}
     </article>`;
+}
+
+/**
+ * AIレビューから追加したコメントには、レビューされた部分をそのまま添えます。
+ * どのスキルがどこを読んで書いた指摘か、コメント一覧だけで追えるようにするためです。
+ */
+function reviewedPartHtml(comment) {
+  if (!comment.review) return '';
+  const { skillName, severity, reason, persona } = comment.review;
+  const quoted = commentTargetText(comment);
+  const meta = [
+    skillName ? `スキル: ${skillName}` : '',
+    persona ? `読み手: ${persona}` : '',
+    SEVERITY_LABELS[severity] ? `重大度: ${SEVERITY_LABELS[severity]}` : ''
+  ].filter(Boolean).join(' / ');
+  return `
+    <section class="comment-reviewed">
+      <p class="comment-reviewed-label">レビューされた部分</p>
+      ${quoted ? `<blockquote class="comment-reviewed-quote">${escapeHtml(quoted)}</blockquote>` : ''}
+      ${meta ? `<p class="comment-reviewed-meta">${escapeHtml(meta)}</p>` : ''}
+      ${reason ? `<p class="comment-reviewed-reason">${escapeHtml(reason)}</p>` : ''}
+    </section>`;
 }
 
 function actionsHtml(index, disabled, status) {

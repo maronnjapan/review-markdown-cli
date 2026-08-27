@@ -3,8 +3,28 @@
   "version": "0.1.0",
   "description": "Local CLI and web app for reviewing and directly editing Markdown files.",
   "type": "module",
+  "license": "MIT",
+  "author": "maronnjapan",
+  "homepage": "https://github.com/maronnjapan/review-markdown-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maronnjapan/review-markdown-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/maronnjapan/review-markdown-cli/issues"
+  },
   "bin": {
     "review-markdown": "./bin/markdown-review.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "public/",
+    "skills/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
   },
   "scripts": {
     "start": "node ./bin/markdown-review.js . --no-open",
@@ -13,9 +33,10 @@
   "keywords": [
     "markdown",
     "review",
-    "cli"
+    "cli",
+    "zenn",
+    "editor"
   ],
-  "license": "MIT",
   "dependencies": {
     "cheerio": "^1.2.0",
     "turndown": "^7.2.4",

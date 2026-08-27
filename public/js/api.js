@@ -66,6 +66,26 @@ export const api = {
   async sendAiMessage(payload, options = {}) {
     await ensureAiToken();
     return streamNdjson('/api/ai/message', payload, { ...options, headers: aiHeaders() });
+  },
+
+  async placeAiComments(payload, options = {}) {
+    await ensureAiToken();
+    return streamNdjson('/api/ai/place-comments', payload, { ...options, headers: aiHeaders() });
+  },
+
+  async listReviewSkills() {
+    await ensureAiToken();
+    return fetchJson('/api/ai/review-skills', aiOptions());
+  },
+
+  async composeAiPersona(payload, options = {}) {
+    await ensureAiToken();
+    return streamNdjson('/api/ai/persona', payload, { ...options, headers: aiHeaders() });
+  },
+
+  async reviewWithAi(payload, options = {}) {
+    await ensureAiToken();
+    return streamNdjson('/api/ai/review', payload, { ...options, headers: aiHeaders() });
   }
 };
 

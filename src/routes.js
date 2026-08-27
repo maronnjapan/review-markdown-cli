@@ -3,7 +3,7 @@ import path from 'node:path';
 import { serveAsset } from './assets.js';
 import { applyBlockEdits } from './editorMarkdown.js';
 import { httpError, readJsonBody, sendBuffer, sendJson, startNdjson } from './http.js';
-import { assetUrlFor, isMarkdownPath, resolveDocumentLink } from './links.js';
+import { assetUrlFor, isMarkdownPath, isTextDocumentPath, resolveDocumentLink } from './links.js';
 import { renderMarkdown } from './markdown.js';
 import { listMarkdownFiles } from './markdownFiles.js';
 import {
@@ -32,17 +32,29 @@ const ROUTES = [
   { methods: ['GET'], pathname: '/api/ai/conversations', handle: listAiConversations },
   { methods: ['POST', 'DELETE'], pathname: '/api/ai/conversation', handle: aiConversation },
   { methods: ['POST'], pathname: '/api/ai/translate', handle: translateWithAi },
-  { methods: ['POST'], pathname: '/api/ai/message', handle: sendAiMessage }
+  { methods: ['POST'], pathname: '/api/ai/message', handle: sendAiMessage },
+  { methods: ['POST'], pathname: '/api/ai/place-comments', handle: placeAiComments },
+  { methods: ['GET'], pathname: '/api/ai/review-skills', handle: listAiReviewSkills },
+  { methods: ['POST'], pathname: '/api/ai/persona', handle: composeAiPersona },
+  { methods: ['POST'], pathname: '/api/ai/review', handle: reviewWithAi }
 ];
 
-export function createRequestHandler({ rootDir, filter, aiService, aiToken }) {
+export function createRequestHandler({ rootDir, filter, aiService, aiToken, projectAiContext = '' }) {
   return async function handleRequest(request, response) {
     const url = new URL(request.url, 'http://localhost');
     const route = ROUTES.find((candidate) => (
       candidate.pathname === url.pathname && candidate.methods.includes(request.method)
     ));
     const context = {
-      rootDir, filter, aiService, aiToken, request, response, url, headOnly: request.method === 'HEAD'
+      rootDir,
+      filter,
+      aiService,
+      aiToken,
+      projectAiContext,
+      request,
+      response,
+      url,
+      headOnly: request.method === 'HEAD'
     };
 
     if (route) return route.handle(context);
@@ -92,6 +104,61 @@ async function translateWithAi(context) {
       onDelta: (delta) => send({ type: 'delta', delta })
     });
     send({ type: 'result', translation });
+  });
+}
+
+/** Proposes where the reviewer's notes belong. Saving stays with /api/review. */
+async function placeAiComments(context) {
+  const { rootDir, filter, aiService, request, response } = context;
+  authorizeAiRequest(context);
+  const body = await readJsonBody(request);
+  const relativeFile = reviewTarget(rootDir, filter, body.path);
+  return streamAiResponse(request, response, async ({ send, signal }) => {
+    send({ type: 'started' });
+    const placement = await aiService.placeComments(relativeFile, body.notes, {
+      signal,
+      onDelta: (delta) => send({ type: 'delta', delta })
+    });
+    send({ type: 'result', ...placement });
+  });
+}
+
+/** 選べるレビュースキル。Codexを起動しないので、レビュー実行前でも一覧できます。 */
+async function listAiReviewSkills(context) {
+  const { aiService, response } = context;
+  authorizeAiRequest(context);
+  return sendJson(response, { skills: await aiService.listReviewSkills() });
+}
+
+/** レビュアーの走り書きを読み手ペルソナへ組み直します。保存は /api/review です。 */
+async function composeAiPersona(context) {
+  const { rootDir, filter, aiService, request, response } = context;
+  authorizeAiRequest(context);
+  const body = await readJsonBody(request);
+  const relativeFile = reviewTarget(rootDir, filter, body.path);
+  return streamAiResponse(request, response, async ({ send, signal }) => {
+    send({ type: 'started' });
+    const persona = await aiService.composePersona(relativeFile, body.input, {
+      signal,
+      onDelta: (delta) => send({ type: 'delta', delta })
+    });
+    send({ type: 'result', persona });
+  });
+}
+
+/** Reviews one document with the chosen skill. Saving stays with /api/review. */
+async function reviewWithAi(context) {
+  const { rootDir, filter, aiService, request, response } = context;
+  authorizeAiRequest(context);
+  const body = await readJsonBody(request);
+  const relativeFile = reviewTarget(rootDir, filter, body.path);
+  return streamAiResponse(request, response, async ({ send, signal }) => {
+    send({ type: 'started' });
+    const review = await aiService.reviewDocument(relativeFile, { skillId: body.skillId }, {
+      signal,
+      onDelta: (delta) => send({ type: 'delta', delta })
+    });
+    send({ type: 'result', ...review });
   });
 }
 
@@ -166,20 +233,22 @@ async function listFiles({ rootDir, filter, response }) {
   });
 }
 
-async function openFile({ rootDir, filter, url, response }) {
+async function openFile({ rootDir, filter, projectAiContext, url, response }) {
   const relativeFile = reviewTarget(rootDir, filter, url.searchParams.get('path'));
   const markdown = await fs.readFile(path.join(rootDir, relativeFile), 'utf8');
   const review = await readReview(rootDir, relativeFile);
   return sendJson(response, {
     path: relativeFile,
     markdown,
+    textBody: isTextDocumentPath(relativeFile),
     ...await renderBothViews(markdown, relativeFile, filter),
     review,
+    projectAiContext,
     reviewFile: await relativeReviewPath(rootDir, relativeFile)
   });
 }
 
-async function saveFile({ rootDir, filter, request, response }) {
+async function saveFile({ rootDir, filter, projectAiContext, request, response }) {
   const body = await readJsonBody(request);
   const relativeFile = reviewTarget(rootDir, filter, body.path);
   if (!isMarkdownPath(relativeFile)) throw httpError('Only Markdown files can be edited', 400);
@@ -187,15 +256,17 @@ async function saveFile({ rootDir, filter, request, response }) {
   const filePath = path.join(rootDir, relativeFile);
   const currentMarkdown = await fs.readFile(filePath, 'utf8');
   const { markdown, appliedEdits } = applyBlockEdits(currentMarkdown, body.edits);
-  const review = await writeReview(rootDir, relativeFile, commentsOf(body));
+  const review = await writeReview(rootDir, relativeFile, commentsOf(body), reviewPremiseOf(body));
   await fs.writeFile(filePath, markdown, 'utf8');
 
   return sendJson(response, {
     path: relativeFile,
     markdown,
+    textBody: isTextDocumentPath(relativeFile),
     ...await renderBothViews(markdown, relativeFile, filter),
     appliedEdits,
     review,
+    projectAiContext,
     reviewFile: await relativeReviewPath(rootDir, relativeFile)
   });
 }
@@ -208,8 +279,12 @@ function openAsset({ rootDir, filter, url, response, headOnly }) {
 async function saveReview({ rootDir, filter, request, response }) {
   const body = await readJsonBody(request);
   const relativeFile = reviewTarget(rootDir, filter, body.path);
+  // A request carrying only the reading context or the persona keeps the comments already on file.
+  const comments = Array.isArray(body.comments)
+    ? body.comments
+    : (await readReview(rootDir, relativeFile)).comments;
   return sendJson(response, {
-    review: await writeReview(rootDir, relativeFile, commentsOf(body)),
+    review: await writeReview(rootDir, relativeFile, comments, reviewPremiseOf(body)),
     reviewFile: await relativeReviewPath(rootDir, relativeFile)
   });
 }
@@ -224,11 +299,11 @@ async function exportReview({ rootDir, filter, url, response }) {
   return sendBuffer(response, Buffer.from(markdown, 'utf8'), { 'Content-Type': 'text/markdown; charset=utf-8' }, false);
 }
 
-/** Normalizes the requested path and refuses anything --include/--exclude hides. */
+/** Normalizes the requested path and refuses anything the include/exclude patterns hide. */
 function reviewTarget(rootDir, filter, requestedPath) {
   const relativeFile = normalizeRelativePath(rootDir, requestedPath);
   if (isMarkdownPath(relativeFile) && !filter.matchesFile(relativeFile)) {
-    throw httpError(`このファイルは --include / --exclude によりレビュー対象から外れています: ${relativeFile}`, 404);
+    throw httpError(`このファイルは include / exclude の設定によりレビュー対象から外れています: ${relativeFile}`, 404);
   }
   return relativeFile;
 }
@@ -236,6 +311,19 @@ function reviewTarget(rootDir, filter, requestedPath) {
 function commentsOf(body) {
   return Array.isArray(body.comments) ? body.comments : [];
 }
+
+/**
+ * A request that says nothing about the reading context or the reader persona
+ * keeps the saved ones: the page beacon on the way out carries comments only.
+ * `persona: null` is how the reviewer clears the persona.
+ */
+function reviewPremiseOf(body) {
+  return {
+    ...(typeof body.aiContext === 'string' ? { aiContext: body.aiContext } : {}),
+    ...(body.persona !== undefined ? { persona: body.persona } : {})
+  };
+}
+
 
 /** The reader view and the editable view differ only in the metadata they carry. */
 function renderBothViews(markdown, relativeFile, filter) {

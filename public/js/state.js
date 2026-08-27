@@ -15,10 +15,17 @@ export function createState() {
     markdown: '',
     rawHtml: '',
     editableHtml: '',
+    // Only a text body (Markdown or a plain-text file) can be copied out.
+    textBody: false,
     mode: 'comment',
 
     // Review comments
     comments: [],
+    // What the AI should assume while reading this document, and the directory
+    // wide one the server was started with.
+    aiContext: '',
+    aiContextDirty: false,
+    projectAiContext: '',
     pendingTarget: null,
     currentSelectionTarget: null,
     commentsDirty: false,
@@ -36,6 +43,21 @@ export function createState() {
     translationPrefetch: null,
     aiAbortController: null,
 
+    // AI comment placement proposals, held until the reviewer accepts them
+    placement: null,
+    placementAbortController: null,
+
+    // AI review: the skill it reads with, the reader it reads as, and the
+    // proposals it produced. Proposals are held until the reviewer accepts them.
+    reviewSkills: [],
+    reviewSkillId: '',
+    persona: null,
+    personaDirty: false,
+    personaStatus: 'idle',
+    personaAbortController: null,
+    review: null,
+    reviewAbortController: null,
+
     // Edit mode bookkeeping
     dirtyBlocks: new Set(),
     blockVersions: new Map(),
@@ -47,10 +69,13 @@ export function createState() {
 export function resetDocumentState(state, filePath) {
   state.currentPath = filePath;
   state.mode = 'comment';
+  state.textBody = false;
   state.markdown = '';
   state.rawHtml = '';
   state.editableHtml = '';
   state.comments = [];
+  state.aiContext = '';
+  state.aiContextDirty = false;
   state.pendingTarget = null;
   state.currentSelectionTarget = null;
   state.commentsDirty = false;
@@ -64,6 +89,18 @@ export function resetDocumentState(state, filePath) {
   state.translationPrefetch = null;
   state.aiAbortController?.abort();
   state.aiAbortController = null;
+  state.placement = null;
+  state.placementAbortController?.abort();
+  state.placementAbortController = null;
+  // 選んだレビュースキルは文書をまたいでも変わりません。ペルソナは文書ごとです。
+  state.persona = null;
+  state.personaDirty = false;
+  state.personaStatus = 'idle';
+  state.personaAbortController?.abort();
+  state.personaAbortController = null;
+  state.review = null;
+  state.reviewAbortController?.abort();
+  state.reviewAbortController = null;
   state.commentsVersion += 1;
   state.dirtyBlocks.clear();
   state.blockVersions.clear();
