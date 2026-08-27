@@ -1,8 +1,15 @@
 #!/usr/bin/env node
 import { assertTargetDirectory, parseArgs, USAGE } from '../src/cli.js';
+import { applyConfigToOptions, loadConfig } from '../src/config.js';
+import { CONFIG_USAGE, parseConfigArgs, runConfigCommand } from '../src/configCommand.js';
 import { createServer, listenOnAvailablePort } from '../src/server.js';
 
-const options = readOptions();
+const argv = process.argv.slice(2);
+// `config` is only a subcommand when written exactly like that; a directory of
+// the same name can still be reviewed with `review-markdown ./config`.
+if (argv[0] === 'config') await runConfig(argv.slice(1));
+
+const options = await readOptions();
 if (options.help) {
   console.log(USAGE);
   process.exit(0);
@@ -13,6 +20,7 @@ const { server, port } = await startServer();
 const url = `http://localhost:${port}`;
 
 console.log(`Markdown Review is serving ${rootDir}`);
+if (options.configSources?.length) console.log(`  config: ${options.configSources.join(', ')}`);
 if (filter.include.length) console.log(`  include: ${filter.include.join(', ')}`);
 if (filter.exclude.length) console.log(`  exclude: ${filter.exclude.join(', ')}`);
 if (port !== options.port) {
@@ -31,11 +39,32 @@ const forceExitAfterMs = 500;
 
 process.on('SIGINT', shutdown);
 
-function readOptions() {
+async function runConfig(configArgv) {
   try {
-    const parsed = parseArgs(process.argv.slice(2), process.env);
-    if (!parsed.help) assertTargetDirectory(parsed.targetDir);
-    return parsed;
+    const result = await runConfigCommand(parseConfigArgs(configArgv));
+    for (const line of result.stderr) console.error(line);
+    for (const line of result.stdout) console.log(line);
+    process.exit(result.exitCode);
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+    console.error(`\n${CONFIG_USAGE}`);
+    return process.exit(1);
+  }
+}
+
+async function readOptions() {
+  try {
+    const parsed = parseArgs(argv, process.env);
+    if (parsed.help) return parsed;
+    assertTargetDirectory(parsed.targetDir);
+
+    const loaded = await loadConfig({
+      targetDir: parsed.targetDir,
+      configPath: parsed.configPath,
+      useConfig: parsed.useConfig
+    });
+    for (const warning of loaded.warnings) console.warn(`Warning: ${warning}`);
+    return { ...applyConfigToOptions(parsed, loaded.config), configSources: loaded.sources };
   } catch (error) {
     console.error(`Error: ${error.message}`);
     console.error(`\n${USAGE}`);

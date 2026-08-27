@@ -241,11 +241,11 @@ async function exportReview({ rootDir, filter, url, response }) {
   return sendBuffer(response, Buffer.from(markdown, 'utf8'), { 'Content-Type': 'text/markdown; charset=utf-8' }, false);
 }
 
-/** Normalizes the requested path and refuses anything --include/--exclude hides. */
+/** Normalizes the requested path and refuses anything the include/exclude patterns hide. */
 function reviewTarget(rootDir, filter, requestedPath) {
   const relativeFile = normalizeRelativePath(rootDir, requestedPath);
   if (isMarkdownPath(relativeFile) && !filter.matchesFile(relativeFile)) {
-    throw httpError(`このファイルは --include / --exclude によりレビュー対象から外れています: ${relativeFile}`, 404);
+    throw httpError(`このファイルは include / exclude の設定によりレビュー対象から外れています: ${relativeFile}`, 404);
   }
   return relativeFile;
 }

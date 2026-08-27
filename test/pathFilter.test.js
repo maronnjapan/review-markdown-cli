@@ -16,6 +16,19 @@ test('a pattern without wildcards covers the whole directory below it', () => {
   assert.equal(filter.matchesFile('published/chapter1.md'), true);
 });
 
+test('a single segment pattern matches at any depth, a path pattern stays anchored', () => {
+  const anyDepth = createPathFilter({ exclude: ['drafts', '*.wip.md'] });
+
+  assert.equal(anyDepth.matchesFile('drafts/a.md'), false);
+  assert.equal(anyDepth.matchesFile('book/part1/drafts/a.md'), false);
+  assert.equal(anyDepth.matchesFile('book/part1/plan.wip.md'), false);
+  assert.equal(anyDepth.matchesFile('book/part1/plan.md'), true);
+
+  const anchored = createPathFilter({ exclude: ['/drafts'] });
+  assert.equal(anchored.matchesFile('drafts/a.md'), false);
+  assert.equal(anchored.matchesFile('book/drafts/a.md'), true);
+});
+
 test('wildcards match segments, ** crosses directories and {} picks alternatives', () => {
   const filter = createPathFilter({
     include: ['docs/*.md', '**/chapter-?.md', '{notes,memo}/**']

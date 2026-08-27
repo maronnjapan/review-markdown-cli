@@ -60,7 +60,7 @@ export function resolveDocumentLink(href, { relativeFile, isInScope = () => true
       state: 'filtered',
       href: raw,
       path: target,
-      message: `このリンク先は --include / --exclude によりレビュー対象から外れています: ${target}`
+      message: `このリンク先は include / exclude の設定によりレビュー対象から外れています: ${target}`
     };
   }
 

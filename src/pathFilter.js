@@ -4,7 +4,10 @@
  * Paths are always the POSIX-style relative path from the review root
  * (`docs/guide/intro.md`). Patterns understand `*`, `**`, `?` and `{a,b}`;
  * everything else is literal. A pattern that matches a directory also matches
- * everything below it, so `--exclude drafts` hides the whole `drafts/` subtree.
+ * everything below it, so `--exclude drafts` hides the whole `drafts/` subtree,
+ * and a single segment pattern matches at any depth (`drafts` also hides
+ * `book/drafts/`), which keeps config files short. A leading `/` anchors the
+ * pattern to the review root instead (`/drafts` leaves `book/drafts/` alone).
  */
 
 /** Never walked into, whatever the caller asks for. */
@@ -67,12 +70,13 @@ function splitPatternList(value) {
 }
 
 function normalizePattern(pattern) {
-  return String(pattern)
+  const cleaned = String(pattern)
     .trim()
     .replaceAll('\\', '/')
     .replace(/^\.\//, '')
-    .replace(/^\/+/, '')
     .replace(/\/+$/, '');
+  // A leading `/` is kept as the "anchored to the review root" marker.
+  return cleaned.startsWith('/') ? `/${cleaned.replace(/^\/+/, '')}` : cleaned;
 }
 
 function toSegments(relativePath) {
@@ -83,15 +87,24 @@ function toSegments(relativePath) {
 }
 
 function compilePattern(pattern) {
-  const segments = toSegments(pattern).map((segment) => (
-    segment === '**' ? '**' : segmentRegExp(segment)
-  ));
+  const anchored = String(pattern).startsWith('/');
+  const rawSegments = anchored ? toSegments(pattern) : withAnyDepthPrefix(toSegments(pattern));
+  const segments = rawSegments.map((segment) => (segment === '**' ? '**' : segmentRegExp(segment)));
   return {
     pattern,
     /** A directory pattern implicitly covers everything below it. */
     matches: (pathSegments) => matchSegments(segments, pathSegments, true),
     couldMatchInside: (dirSegments) => matchSegments(segments, dirSegments, false)
   };
+}
+
+/**
+ * A pattern made of a single segment (`drafts`, `*.wip.md`) matches at any
+ * depth, the way `.gitignore` entries do; write `/drafts` when only the top
+ * level should match.
+ */
+function withAnyDepthPrefix(segments) {
+  return segments.length === 1 && segments[0] !== '**' ? ['**', ...segments] : segments;
 }
 
 /**
