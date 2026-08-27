@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { normalizeAiContext } from './aiContext.js';
 
 export const REVIEW_DIR = '.review';
 
@@ -33,21 +34,33 @@ export async function readReview(rootDir, relativeFile) {
     return {
       targetFile,
       comments: Array.isArray(parsed.comments) ? parsed.comments.map(withCommentStatus) : [],
+      aiContext: typeof parsed.aiContext === 'string' ? parsed.aiContext : '',
       updatedAt: parsed.updatedAt
     };
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
-    return { targetFile, comments: [] };
+    return { targetFile, comments: [], aiContext: '' };
   }
 }
 
-export async function writeReview(rootDir, relativeFile, comments) {
+/**
+ * Replaces the comments of one review.
+ *
+ * `aiContext` is the reviewer's reading context for this document. Leaving it
+ * out keeps whatever the file already holds, so a plain comment save (or the
+ * beacon on the way out of the page) never drops it.
+ */
+export async function writeReview(rootDir, relativeFile, comments, { aiContext } = {}) {
   const requestedTargetFile = relativeFile.split(path.sep).join('/');
   const { filePath, targetFile } = await findExistingReviewLocation(rootDir, requestedTargetFile);
+  const nextAiContext = aiContext === undefined
+    ? (await readReview(rootDir, requestedTargetFile)).aiContext
+    : normalizeAiContext(aiContext);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const payload = {
     targetFile,
     updatedAt: new Date().toISOString(),
+    ...(nextAiContext ? { aiContext: nextAiContext } : {}),
     comments: comments.map((comment) => ({
       ...withCommentStatus(comment),
       id: comment.id || createCommentId(),
@@ -113,6 +126,7 @@ export function buildReviewMarkdown(review) {
   );
 
   const lines = [`# Review for ${review.targetFile}`, ''];
+  if (review.aiContext) lines.push('## 読み取りコンテキスト', '', review.aiContext, '');
   appendCommentGroup(lines, '文書全体へのコメント', documentComments, renderDocumentComment);
   appendCommentGroup(lines, '範囲選択コメント', selectionComments, renderSelectionComment);
   appendCommentGroup(lines, '段落コメント', paragraphComments, renderParagraphComment);

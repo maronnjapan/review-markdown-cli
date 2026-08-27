@@ -260,6 +260,75 @@ test('a question from the AI pane saves the comments first and says they are sha
   assert.match(document.querySelector('#ai-target-comments').textContent, /コメント2件も渡します/);
 });
 
+test('the reading context is editable, saved with the review, and announced to the AI pane', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const requests = [];
+  const { document, window } = await startApp(t, 'http://localhost/#/review/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'guide.md', comments: [], aiContext: '第3章。読者は初学者。' },
+      projectAiContext: '入門書の原稿。',
+      reviewFile: '.review/guide.md.review.json'
+    }),
+    '/api/review': (_input, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(body);
+      return {
+        review: { targetFile: 'guide.md', comments: body.comments || [], aiContext: body.aiContext },
+        reviewFile: '.review/guide.md.review.json'
+      };
+    },
+    '/api/ai/status': () => ({
+      token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model', effort: 'low'
+    }),
+    '/api/ai/conversations': () => ({ conversations: [] })
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-comment-button'));
+
+  assert.equal(document.querySelector('#ai-context-input').value, '第3章。読者は初学者。');
+  assert.equal(document.querySelector('#ai-context-state').textContent.trim(), '設定済み');
+  assert.equal(document.querySelector('#ai-context-project').hidden, false);
+  assert.equal(document.querySelector('#ai-context-project-text').textContent, '入門書の原稿。');
+  assert.equal(document.querySelector('#placement-context-hint').hidden, false, '指摘の配置にも渡すと伝える');
+
+  const contextInput = document.querySelector('#ai-context-input');
+  contextInput.value = '第3章。読者は運用当番の担当者。';
+  contextInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.match(document.querySelector('#ai-context-status').textContent, /自動保存待ち/);
+
+  document.querySelector('#save-button').click();
+  await waitFor(() => requests.length === 1);
+  assert.equal(requests[0].aiContext, '第3章。読者は運用当番の担当者。');
+  await waitFor(() => document.querySelector('#ai-context-status').dataset.state === 'saved');
+
+  // The pane promises to say what a question carries; the context is part of it.
+  document.querySelector('#markdown-content p .inline-ai-button').click();
+  assert.match(document.querySelector('#ai-target-comments').textContent, /読み取りコンテキストも渡します/);
+});
+
+test('a document without a reading context says so and offers an empty box', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const { document } = await startApp(t, 'http://localhost/#/review/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'guide.md', comments: [] },
+      reviewFile: '.review/guide.md.review.json'
+    }),
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: false, error: 'Codexへログインしてください' }),
+    '/api/ai/conversations': () => ({ conversations: [] })
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-comment-button'));
+
+  assert.equal(document.querySelector('#ai-context-input').value, '');
+  assert.equal(document.querySelector('#ai-context-state').textContent.trim(), '未設定');
+  assert.equal(document.querySelector('#ai-context-project').hidden, true);
+  assert.equal(document.querySelector('#placement-context-hint').hidden, true);
+});
+
 test('finishing a text selection prefetches its translation and streams the contextual meaning first', async (t) => {
   const markdown = '# Guide\n\nClick to run the program.\n';
   const stream = controlledNdjsonResponse();

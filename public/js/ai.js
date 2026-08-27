@@ -167,6 +167,8 @@ export function createAiController({ refs, state, api, toaster, panes, flushComm
   }
 
   async function requestTranslation(target, signal, onEvent) {
+    // The AI reads the saved reading context, so save what is on screen first.
+    await flushComments();
     return api.translateWithAi({ path: state.currentPath, target }, { signal, onEvent });
   }
 
@@ -321,8 +323,13 @@ export function createAiController({ refs, state, api, toaster, panes, flushComm
   /** Says what else goes to the AI, so the target quote is not the whole story. */
   function renderSharedComments() {
     const count = state.comments.length;
-    refs.aiTargetComments.textContent = count ? `この文書のコメント${count}件も渡します。` : '';
-    refs.aiTargetComments.hidden = count === 0;
+    const hasContext = Boolean((state.aiContext || '').trim() || (state.projectAiContext || '').trim());
+    const notes = [
+      count ? `この文書のコメント${count}件` : '',
+      hasContext ? '読み取りコンテキスト' : ''
+    ].filter(Boolean);
+    refs.aiTargetComments.textContent = notes.length ? `${notes.join('と')}も渡します。` : '';
+    refs.aiTargetComments.hidden = notes.length === 0;
   }
 
   function renderTranslation() {
@@ -390,7 +397,8 @@ export function createAiController({ refs, state, api, toaster, panes, flushComm
     translate,
     prefetchTranslation,
     cancelTranslationPrefetch,
-    // Comments change while the pane is open, and the pane promises the count.
+    // Comments and the reading context change while the pane is open, and the
+    // pane promises to say what travels with the question.
     refreshTarget: renderTarget
   };
 }

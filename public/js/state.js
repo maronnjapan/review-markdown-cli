@@ -21,6 +21,11 @@ export function createState() {
 
     // Review comments
     comments: [],
+    // What the AI should assume while reading this document, and the directory
+    // wide one the server was started with.
+    aiContext: '',
+    aiContextDirty: false,
+    projectAiContext: '',
     pendingTarget: null,
     currentSelectionTarget: null,
     commentsDirty: false,
@@ -58,6 +63,8 @@ export function resetDocumentState(state, filePath) {
   state.rawHtml = '';
   state.editableHtml = '';
   state.comments = [];
+  state.aiContext = '';
+  state.aiContextDirty = false;
   state.pendingTarget = null;
   state.currentSelectionTarget = null;
   state.commentsDirty = false;

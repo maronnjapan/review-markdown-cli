@@ -1,6 +1,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { normalizeAiContext } from './aiContext.js';
 import { createAiService } from './aiService.js';
 import { sendError } from './http.js';
 import { createPathFilter } from './pathFilter.js';
@@ -10,14 +11,17 @@ export { listMarkdownFiles } from './markdownFiles.js';
 
 /**
  * @param {string} targetDir directory being reviewed.
- * @param {{include?: string[], exclude?: string[]}} [options] --include / --exclude globs.
+ * @param {{include?: string[], exclude?: string[], aiContext?: string}} [options]
+ *   --include / --exclude globs, and the reading context AI features start from.
  */
 export function createServer(targetDir = '.', options = {}) {
   const rootDir = path.resolve(targetDir);
   const filter = createPathFilter(options);
   const aiService = options.aiService || createAiService(rootDir, options);
   const aiToken = options.aiToken || crypto.randomBytes(24).toString('base64url');
-  const handleRequest = createRequestHandler({ rootDir, filter, aiService, aiToken });
+  // What every document under this root is read under; a document adds its own.
+  const projectAiContext = normalizeAiContext(options.aiContext, 'aiContext');
+  const handleRequest = createRequestHandler({ rootDir, filter, aiService, aiToken, projectAiContext });
 
   const app = {
     listen(port, callback) {

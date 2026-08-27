@@ -1,4 +1,5 @@
 import { existsSync, statSync } from 'node:fs';
+import { normalizeAiContext } from './aiContext.js';
 import { CONFIG_FILE_NAME, parsePort } from './config.js';
 import { normalizePatterns } from './pathFilter.js';
 
@@ -9,6 +10,8 @@ Options:
   -p, --port <number>   ローカルサーバーのポート番号（既定: 3000）
       --include <glob>  レビュー対象に含めるパス。複数指定・カンマ区切り可
       --exclude <glob>  レビュー対象から外すパス。複数指定・カンマ区切り可
+      --ai-context <text>
+                        AIがこの原稿を読むときの前提を渡す
       --config <file>   使用する設定ファイルを指定する
       --no-config       設定ファイルを読み込まない
       --no-open         ブラウザの自動起動をスキップする
@@ -28,19 +31,26 @@ Glob:
 
 Config:
   ${CONFIG_FILE_NAME}（対象ディレクトリから親へ遡って探索）とユーザー全体の設定ファイルを
-  読み込み、そこに書いた include / exclude / port / open を既定値として使います。
+  読み込み、そこに書いた include / exclude / port / open / aiContext を既定値として使います。
   コマンドラインの指定が常に優先され、include / exclude は設定ファイルの内容と合成します。
 
     review-markdown config add exclude 'drafts/**'   # 設定ファイルに除外パターンを追加
+    review-markdown config set aiContext '入門者向けの技術書。読者はJavaScriptの基礎を知っている。'
     review-markdown config list                      # 適用中の設定を表示
 
-  詳しくは review-markdown config --help を参照してください。`;
+  詳しくは review-markdown config --help を参照してください。
+
+AI context:
+  aiContext は、翻訳・AIチャット・指摘の配置で AI がこの原稿を読むときの前提です。
+  対象読者、原稿の位置づけ、守りたい用語などを書くと、どの機能でも同じ前提で読ませられます。
+  ここで指定するのはディレクトリ全体に効く前提で、文書ごとの前提はブラウザのAIパネルから書けます。`;
 
 const VALUE_FLAGS = new Map([
   ['--port', 'port'],
   ['-p', 'port'],
   ['--include', 'include'],
   ['--exclude', 'exclude'],
+  ['--ai-context', 'aiContext'],
   ['--config', 'configPath']
 ]);
 
@@ -59,6 +69,7 @@ export function parseArgs(argv, env = {}) {
     openSource: 'default',
     include: [],
     exclude: [],
+    aiContext: undefined,
     configPath: undefined,
     useConfig: true,
     help: false
@@ -85,6 +96,8 @@ export function parseArgs(argv, env = {}) {
         options.portSource = 'flag';
       } else if (key === 'configPath') {
         options.configPath = value;
+      } else if (key === 'aiContext') {
+        options.aiContext = normalizeAiContext(value, flag);
       } else {
         options[key].push(value);
       }

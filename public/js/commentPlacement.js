@@ -13,7 +13,7 @@ const CONFIDENCE_LABELS = {
  * mislocated note costs one click to drop rather than an edit to undo.
  */
 export function createCommentPlacementController({
-  refs, state, api, toaster, prepareAi, onAddComments, onRevealTarget
+  refs, state, api, toaster, prepareAi, flushComments = async () => true, onAddComments, onRevealTarget
 }) {
   bindEvents();
 
@@ -42,6 +42,8 @@ export function createCommentPlacementController({
     state.placementAbortController = controller;
     setSearching(true);
     try {
+      // The AI reads the saved reading context, so save what is on screen first.
+      await flushComments();
       const result = await api.placeAiComments({ path: documentPath, notes }, { signal: controller.signal });
       if (state.currentPath !== documentPath) return;
       state.placement = {

@@ -1,5 +1,6 @@
 import { api as defaultApi } from './api.js';
 import { createAiController } from './ai.js';
+import { createAiContextController } from './aiContext.js';
 import { createAutosave } from './autosave.js';
 import { renderCommentHighlights } from './commentAnchors.js';
 import {
@@ -40,9 +41,11 @@ export function createApp(document, { api = defaultApi } = {}) {
   const dialog = createCommentDialog(refs, { onSubmit: addComment });
   const commentSaves = createAutosave({
     save: pushComments,
-    // Edit mode saves comments alongside the document, so there is nothing to flush here.
-    hasPendingWork: () => state.mode !== 'edit' && state.commentsDirty
+    // Edit mode saves comments alongside the document, so there is nothing to
+    // flush here. The reading context has no other writer, so it always does.
+    hasPendingWork: () => (state.mode !== 'edit' && state.commentsDirty) || state.aiContextDirty
   });
+  const aiContext = createAiContextController({ refs, state, onChange: markAiContextDirty });
   const editor = createEditor({
     refs,
     state,
@@ -71,6 +74,8 @@ export function createApp(document, { api = defaultApi } = {}) {
     api,
     toaster,
     prepareAi: () => ai.prepare(),
+    // The AI reads the saved context, so hand it whatever is on screen first.
+    flushComments: () => commentSaves.flush(),
     onAddComments: addComments,
     onRevealTarget: revealTarget
   });
@@ -123,10 +128,11 @@ export function createApp(document, { api = defaultApi } = {}) {
       if (await editor.flush()) return true;
       return window.confirm('本文を保存できていません。編集内容を破棄して移動しますか？');
     }
-    if (state.commentsDirty || commentSaves.isBusy()) {
+    if (state.commentsDirty || state.aiContextDirty || commentSaves.isBusy()) {
       if (await commentSaves.flush()) return true;
       if (!window.confirm('コメントを保存できていません。破棄して移動しますか？')) return false;
       state.commentsDirty = false;
+      state.aiContextDirty = false;
     }
     return true;
   }
@@ -179,7 +185,11 @@ export function createApp(document, { api = defaultApi } = {}) {
     state.editableHtml = data.editableHtml;
     state.textBody = data.textBody === true;
     if (data.review?.comments) state.comments = data.review.comments;
+    if (typeof data.projectAiContext === 'string') state.projectAiContext = data.projectAiContext;
+    // A save that carried the context back confirms it; nothing typed since is lost.
+    if (!state.aiContextDirty) state.aiContext = data.review?.aiContext || '';
     state.commentsDirty = false;
+    aiContext.load();
     updateCopyBodyControl();
   }
 
@@ -508,6 +518,16 @@ export function createApp(document, { api = defaultApi } = {}) {
     setTimeout(() => card.classList.remove('just-added'), 1500);
   }
 
+  function markAiContextDirty() {
+    state.aiContextDirty = true;
+    // Every edit invalidates in-flight saves: their response must not overwrite newer text.
+    state.commentsVersion += 1;
+    // The AI pane promises to say what travels with a question; now it does.
+    ai.refreshTarget();
+    if (!state.currentPath) return;
+    commentSaves.schedule();
+  }
+
   function markCommentsDirty() {
     state.commentsDirty = true;
     // Every edit invalidates in-flight saves: their response must not overwrite newer text.
@@ -517,25 +537,43 @@ export function createApp(document, { api = defaultApi } = {}) {
     commentSaves.schedule();
   }
 
-  /** Saves whatever `state.comments` holds right now. */
+  /**
+   * Saves whatever `state.comments` and the reading context hold right now.
+   * Edit mode saves its comments through `/api/file`, so only a changed reading
+   * context brings it here.
+   */
   async function pushComments() {
-    if (state.mode === 'edit' || !state.currentPath) return true;
+    if (!state.currentPath) return true;
+    if (state.mode === 'edit' && !state.aiContextDirty) return true;
     const version = state.commentsVersion;
     const path = state.currentPath;
+    const savedContext = state.aiContext;
+    // Leaving the comments out keeps the ones on file, which is what edit mode wants.
+    const savingComments = state.mode !== 'edit';
     setCommentStatus('saving', '保存中…');
+    aiContext.setStatus('saving');
 
     try {
-      const result = await api.saveComments({ path, comments: state.comments });
+      const result = await api.saveComments({
+        path,
+        comments: savingComments ? state.comments : undefined,
+        aiContext: savedContext
+      });
       state.commentSaveFailed = false;
+      if (state.currentPath === path && state.aiContext === savedContext) state.aiContextDirty = false;
       if (state.commentsVersion !== version || state.currentPath !== path) return true;
-      adoptSavedCommentIds(result.review.comments);
-      state.commentsDirty = false;
-      // Re-rendering here would replace the textarea the reviewer is typing in, so don't.
-      setCommentStatus('saved', `自動保存しました ${new Date().toLocaleTimeString()}: ${result.reviewFile}`);
+      if (savingComments) {
+        adoptSavedCommentIds(result.review.comments);
+        state.commentsDirty = false;
+        // Re-rendering here would replace the textarea the reviewer is typing in, so don't.
+        setCommentStatus('saved', `自動保存しました ${new Date().toLocaleTimeString()}: ${result.reviewFile}`);
+      }
+      aiContext.setStatus(state.aiContextDirty ? 'dirty' : 'saved');
       return true;
     } catch (error) {
       state.commentSaveFailed = true;
       setCommentStatus('error', `保存できませんでした: ${error.message}`);
+      aiContext.setStatus('error', `保存できませんでした: ${error.message}`);
       return false;
     }
   }
@@ -604,13 +642,21 @@ export function createApp(document, { api = defaultApi } = {}) {
   function hasUnsavedWork() {
     return editor.hasUnsavedChanges()
       || state.commentsDirty
+      || state.aiContextDirty
       || state.commentSaveFailed
       || commentSaves.isBusy();
   }
 
   function beaconComments() {
-    if (state.mode !== 'comment' || !state.currentPath || !state.commentsDirty) return;
-    api.beaconComments({ path: state.currentPath, comments: state.comments });
+    if (!state.currentPath) return;
+    const savingComments = state.mode === 'comment' && state.commentsDirty;
+    if (!savingComments && !state.aiContextDirty) return;
+    api.beaconComments({
+      path: state.currentPath,
+      // Edit mode owns the comments; only the reading context is ours to send.
+      comments: savingComments ? state.comments : undefined,
+      aiContext: state.aiContext
+    });
   }
 
   function bindGlobalEvents() {

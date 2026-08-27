@@ -36,14 +36,22 @@ const ROUTES = [
   { methods: ['POST'], pathname: '/api/ai/place-comments', handle: placeAiComments }
 ];
 
-export function createRequestHandler({ rootDir, filter, aiService, aiToken }) {
+export function createRequestHandler({ rootDir, filter, aiService, aiToken, projectAiContext = '' }) {
   return async function handleRequest(request, response) {
     const url = new URL(request.url, 'http://localhost');
     const route = ROUTES.find((candidate) => (
       candidate.pathname === url.pathname && candidate.methods.includes(request.method)
     ));
     const context = {
-      rootDir, filter, aiService, aiToken, request, response, url, headOnly: request.method === 'HEAD'
+      rootDir,
+      filter,
+      aiService,
+      aiToken,
+      projectAiContext,
+      request,
+      response,
+      url,
+      headOnly: request.method === 'HEAD'
     };
 
     if (route) return route.handle(context);
@@ -183,7 +191,7 @@ async function listFiles({ rootDir, filter, response }) {
   });
 }
 
-async function openFile({ rootDir, filter, url, response }) {
+async function openFile({ rootDir, filter, projectAiContext, url, response }) {
   const relativeFile = reviewTarget(rootDir, filter, url.searchParams.get('path'));
   const markdown = await fs.readFile(path.join(rootDir, relativeFile), 'utf8');
   const review = await readReview(rootDir, relativeFile);
@@ -193,11 +201,12 @@ async function openFile({ rootDir, filter, url, response }) {
     textBody: isTextDocumentPath(relativeFile),
     ...await renderBothViews(markdown, relativeFile, filter),
     review,
+    projectAiContext,
     reviewFile: await relativeReviewPath(rootDir, relativeFile)
   });
 }
 
-async function saveFile({ rootDir, filter, request, response }) {
+async function saveFile({ rootDir, filter, projectAiContext, request, response }) {
   const body = await readJsonBody(request);
   const relativeFile = reviewTarget(rootDir, filter, body.path);
   if (!isMarkdownPath(relativeFile)) throw httpError('Only Markdown files can be edited', 400);
@@ -205,7 +214,7 @@ async function saveFile({ rootDir, filter, request, response }) {
   const filePath = path.join(rootDir, relativeFile);
   const currentMarkdown = await fs.readFile(filePath, 'utf8');
   const { markdown, appliedEdits } = applyBlockEdits(currentMarkdown, body.edits);
-  const review = await writeReview(rootDir, relativeFile, commentsOf(body));
+  const review = await writeReview(rootDir, relativeFile, commentsOf(body), aiContextOf(body));
   await fs.writeFile(filePath, markdown, 'utf8');
 
   return sendJson(response, {
@@ -215,6 +224,7 @@ async function saveFile({ rootDir, filter, request, response }) {
     ...await renderBothViews(markdown, relativeFile, filter),
     appliedEdits,
     review,
+    projectAiContext,
     reviewFile: await relativeReviewPath(rootDir, relativeFile)
   });
 }
@@ -227,8 +237,12 @@ function openAsset({ rootDir, filter, url, response, headOnly }) {
 async function saveReview({ rootDir, filter, request, response }) {
   const body = await readJsonBody(request);
   const relativeFile = reviewTarget(rootDir, filter, body.path);
+  // A request carrying only the reading context keeps the comments already on file.
+  const comments = Array.isArray(body.comments)
+    ? body.comments
+    : (await readReview(rootDir, relativeFile)).comments;
   return sendJson(response, {
-    review: await writeReview(rootDir, relativeFile, commentsOf(body)),
+    review: await writeReview(rootDir, relativeFile, comments, aiContextOf(body)),
     reviewFile: await relativeReviewPath(rootDir, relativeFile)
   });
 }
@@ -255,6 +269,15 @@ function reviewTarget(rootDir, filter, requestedPath) {
 function commentsOf(body) {
   return Array.isArray(body.comments) ? body.comments : [];
 }
+
+/**
+ * A request that says nothing about the reading context keeps the saved one:
+ * the page beacon on the way out carries comments only.
+ */
+function aiContextOf(body) {
+  return typeof body.aiContext === 'string' ? { aiContext: body.aiContext } : {};
+}
+
 
 /** The reader view and the editable view differ only in the metadata they carry. */
 function renderBothViews(markdown, relativeFile, filter) {
