@@ -47,6 +47,7 @@ test('a review reads with the chosen skill and as the saved reader', async (t) =
               quote: 'deploy.sh',
               comment: '実行前に確認することを書いてください。',
               reason: 'この読み手は製品を知らないためです。',
+              skillId: 'ops-review',
               severity: 'must',
               confidence: 'high'
             }
@@ -58,19 +59,20 @@ test('a review reads with the chosen skill and as the saved reader', async (t) =
   });
   const service = new AiService(root, { store, codex });
 
-  const review = await service.reviewDocument('guide.md', { skillId: 'ops-review' });
+  const review = await service.reviewDocument('guide.md', { skillIds: ['ops-review'] });
 
-  assert.equal(review.skill.id, 'ops-review');
+  assert.deepEqual(review.skills.map(({ id }) => id), ['ops-review']);
   assert.equal(review.summary, 'この読み手には前提の説明が足りません。');
   assert.equal(review.placements.length, 1);
   assert.equal(review.placements[0].severity, 'must');
+  assert.deepEqual(review.placements[0].skill, { id: 'ops-review', name: 'ops-review' });
   assert.equal(review.placements[0].target.type, 'text-selection');
   assert.equal(review.placements[0].target.selectedText, 'deploy.sh', '対象は本文から取るので画面で見つけられる');
   assert.deepEqual(review.placements[0].target.headingPath, ['デプロイ手順', '手順']);
   assert.equal(review.unplaced.length, 1);
   assert.equal(review.persona.label, '運用当番の新人');
 
-  assert.match(turns[0].prompt, /<review_skill name="ops-review">/);
+  assert.match(turns[0].prompt, /<review_skill id="ops-review" name="ops-review">/);
   assert.match(turns[0].prompt, /実行前の確認手順を見る/);
   assert.match(turns[0].prompt, /<reader_persona>[\s\S]*運用当番の新人/);
   assert.match(turns[0].prompt, /運用手順書/);
@@ -92,13 +94,70 @@ test('a review needs a skill that exists, and a document with body text', async 
   const service = new AiService(root, { store, codex: fakeCodex() });
 
   await assert.rejects(
-    () => service.reviewDocument('guide.md', { skillId: 'no-such-skill' }),
+    () => service.reviewDocument('guide.md', { skillIds: ['no-such-skill'] }),
     /レビュースキルが見つかりません/
   );
   await assert.rejects(
-    () => service.reviewDocument('empty.md', { skillId: 'reader-fit-review' }),
+    () => service.reviewDocument('guide.md', { skillIds: [] }),
+    /レビュースキルを1つ以上選んでください/
+  );
+  await assert.rejects(
+    () => service.reviewDocument('empty.md', { skillIds: ['reader-fit-review'] }),
     /レビューできる本文が見つかりません/
   );
+});
+
+test('several skills read the document once, and each finding says which one it came from', async (t) => {
+  const { root, store } = await testStore(t);
+  await fs.writeFile(path.join(root, 'guide.md'), DOCUMENT, 'utf8');
+  await writeSkill(root, 'ops-review', '# 運用レビュー\n\n実行前の確認手順を見る。');
+  await writeSkill(root, 'flow-review', '# 構成レビュー\n\n見出しの並びを見る。');
+
+  const turns = [];
+  const codex = fakeCodex({
+    async runTurn(input) {
+      turns.push(input);
+      return {
+        text: JSON.stringify({
+          summary: '前提と並びの両方に直すところがあります。',
+          placements: [
+            {
+              segmentIndex: segmentIndexOf(input.prompt, 'まず deploy.sh を実行します。'),
+              quote: 'deploy.sh',
+              comment: '実行前に確認することを書いてください。',
+              reason: 'この読み手は製品を知らないためです。',
+              skillId: 'ops-review',
+              severity: 'must',
+              confidence: 'high'
+            },
+            {
+              segmentIndex: segmentIndexOf(input.prompt, 'この手順は本番環境でのみ実行します。'),
+              quote: '',
+              comment: '前提は手順の直前へ移してください。',
+              reason: '読む順序が入れ替わっているためです。',
+              skillId: 'flow-review',
+              severity: 'should',
+              confidence: 'medium'
+            }
+          ],
+          unplaced: []
+        })
+      };
+    }
+  });
+  const service = new AiService(root, { store, codex });
+
+  const review = await service.reviewDocument('guide.md', { skillIds: ['ops-review', 'flow-review'] });
+
+  assert.deepEqual(review.skills.map(({ id }) => id), ['ops-review', 'flow-review']);
+  assert.equal(turns.length, 1, '観点ごとに読み直さず、1回で読ませる');
+  assert.deepEqual(review.placements.map(({ skill }) => skill.id), ['ops-review', 'flow-review']);
+  assert.deepEqual(turns[0].outputSchema.properties.placements.items.properties.skillId.enum,
+    ['ops-review', 'flow-review'], '出どころは選んだスキルからしか選べない');
+  assert.match(turns[0].prompt, /<review_skill id="ops-review"/);
+  assert.match(turns[0].prompt, /<review_skill id="flow-review"/);
+  assert.match(turns[0].prompt, /実行前の確認手順を見る/);
+  assert.match(turns[0].prompt, /見出しの並びを見る/);
 });
 
 test('the reviewer\'s notes about the reader are rebuilt into a persona, and saved only on request', async (t) => {
@@ -132,6 +191,37 @@ test('the reviewer\'s notes about the reader are rebuilt into a persona, and sav
   assert.equal((await readReview(root, 'guide.md')).persona, null, '組み直しただけでは保存しない');
 
   await assert.rejects(() => service.composePersona('guide.md', '   '), /読み手ペルソナの説明を入力してください/);
+});
+
+test('a reader written by hand is used as written, without asking the AI to rebuild it', async (t) => {
+  const { root, store } = await testStore(t);
+  await fs.writeFile(path.join(root, 'guide.md'), DOCUMENT, 'utf8');
+  await writeSkill(root, 'ops-review', '# 運用レビュー\n\n実行前の確認手順を見る。');
+  await writeReview(root, 'guide.md', [], {
+    persona: { source: 'manual', input: '当番の新人。\nこの製品は初めて。' }
+  });
+
+  const saved = await readReview(root, 'guide.md');
+  assert.equal(saved.persona.source, 'manual');
+  assert.equal(saved.persona.label, '当番の新人。', '呼び名は書き出しから付く');
+  assert.equal(saved.persona.input, '当番の新人。\nこの製品は初めて。');
+
+  const turns = [];
+  const codex = fakeCodex({
+    async runTurn(input) {
+      turns.push(input);
+      return { text: JSON.stringify({ summary: '', placements: [], unplaced: [] }) };
+    }
+  });
+  await new AiService(root, { store, codex }).reviewDocument('guide.md', { skillIds: ['ops-review'] });
+
+  assert.match(turns[0].prompt, /<reader_persona>\n<notes>\n当番の新人。\nこの製品は初めて。\n<\/notes>/,
+    '書いた文章をそのまま渡す');
+  assert.doesNotMatch(turns[0].prompt, /<knows>/, '書いていない項目は足さない');
+
+  const markdown = buildReviewMarkdown(await readReview(root, 'guide.md'));
+  assert.match(markdown, /## 読み手ペルソナ/);
+  assert.match(markdown, /> 当番の新人。\n> この製品は初めて。/);
 });
 
 test('the review file keeps the persona through a plain comment save, and exports it', async (t) => {

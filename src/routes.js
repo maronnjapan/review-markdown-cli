@@ -35,6 +35,7 @@ const ROUTES = [
   { methods: ['POST'], pathname: '/api/ai/message', handle: sendAiMessage },
   { methods: ['POST'], pathname: '/api/ai/place-comments', handle: placeAiComments },
   { methods: ['GET'], pathname: '/api/ai/review-skills', handle: listAiReviewSkills },
+  { methods: ['GET'], pathname: '/api/ai/review-skill', handle: readAiReviewSkill },
   { methods: ['POST'], pathname: '/api/ai/persona', handle: composeAiPersona },
   { methods: ['POST'], pathname: '/api/ai/review', handle: reviewWithAi }
 ];
@@ -130,6 +131,13 @@ async function listAiReviewSkills(context) {
   return sendJson(response, { skills: await aiService.listReviewSkills() });
 }
 
+/** 1つのスキルの中身。選ぶ前に何を見るスキルかを画面で読めるようにします。 */
+async function readAiReviewSkill(context) {
+  const { aiService, response, url } = context;
+  authorizeAiRequest(context);
+  return sendJson(response, { skill: await aiService.readReviewSkill(url.searchParams.get('id')) });
+}
+
 /** レビュアーの走り書きを読み手ペルソナへ組み直します。保存は /api/review です。 */
 async function composeAiPersona(context) {
   const { rootDir, filter, aiService, request, response } = context;
@@ -146,7 +154,7 @@ async function composeAiPersona(context) {
   });
 }
 
-/** Reviews one document with the chosen skill. Saving stays with /api/review. */
+/** Reviews one document with the chosen skills. Saving stays with /api/review. */
 async function reviewWithAi(context) {
   const { rootDir, filter, aiService, request, response } = context;
   authorizeAiRequest(context);
@@ -154,7 +162,7 @@ async function reviewWithAi(context) {
   const relativeFile = reviewTarget(rootDir, filter, body.path);
   return streamAiResponse(request, response, async ({ send, signal }) => {
     send({ type: 'started' });
-    const review = await aiService.reviewDocument(relativeFile, { skillId: body.skillId }, {
+    const review = await aiService.reviewDocument(relativeFile, { skillIds: body.skillIds ?? body.skillId }, {
       signal,
       onDelta: (delta) => send({ type: 'delta', delta })
     });

@@ -47,10 +47,13 @@ export function createState() {
     placement: null,
     placementAbortController: null,
 
-    // AI review: the skill it reads with, the reader it reads as, and the
+    // AI review: the skills it reads with, the reader it reads as, and the
     // proposals it produced. Proposals are held until the reviewer accepts them.
     reviewSkills: [],
-    reviewSkillId: '',
+    reviewSkillIds: [],
+    // 画面で開いたスキルの本文。取りに行った文書をまたいでも中身は同じです。
+    reviewSkillDetails: new Map(),
+    openReviewSkillIds: new Set(),
     persona: null,
     personaDirty: false,
     personaStatus: 'idle',
@@ -92,7 +95,7 @@ export function resetDocumentState(state, filePath) {
   state.placement = null;
   state.placementAbortController?.abort();
   state.placementAbortController = null;
-  // 選んだレビュースキルは文書をまたいでも変わりません。ペルソナは文書ごとです。
+  // 選んだレビュースキルと開いた詳細は文書をまたいでも変わりません。ペルソナは文書ごとです。
   state.persona = null;
   state.personaDirty = false;
   state.personaStatus = 'idle';

@@ -5,9 +5,9 @@ import { aiContextBlock, hasAiContext, normalizeAiContext, resolveAiContext } fr
 import { AiStore, defaultAiDataDir, translationCacheKey } from './aiStore.js';
 import { CodexAppServer } from './codexAppServer.js';
 import { collectCommentContext, commentContextBlock } from './commentContext.js';
-import { REVIEW_SCHEMA, buildReviewFindings, reviewPrompt } from './documentReview.js';
+import { buildReviewFindings, reviewPrompt, reviewSchema } from './documentReview.js';
 import { PERSONA_SCHEMA, buildPersona, normalizePersonaInput, personaPrompt } from './persona.js';
-import { listReviewSkills, readReviewSkill } from './reviewSkills.js';
+import { listReviewSkills, readReviewSkill, readReviewSkills } from './reviewSkills.js';
 import { readReview } from './reviewStore.js';
 import {
   MAX_NOTES_CHARS,
@@ -155,6 +155,14 @@ export class AiService {
   }
 
   /**
+   * 1つのスキルの中身。選ぶ前に「このスキルは何を見るのか」を画面で読めるように、
+   * プロンプトへ載せるのと同じ本文をそのまま返します。
+   */
+  readReviewSkill(skillId) {
+    return readReviewSkill(this.rootDir, skillId);
+  }
+
+  /**
    * レビュアーの走り書きを、読み手ペルソナへ組み直します。
    * 保存はしません。組み直した結果を確認したレビュアーが保存します。
    */
@@ -183,11 +191,11 @@ export class AiService {
   }
 
   /**
-   * 選んだレビュースキルと、保存済みの読み手ペルソナで文書をレビューします。
+   * 選んだレビュースキル（複数可）と、保存済みの読み手ペルソナで文書をレビューします。
    * 返すのはコメント候補で、レビューファイルへは何も書きません。
    */
-  async reviewDocument(documentPath, { skillId } = {}, { onDelta, signal } = {}) {
-    const skill = await readReviewSkill(this.rootDir, skillId);
+  async reviewDocument(documentPath, { skillIds, skillId } = {}, { onDelta, signal } = {}) {
+    const skills = await readReviewSkills(this.rootDir, skillIds ?? skillId);
     const markdown = await fs.readFile(path.join(this.rootDir, documentPath), 'utf8');
     if (markdown.length > MAX_TARGET_CHARS) throw new Error('文書全体が長すぎます。ファイルを分割してください');
     const segments = await extractDocumentSegments(markdown);
@@ -197,8 +205,8 @@ export class AiService {
     const threadId = await this.codex.createThread({ ephemeral: true });
     const { text } = await this.codex.runTurn({
       threadId,
-      prompt: reviewPrompt(segments, skill, readingContext),
-      outputSchema: REVIEW_SCHEMA,
+      prompt: reviewPrompt(segments, skills, readingContext),
+      outputSchema: reviewSchema(skills),
       onDelta,
       signal
     });
@@ -209,9 +217,9 @@ export class AiService {
       throw new Error('Codexのレビュー結果を解析できませんでした');
     }
     return {
-      skill: { id: skill.id, name: skill.name, source: skill.source },
+      skills: skills.map(({ id, name, source }) => ({ id, name, source })),
       persona: readingContext.persona,
-      ...buildReviewFindings(segments, answer)
+      ...buildReviewFindings(segments, answer, skills)
     };
   }
 

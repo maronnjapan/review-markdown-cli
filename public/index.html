@@ -75,48 +75,52 @@
               </div>
               <button id="save-button" type="button" title="自動保存を待たずにすぐ保存します">今すぐ保存</button>
             </div>
-            <p id="save-status" class="save-status" aria-live="polite"></p>
-            <button id="export-button" type="button" class="wide-button">レビューMarkdownを出力</button>
-            <textarea id="export-output" class="export-output" readonly hidden></textarea>
-            <div id="comments-list" class="comments-list"></div>
+            <div class="pane-scroll">
+              <p id="save-status" class="save-status" aria-live="polite"></p>
+              <button id="export-button" type="button" class="wide-button">レビューMarkdownを出力</button>
+              <textarea id="export-output" class="export-output" readonly hidden></textarea>
+              <div id="comments-list" class="comments-list"></div>
+            </div>
           </section>
           <section id="ai-panel" class="ai-panel hidden" aria-live="polite">
-            <div class="ai-header">
-              <div>
-                <p class="eyebrow">Read-only Codex</p>
-                <h2>翻訳・AIチャット</h2>
+            <div class="pane-scroll">
+              <div class="ai-header">
+                <div>
+                  <p class="eyebrow">Read-only Codex</p>
+                  <h2>翻訳・AIチャット</h2>
+                </div>
+                <span id="ai-provider-status" class="ai-provider-status">準備中</span>
               </div>
-              <span id="ai-provider-status" class="ai-provider-status">準備中</span>
-            </div>
-            <details id="ai-context" class="ai-context">
-              <summary>
-                読み取りコンテキスト
-                <span id="ai-context-state" class="ai-context-state">未設定</span>
-              </summary>
-              <p class="ai-context-hint">AIがこの文書を読むときの前提です。翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。</p>
-              <textarea id="ai-context-input" rows="4" placeholder="例：Node.js入門書の第3章。読者はJavaScriptの基礎を知っている前提。用語は原著の訳語に合わせる。"></textarea>
-              <p id="ai-context-status" class="ai-context-status" aria-live="polite"></p>
-              <div id="ai-context-project" class="ai-context-project" hidden>
-                <p class="ai-context-project-label">このディレクトリ全体の前提（設定ファイル）</p>
-                <blockquote id="ai-context-project-text"></blockquote>
+              <details id="ai-context" class="ai-context">
+                <summary>
+                  読み取りコンテキスト
+                  <span id="ai-context-state" class="ai-context-state">未設定</span>
+                </summary>
+                <p class="ai-context-hint">AIがこの文書を読むときの前提です。翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。</p>
+                <textarea id="ai-context-input" rows="4" placeholder="例：Node.js入門書の第3章。読者はJavaScriptの基礎を知っている前提。用語は原著の訳語に合わせる。"></textarea>
+                <p id="ai-context-status" class="ai-context-status" aria-live="polite"></p>
+                <div id="ai-context-project" class="ai-context-project" hidden>
+                  <p class="ai-context-project-label">このディレクトリ全体の前提（設定ファイル）</p>
+                  <blockquote id="ai-context-project-text"></blockquote>
+                </div>
+              </details>
+              <div class="ai-conversation-controls">
+                <select id="ai-conversation-select" aria-label="保存された会話">
+                  <option value="">新しい会話</option>
+                </select>
+                <button id="ai-new-conversation" type="button">新規</button>
+                <button id="ai-delete-conversation" type="button" disabled>削除</button>
               </div>
-            </details>
-            <div class="ai-conversation-controls">
-              <select id="ai-conversation-select" aria-label="保存された会話">
-                <option value="">新しい会話</option>
-              </select>
-              <button id="ai-new-conversation" type="button">新規</button>
-              <button id="ai-delete-conversation" type="button" disabled>削除</button>
-            </div>
-            <section id="ai-target" class="ai-target hidden">
-              <span id="ai-target-type" class="target-badge"></span>
-              <p id="ai-target-path" class="ai-target-path"></p>
-              <blockquote id="ai-target-text"></blockquote>
-              <p id="ai-target-comments" class="ai-target-comments" hidden></p>
-            </section>
-            <section id="translation-result" class="translation-result hidden"></section>
-            <div id="ai-messages" class="ai-messages">
-              <p class="muted">文章を選択して「AIに質問」、または文書全体について相談できます。</p>
+              <section id="ai-target" class="ai-target hidden">
+                <span id="ai-target-type" class="target-badge"></span>
+                <p id="ai-target-path" class="ai-target-path"></p>
+                <blockquote id="ai-target-text"></blockquote>
+                <p id="ai-target-comments" class="ai-target-comments" hidden></p>
+              </section>
+              <section id="translation-result" class="translation-result hidden"></section>
+              <div id="ai-messages" class="ai-messages">
+                <p class="muted">文章を選択して「AIに質問」、または文書全体について相談できます。</p>
+              </div>
             </div>
             <form id="ai-chat-form" class="ai-chat-form">
               <textarea id="ai-chat-input" rows="3" placeholder="選択した文章について質問する"></textarea>
@@ -127,64 +131,71 @@
             </form>
           </section>
           <section id="placement-panel" class="placement-panel hidden" aria-live="polite">
-            <div class="ai-header">
-              <div>
-                <p class="eyebrow">Comment placement</p>
-                <h2>指摘の配置</h2>
+            <div class="pane-scroll">
+              <div class="ai-header">
+                <div>
+                  <p class="eyebrow">Comment placement</p>
+                  <h2>指摘の配置</h2>
+                </div>
               </div>
-            </div>
-            <p class="placement-hint">指摘コメントを貼り付けると、AIが対象箇所を探してコメント候補を作ります。追加するまでレビューには保存しません。</p>
-            <p id="placement-context-hint" class="placement-hint" hidden>AIパネルの読み取りコンテキストもここへ渡します。</p>
-            <form id="placement-form" class="placement-form">
-              <textarea id="placement-input" rows="5" placeholder="例：&#10;- 導入が長い。結論を先に書いてほしい&#10;- 図の説明に単位がない"></textarea>
-              <div class="placement-actions">
-                <button id="placement-stop-button" class="hidden" type="button">停止</button>
-                <button id="placement-submit-button" type="submit">対象箇所を探す</button>
-              </div>
-            </form>
-            <div id="placement-results" class="placement-results"></div>
-          </section>
-          <section id="review-panel" class="review-panel hidden" aria-live="polite">
-            <div class="ai-header">
-              <div>
-                <p class="eyebrow">AI review</p>
-                <h2>AIレビュー</h2>
-              </div>
-            </div>
-            <p class="placement-hint">レビューの観点（レビュースキル）と読み手を決めてから実行します。結果はコメント候補で、追加するまでレビューには保存しません。</p>
-
-            <section class="review-skill">
-              <label class="review-field-label" for="review-skill-select">レビュースキル</label>
-              <select id="review-skill-select" aria-describedby="review-skill-description">
-                <option value="">読み込み中…</option>
-              </select>
-              <p id="review-skill-description" class="review-skill-description"></p>
-            </section>
-
-            <details id="review-persona" class="ai-context" open>
-              <summary>
-                読み手ペルソナ
-                <span id="persona-state" class="ai-context-state">未設定</span>
-              </summary>
-              <p class="ai-context-hint">誰がこの文書を読むかを、思い付いた順のままで構いません。AIが立場・前提知識・目的へ組み直します。</p>
-              <form id="persona-form" class="persona-form">
-                <textarea id="persona-input" rows="4" placeholder="例：他チームから異動してきたばかりの運用担当。Linuxは触れるがこの製品は初めて。当番中に手順を見ながら作業する。"></textarea>
-                <div class="persona-actions">
-                  <button id="persona-stop-button" class="hidden" type="button">停止</button>
-                  <button id="persona-clear-button" type="button" disabled>ペルソナを削除</button>
-                  <button id="persona-compose-button" type="submit">AIで組み立てる</button>
+              <p class="placement-hint">指摘コメントを貼り付けると、AIが対象箇所を探してコメント候補を作ります。追加するまでレビューには保存しません。</p>
+              <p id="placement-context-hint" class="placement-hint" hidden>AIパネルの読み取りコンテキストもここへ渡します。</p>
+              <form id="placement-form" class="placement-form">
+                <textarea id="placement-input" rows="5" placeholder="例：&#10;- 導入が長い。結論を先に書いてほしい&#10;- 図の説明に単位がない"></textarea>
+                <div class="placement-actions">
+                  <button id="placement-stop-button" class="hidden" type="button">停止</button>
+                  <button id="placement-submit-button" type="submit">対象箇所を探す</button>
                 </div>
               </form>
-              <div id="persona-result" class="persona-result"></div>
-            </details>
-
-            <form id="review-form" class="placement-form">
-              <div class="placement-actions">
-                <button id="review-stop-button" class="hidden" type="button">停止</button>
-                <button id="review-run-button" type="submit">レビューを実行</button>
+              <div id="placement-results" class="placement-results"></div>
+            </div>
+          </section>
+          <section id="review-panel" class="review-panel hidden" aria-live="polite">
+            <div class="pane-scroll">
+              <div class="ai-header">
+                <div>
+                  <p class="eyebrow">AI review</p>
+                  <h2>AIレビュー</h2>
+                </div>
               </div>
-            </form>
-            <div id="review-results" class="placement-results"></div>
+              <p class="placement-hint">レビューの観点（レビュースキル）と読み手を決めてから実行します。結果はコメント候補で、追加するまでレビューには保存しません。</p>
+
+              <section class="review-skill">
+                <div class="review-field-head">
+                  <span class="review-field-label">レビュースキル</span>
+                  <span id="review-skill-state" class="ai-context-state">未選択</span>
+                </div>
+                <p class="review-skill-hint">複数選べます。選んだ観点をすべて持った1人として読ませ、指摘ごとにどの観点から出たかを表示します。</p>
+                <div id="review-skill-list" class="review-skill-list" role="group" aria-label="レビュースキル"></div>
+                <p id="review-skill-status" class="review-skill-status" aria-live="polite"></p>
+              </section>
+
+              <details id="review-persona" class="ai-context" open>
+                <summary>
+                  読み手ペルソナ
+                  <span id="persona-state" class="ai-context-state">未設定</span>
+                </summary>
+                <p class="ai-context-hint">誰がこの文書を読むかを書きます。書いた文章をそのまま読み手として使うか、AIに立場・前提知識・目的へ組み直させるかを選べます。</p>
+                <form id="persona-form" class="persona-form">
+                  <textarea id="persona-input" rows="4" placeholder="例：他チームから異動してきたばかりの運用担当。Linuxは触れるがこの製品は初めて。当番中に手順を見ながら作業する。"></textarea>
+                  <div class="persona-actions">
+                    <button id="persona-stop-button" class="hidden" type="button">停止</button>
+                    <button id="persona-clear-button" type="button" disabled>ペルソナを削除</button>
+                    <button id="persona-use-button" type="button" title="書いた文章をそのまま読み手の説明として使います">そのまま使う</button>
+                    <button id="persona-compose-button" type="submit">AIで組み立てる</button>
+                  </div>
+                </form>
+                <div id="persona-result" class="persona-result"></div>
+              </details>
+
+              <form id="review-form" class="placement-form">
+                <div class="placement-actions">
+                  <button id="review-stop-button" class="hidden" type="button">停止</button>
+                  <button id="review-run-button" type="submit">レビューを実行</button>
+                </div>
+              </form>
+              <div id="review-results" class="placement-results"></div>
+            </div>
           </section>
         </aside>
       </section>

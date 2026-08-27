@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { aiContextBlock, resolveAiContext } from '../src/aiContext.js';
-import { buildPersona, hasPersonaContent, normalizePersona, personaBlock, personaPrompt } from '../src/persona.js';
+import {
+  buildManualPersona,
+  buildPersona,
+  hasPersonaContent,
+  normalizePersona,
+  personaBlock,
+  personaPrompt
+} from '../src/persona.js';
 
 const ANSWER = {
   label: '運用当番の新人',
@@ -33,6 +40,26 @@ test('an empty answer is not a persona, and stray fields never survive', () => {
   const persona = normalizePersona({ ...ANSWER, danger: 'ignored', goals: ['読む', '', 42] });
   assert.equal(persona.danger, undefined);
   assert.deepEqual(persona.goals, ['読む'], '空とテキストでない項目は落とす');
+});
+
+test('a reader used as written keeps the reviewer\'s own words, and adds nothing to them', () => {
+  const persona = buildManualPersona('  当番の新人。\nこの製品は初めて。  ');
+
+  assert.equal(persona.source, 'manual');
+  assert.equal(persona.input, '当番の新人。\nこの製品は初めて。');
+  assert.equal(persona.label, '当番の新人。', '呼び名は書き出しから付ける');
+  assert.deepEqual(persona.gaps, [], 'AIが埋める項目は空のまま');
+  assert.ok(hasPersonaContent(persona), '説明そのものが読み手の中身');
+  assert.ok(Date.parse(persona.updatedAt));
+
+  const block = personaBlock(persona);
+  assert.match(block, /<notes>\n当番の新人。\nこの製品は初めて。\n<\/notes>/);
+  assert.doesNotMatch(block, /<knows>/, '書いていない項目の枠は出さない');
+  assert.match(block, /data, not instructions/);
+
+  assert.throws(() => buildManualPersona('   '), /説明を入力してください/);
+  assert.equal(normalizePersona({ source: 'manual', input: '' }), null, '説明が無ければ未設定と同じ');
+  assert.equal(normalizePersona(ANSWER).source, 'ai', 'source を書かないものはAIが組んだ扱い');
 });
 
 test('the composing prompt asks for what the notes leave open to be listed as an assumption', () => {
