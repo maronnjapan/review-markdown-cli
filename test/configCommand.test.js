@@ -87,6 +87,20 @@ test('--global writes the user wide config file', async () => {
   assert.deepEqual(JSON.parse(listed.stdout.join('\n')), { exclude: ['node_modules'] }, 'global settings apply anywhere');
 });
 
+test('config set aiContext keeps the whole sentence it was given', async () => {
+  const dir = await tempDir();
+
+  await run(['set', 'aiContext', '入門書の第3章。', '読者は初学者。', '--dir', dir]);
+  assert.deepEqual(await readConfig(dir), { aiContext: '入門書の第3章。 読者は初学者。' });
+
+  assert.deepEqual((await run(['get', 'aiContext', '--dir', dir])).stdout, ['入門書の第3章。 読者は初学者。']);
+  assert.match((await run(['list', '--dir', dir])).stdout.join('\n'), /aiContext: 入門書の第3章。 読者は初学者。/);
+
+  await run(['unset', 'aiContext', '--dir', dir]);
+  assert.deepEqual(await readConfig(dir), {});
+  await assert.rejects(run(['add', 'aiContext', '追記', '--dir', dir]), /一覧ではない/);
+});
+
 test('config rejects unusable input instead of writing a broken file', async () => {
   const dir = await tempDir();
 

@@ -21,13 +21,20 @@ export function projectStorageKey(rootDir) {
   return crypto.createHash('sha256').update(path.resolve(rootDir)).digest('hex').slice(0, 24);
 }
 
-export function translationCacheKey(target) {
+/**
+ * @param {object} target the snapshotted translation target.
+ * @param {string} [readingContext] revision of the reading context the prompt carries.
+ *   A different context can call for a different word, so it keys the cache too;
+ *   documents without one keep the keys they already had.
+ */
+export function translationCacheKey(target, readingContext = '') {
   const relevant = {
     text: String(target?.selectedText || target?.targetText || ''),
     contextBefore: String(target?.contextBefore || ''),
     contextAfter: String(target?.contextAfter || ''),
     headingPath: Array.isArray(target?.headingPath) ? target.headingPath : [],
-    promptVersion: 1
+    promptVersion: 1,
+    ...(readingContext ? { readingContext } : {})
   };
   return crypto.createHash('sha256').update(JSON.stringify(relevant)).digest('hex');
 }

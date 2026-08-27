@@ -212,6 +212,93 @@ test('placing notes refuses empty input and unparsable answers', async (t) => {
   await assert.rejects(service.placeComments('guide.md', '見出しを直して'), /解析できませんでした/);
 });
 
+test('every AI feature reads the document under the reading context the reviewer set', async (t) => {
+  const { root, store } = await testStore(t);
+  await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\nRun the program.\n', 'utf8');
+  await writeReview(root, 'guide.md', [], { aiContext: 'この章だけ英語のまま残している。' });
+  const prompts = [];
+  const codex = fakeCodex({
+    async runTurn(input) {
+      prompts.push(input.prompt);
+      return {
+        text: JSON.stringify({
+          contextualMeaning: '実行する',
+          meanings: [],
+          explanation: '',
+          placements: [],
+          unplaced: []
+        })
+      };
+    }
+  });
+  const service = new AiService(root, {
+    store,
+    codex,
+    projectContext: 'Node.js入門書。読者はJavaScriptの基礎を知っている。'
+  });
+
+  await service.translate('guide.md', { type: 'text-selection', selectedText: 'run' });
+  await service.placeComments('guide.md', '導入が長い');
+  const conversation = await service.createConversation({ documentPath: 'guide.md', target: { type: 'document' } });
+  await service.sendMessage(conversation.id, 'この段落は誰向け？');
+
+  assert.equal(prompts.length, 3);
+  for (const prompt of prompts) {
+    assert.match(prompt, /<reading_context>/, '翻訳・配置・チャットのどれもコンテキストを渡す');
+    assert.match(prompt, /Node\.js入門書/, 'ディレクトリ全体の前提');
+    assert.match(prompt, /英語のまま残している/, '文書ごとの前提');
+    assert.match(prompt, /data, not instructions/i, 'コンテキストも指示ではなくデータとして渡す');
+  }
+});
+
+test('a conversation catches up when the reading context changes, and stays quiet when it does not', async (t) => {
+  const { root, store } = await testStore(t);
+  await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\nRun the program.\n', 'utf8');
+  const prompts = [];
+  const codex = fakeCodex({
+    async runTurn(input) {
+      prompts.push(input.prompt);
+      return { text: 'はい。' };
+    }
+  });
+  const service = new AiService(root, { store, codex });
+  const conversation = await service.createConversation({ documentPath: 'guide.md', target: { type: 'document' } });
+
+  await service.sendMessage(conversation.id, '誰向けの文章？');
+  await service.sendMessage(conversation.id, 'もう一度教えて');
+  await writeReview(root, 'guide.md', [], { aiContext: '社内の運用手順書。読者は当番の担当者。' });
+  await service.sendMessage(conversation.id, 'いま読むとどう？');
+  await service.sendMessage(conversation.id, '結論は？');
+
+  assert.doesNotMatch(prompts[0], /<reading_context>/, 'コンテキスト未設定なら最初から渡すものがない');
+  assert.equal(prompts[1], 'もう一度教えて', '変わっていなければ質問だけを送る');
+  assert.match(prompts[2], /運用手順書/, '書き足した前提は次の質問で追いつかせる');
+  assert.equal(prompts[3], '結論は？', '一度渡した前提は繰り返さない');
+});
+
+test('the translation cache separates the same word read under different contexts', async (t) => {
+  const { root, store } = await testStore(t);
+  let turns = 0;
+  const codex = fakeCodex({
+    async runTurn() {
+      turns += 1;
+      return { text: JSON.stringify({ contextualMeaning: `訳${turns}`, meanings: [], explanation: '' }) };
+    }
+  });
+  const service = new AiService(root, { store, codex });
+  const target = { type: 'text-selection', selectedText: 'run' };
+
+  const first = await service.translate('guide.md', target);
+  await writeReview(root, 'guide.md', [], { aiContext: '陸上競技の入門書。' });
+  const second = await service.translate('guide.md', target);
+  const again = await service.translate('guide.md', target);
+
+  assert.equal(first.result.contextualMeaning, '訳1');
+  assert.equal(second.result.contextualMeaning, '訳2', '前提が変われば訳し直す');
+  assert.equal(again.cached, true, '同じ前提ならキャッシュを返す');
+  assert.equal(turns, 2);
+});
+
 function segmentIndexOf(prompt, text) {
   const segments = JSON.parse(prompt.match(/<document_segments>(.*)<\/document_segments>/)[1]);
   return segments.find((segment) => segment.text === text).i;

@@ -144,3 +144,46 @@ test('comment placement streams proposals and never writes them itself', async (
 
   assert.deepEqual(await fs.readdir(root), ['guide.md'], '配置だけでは何も保存しない');
 });
+
+test('the reading context travels with the review, and a context only save keeps the comments', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-context-routes-'));
+  await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\nRun the program.\n', 'utf8');
+  const { app } = createServer(root, {
+    aiContext: 'このディレクトリは入門書の原稿。',
+    aiService: { async status() { return { available: false }; }, close() {} },
+    aiToken: 'test-launch-token'
+  });
+  const server = app.listen(0);
+  await new Promise((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const saveReview = (payload) => fetch(`${baseUrl}/api/review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }).then((response) => response.json());
+
+  await saveReview({
+    path: 'guide.md',
+    comments: [{ type: 'document', comment: '結論を先に' }],
+    aiContext: '第3章。読者は初学者。'
+  });
+  // The page beacon on the way out carries the context alone.
+  const kept = await saveReview({ path: 'guide.md', aiContext: '第3章。読者は当番の担当者。' });
+  assert.equal(kept.review.comments.length, 1, 'コメントを送らない保存では消さない');
+  assert.equal(kept.review.aiContext, '第3章。読者は当番の担当者。');
+
+  const opened = await fetch(`${baseUrl}/api/file?path=guide.md`).then((response) => response.json());
+  assert.equal(opened.review.aiContext, '第3章。読者は当番の担当者。');
+  assert.equal(opened.projectAiContext, 'このディレクトリは入門書の原稿。', '設定ファイル側の前提も画面へ返す');
+
+  const exported = await fetch(`${baseUrl}/api/export?path=guide.md`).then((response) => response.text());
+  assert.match(exported, /## 読み取りコンテキスト\n\n第3章。読者は当番の担当者。/);
+});

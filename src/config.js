@@ -13,12 +13,15 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { normalizeAiContext } from './aiContext.js';
 import { normalizePatterns } from './pathFilter.js';
 
 export const CONFIG_FILE_NAME = '.review-markdown.json';
 
 export const LIST_KEYS = ['include', 'exclude'];
-export const SCALAR_KEYS = ['port', 'open'];
+/** Free text, so `config set` joins the words it was given instead of taking the first. */
+export const TEXT_KEYS = ['aiContext'];
+export const SCALAR_KEYS = ['port', 'open', ...TEXT_KEYS];
 export const CONFIG_KEYS = [...LIST_KEYS, ...SCALAR_KEYS];
 
 /** Path of the user wide config file. `REVIEW_MARKDOWN_CONFIG_HOME` overrides the directory. */
@@ -111,6 +114,7 @@ export function normalizeConfigValue(key, value, source = 'config') {
   if (LIST_KEYS.includes(key)) return normalizePatternList(value, `${source}: ${key}`);
   if (key === 'port') return parsePort(value, `${source}: port`);
   if (key === 'open') return parseBoolean(value, `${source}: open`);
+  if (key === 'aiContext') return normalizeAiContext(value, `${source}: aiContext`);
   throw new Error(`${source}: 不明な設定キーです: ${key}（使えるキー: ${CONFIG_KEYS.join(', ')}）`);
 }
 
@@ -204,7 +208,8 @@ export function applyConfigToOptions(options, config = {}) {
     include: dedupe([...(config.include || []), ...options.include]),
     exclude: dedupe([...(config.exclude || []), ...options.exclude]),
     port: usePort ? config.port : options.port,
-    open: useOpen ? config.open : options.open
+    open: useOpen ? config.open : options.open,
+    aiContext: options.aiContext ?? config.aiContext ?? ''
   };
 }
 

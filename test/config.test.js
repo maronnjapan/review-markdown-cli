@@ -170,6 +170,27 @@ test('files the config file hides are refused by the API as well', async (t) => 
 });
 
 /** A home directory nobody wrote a global config into, so only the project file counts. */
+test('the reading context comes from the config file, and the flag replaces it', async () => {
+  const root = await seedProject({ aiContext: '入門書。読者は初学者。' });
+  const { config } = await loadConfig({ targetDir: root, env: emptyEnv(root) });
+
+  assert.equal(config.aiContext, '入門書。読者は初学者。');
+  assert.equal(applyConfigToOptions(parseArgs([root]), config).aiContext, '入門書。読者は初学者。');
+  assert.equal(
+    applyConfigToOptions(parseArgs([root, '--ai-context', '社内の運用手順書。']), config).aiContext,
+    '社内の運用手順書。',
+    'コマンドラインの指定が設定ファイルより優先される'
+  );
+  assert.equal(applyConfigToOptions(parseArgs([root]), {}).aiContext, '', '未設定なら前提なしで読ませる');
+});
+
+test('an unusable reading context is refused instead of reaching the AI', async () => {
+  const root = await seedProject({ aiContext: ['入門書'] });
+
+  await assert.rejects(loadConfig({ targetDir: root, env: emptyEnv(root) }), /文字列で指定してください/);
+  assert.throws(() => parseArgs(['.', '--ai-context', 'あ'.repeat(4001)]), /長すぎます/);
+});
+
 function emptyEnv(root) {
   return { XDG_CONFIG_HOME: path.join(root, 'empty-home'), HOME: path.join(root, 'empty-home') };
 }

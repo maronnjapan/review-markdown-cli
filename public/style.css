@@ -481,6 +481,63 @@ button.danger:hover { background: #9b2116; border-color: #9b2116; color: #fff; }
 }
 .ai-provider-status[data-state="ready"] { color: #087443; }
 .ai-provider-status[data-state="error"], .ai-error { color: #b42318; }
+.ai-context {
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8rem;
+  padding: 0.6rem 1rem;
+}
+.ai-context > summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  font-weight: 600;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+.ai-context-state {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 400;
+}
+.ai-context-state[data-state="set"] { color: #087443; }
+.ai-context-hint {
+  color: var(--muted);
+  font-size: 0.75rem;
+  margin: 0.5rem 0 0;
+}
+.ai-context textarea {
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  font: inherit;
+  margin-top: 0.5rem;
+  padding: 0.55rem;
+  resize: vertical;
+  width: 100%;
+}
+.ai-context-status {
+  color: var(--muted);
+  font-size: 0.72rem;
+  margin: 0.35rem 0 0;
+  min-height: 1rem;
+}
+.ai-context-status[data-state="saved"] { color: #087443; }
+.ai-context-status[data-state="error"], .ai-context-status[data-state="toolong"] { color: #b42318; }
+.ai-context-project { margin-top: 0.6rem; }
+.ai-context-project-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  margin: 0;
+}
+.ai-context-project blockquote {
+  border-left: 3px solid var(--border);
+  font-size: 0.78rem;
+  margin: 0.3rem 0 0;
+  max-height: 6rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding-left: 0.6rem;
+  white-space: pre-wrap;
+}
 .ai-conversation-controls {
   border-bottom: 1px solid var(--border);
   display: grid;

@@ -23,6 +23,7 @@ console.log(`Markdown Review is serving ${rootDir}`);
 if (options.configSources?.length) console.log(`  config: ${options.configSources.join(', ')}`);
 if (filter.include.length) console.log(`  include: ${filter.include.join(', ')}`);
 if (filter.exclude.length) console.log(`  exclude: ${filter.exclude.join(', ')}`);
+if (options.aiContext) console.log(`  ai context: ${summarize(options.aiContext)}`);
 if (port !== options.port) {
   console.log(`Port ${options.port} is already in use; using ${port} instead.`);
 }
@@ -95,6 +96,13 @@ function shutdown() {
     process.exit(0);
   });
   server.closeAllConnections();
+}
+
+/** One line for the startup banner; the whole text still goes to the AI. */
+function summarize(text) {
+  const firstLine = text.split('\n')[0].trim();
+  const rest = text.includes('\n') || firstLine.length > 60;
+  return rest ? `${firstLine.slice(0, 60)}…` : firstLine;
 }
 
 function openBrowser(url) {

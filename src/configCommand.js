@@ -9,6 +9,7 @@ import {
   CONFIG_FILE_NAME,
   CONFIG_KEYS,
   LIST_KEYS,
+  TEXT_KEYS,
   defaultProjectConfigPath,
   findProjectConfigPath,
   globalConfigPath,
@@ -37,6 +38,7 @@ Keys:
   include   レビュー対象に含めるパスのパターン（一覧）
   port      ローカルサーバーのポート番号
   open      起動時にブラウザを開くかどうか（true / false）
+  aiContext AIがこのディレクトリの原稿を読むときの前提（文章）
 
 Options:
   -C, --dir <path>  対象ディレクトリ（既定: カレントディレクトリ）
@@ -48,12 +50,17 @@ Examples:
   review-markdown config add exclude 'drafts/**' '**/*.wip.md'
   review-markdown config add exclude node_modules   # どの階層の node_modules も無視する
   review-markdown config set port 4000
+  review-markdown config set aiContext '入門者向けの技術書。読者はJavaScriptの基礎を知っている。'
   review-markdown config list
 
 パターンは対象ディレクトリからの相対パスに対して照合し、* ** ? {a,b} のワイルドカードによる
 部分一致を使えます。ディレクトリに一致したパターンは、その配下すべてに一致します。
 スラッシュを含まないパターンはどの階層にも一致し、先頭に / を付けると直下だけに一致します。
-設定ファイル名は ${CONFIG_FILE_NAME} です。`;
+設定ファイル名は ${CONFIG_FILE_NAME} です。
+
+aiContext は翻訳・AIチャット・指摘の配置で AI に渡す読み取りコンテキストです。
+ここに書いた前提はディレクトリ配下のすべての文書に効きます。
+文書ごとの前提はブラウザのAIパネルから書けて、両方まとめて AI へ渡します。`;
 
 const COMMANDS = new Set(['init', 'path', 'list', 'get', 'set', 'add', 'remove', 'unset']);
 
@@ -179,11 +186,7 @@ async function runEdit(parsed, targetPath) {
   if (parsed.command === 'unset') {
     delete config[parsed.key];
   } else if (parsed.command === 'set') {
-    config[parsed.key] = normalizeConfigValue(
-      parsed.key,
-      isList ? parsed.values : parsed.values[0],
-      targetPath
-    );
+    config[parsed.key] = normalizeConfigValue(parsed.key, setValue(parsed, isList), targetPath);
   } else if (isList) {
     const current = config[parsed.key] || [];
     const requested = normalizePatternList(parsed.values, `${targetPath}: ${parsed.key}`);
@@ -198,6 +201,12 @@ async function runEdit(parsed, targetPath) {
   const value = written[parsed.key];
   const shown = value === undefined ? '(未設定)' : isList ? `[${value.join(', ')}]` : String(value);
   return output([`${targetPath} を更新しました`, `${parsed.key}: ${shown}`], existing.warnings);
+}
+
+/** Free text keeps every word it was given; other scalars take one value. */
+function setValue(parsed, isList) {
+  if (isList) return parsed.values;
+  return TEXT_KEYS.includes(parsed.key) ? parsed.values.join(' ') : parsed.values[0];
 }
 
 function assertArity(parsed) {

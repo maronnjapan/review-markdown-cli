@@ -87,6 +87,19 @@
               </div>
               <span id="ai-provider-status" class="ai-provider-status">準備中</span>
             </div>
+            <details id="ai-context" class="ai-context">
+              <summary>
+                読み取りコンテキスト
+                <span id="ai-context-state" class="ai-context-state">未設定</span>
+              </summary>
+              <p class="ai-context-hint">AIがこの文書を読むときの前提です。翻訳・AIチャット・指摘の配置すべてに渡します。</p>
+              <textarea id="ai-context-input" rows="4" placeholder="例：Node.js入門書の第3章。読者はJavaScriptの基礎を知っている前提。用語は原著の訳語に合わせる。"></textarea>
+              <p id="ai-context-status" class="ai-context-status" aria-live="polite"></p>
+              <div id="ai-context-project" class="ai-context-project" hidden>
+                <p class="ai-context-project-label">このディレクトリ全体の前提（設定ファイル）</p>
+                <blockquote id="ai-context-project-text"></blockquote>
+              </div>
+            </details>
             <div class="ai-conversation-controls">
               <select id="ai-conversation-select" aria-label="保存された会話">
                 <option value="">新しい会話</option>
@@ -120,6 +133,7 @@
               </div>
             </div>
             <p class="placement-hint">指摘コメントを貼り付けると、AIが対象箇所を探してコメント候補を作ります。追加するまでレビューには保存しません。</p>
+            <p id="placement-context-hint" class="placement-hint" hidden>AIパネルの読み取りコンテキストもここへ渡します。</p>
             <form id="placement-form" class="placement-form">
               <textarea id="placement-input" rows="5" placeholder="例：&#10;- 導入が長い。結論を先に書いてほしい&#10;- 図の説明に単位がない"></textarea>
               <div class="placement-actions">
