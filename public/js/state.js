@@ -26,6 +26,14 @@ export function createState() {
     aiContext: '',
     aiContextDirty: false,
     projectAiContext: '',
+    // 資料の管理者が決めた目的・ストーリー・期待値。前提としてAIへ渡し、
+    // 3つが揃うまでAIレビューは一度止まります。
+    brief: null,
+    briefDirty: false,
+    briefStatus: 'idle',
+    briefAbortController: null,
+    // 管理者が返した問いと、走り書きから補った点。保存はしません。
+    briefDraft: null,
     // その文書について残したメモ。読み取りコンテキストと同じく前提としてAIへ渡します。
     contextNotes: [],
     contextNotesDirty: false,
@@ -82,6 +90,12 @@ export function resetDocumentState(state, filePath) {
   state.comments = [];
   state.aiContext = '';
   state.aiContextDirty = false;
+  state.brief = null;
+  state.briefDirty = false;
+  state.briefStatus = 'idle';
+  state.briefAbortController?.abort();
+  state.briefAbortController = null;
+  state.briefDraft = null;
   state.contextNotes = [];
   state.contextNotesDirty = false;
   state.pendingTarget = null;

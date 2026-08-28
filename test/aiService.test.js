@@ -251,6 +251,95 @@ test('every AI feature reads the document under the reading context the reviewer
   }
 });
 
+test('what the manager settled reaches every AI feature, and the manager itself never reads the body', async (t) => {
+  const { root, store } = await testStore(t);
+  await fs.writeFile(path.join(root, 'guide.md'), '# 再起動手順\n\nまず deploy.sh を実行します。\n', 'utf8');
+  await writeReview(root, 'guide.md', [], {
+    brief: {
+      purpose: '当番が手順書だけで再起動を完了できるようになる。',
+      story: '止めてよい条件 → 止める手順 → 戻ったことの確かめ方。',
+      expectation: '再起動についての問い合わせが来なくなる。'
+    }
+  });
+  const prompts = [];
+  // 求められた答えの形で返すものを選びます。1周目が指摘を1件も出さないと反証の周が
+  // 走らないので、レビューには必ず1件返させます。
+  const codex = fakeCodex({
+    async runTurn(input) {
+      prompts.push(input.prompt);
+      const fields = Object.keys(input.outputSchema?.properties || {});
+      if (fields.includes('verdicts')) return { text: JSON.stringify({ verdicts: [], unplacedVerdicts: [] }) };
+      // ペルソナの答えも summary を持つので、指摘の有無と合わせて見分けます。
+      if (fields.includes('summary') && fields.includes('placements')) {
+        return {
+          text: JSON.stringify({
+            summary: '',
+            placements: [{ segmentIndex: 1, quote: 'deploy.sh', comment: '確認を足してください' }],
+            unplaced: []
+          })
+        };
+      }
+      if (fields.includes('placements')) return { text: JSON.stringify({ placements: [], unplaced: [] }) };
+      if (fields.includes('questions')) {
+        return {
+          text: JSON.stringify({
+            purpose: '', story: '', expectation: '', questions: ['何のための資料ですか。'], assumptions: []
+          })
+        };
+      }
+      if (fields.includes('assumptions')) {
+        return {
+          text: JSON.stringify({
+            label: '運用当番', background: '', knowledge: [], gaps: [], goals: [], concerns: [],
+            summary: '', assumptions: []
+          })
+        };
+      }
+      return { text: JSON.stringify({ contextualMeaning: '実行する', meanings: [], explanation: '' }) };
+    }
+  });
+  const service = new AiService(root, { store, codex });
+
+  await service.translate('guide.md', { type: 'text-selection', selectedText: 'deploy' });
+  await service.placeComments('guide.md', '前提が抜けている');
+  const conversation = await service.createConversation({ documentPath: 'guide.md', target: { type: 'document' } });
+  await service.sendMessage(conversation.id, 'この節は誰向け？');
+
+  // AIレビューは2周とも3点を読みます。1周目にしか入っていないと、反証の周で
+  // 「本文が言っていない」という理由だけで3点由来の指摘が静かに落ちます。
+  const skillDir = path.join(root, '.claude', 'skills', 'fixture-skill');
+  await fs.mkdir(skillDir, { recursive: true });
+  await fs.writeFile(path.join(skillDir, 'SKILL.md'), '---\nname: fixture-skill\n---\n\n読めるかを見る。\n', 'utf8');
+  await service.reviewDocument('guide.md', { skillIds: ['fixture-skill'] });
+
+  assert.equal(prompts.length, 5, '翻訳・配置・チャットと、レビューの2周');
+  for (const prompt of prompts) {
+    assert.match(prompt, /<document_brief>/, 'どれも3点を読む');
+    assert.match(prompt, /当番が手順書だけで再起動を完了できるようになる。/);
+    assert.match(prompt, /not something the document says/, '3点は資料の設計であって中身ではない');
+    // これが無いと、3点から外れた箇所を指摘する根拠が review.js の接地の決まり
+    // （本文も前提も述べていない事実を持ち出さない）に負けて、静かに効かなくなります。
+    assert.match(prompt, /the plan is grounds enough/);
+  }
+
+  // 読み手ペルソナの組み立ても、何のための資料かを読みます。期待値は「読んだあと
+  // 何ができればよいか」なので、読み手そのものの説明に一番近い前提です。
+  await service.composePersona('guide.md', '異動したての運用担当。');
+  assert.match(prompts.at(-1), /<document_brief>/);
+
+  // 管理者の組み立てだけは本文を渡しません。書いてあることから目的を起こすと、
+  // 手段が目的に化けた状態を追認するだけになるからです。
+  const draft = await service.composeDocumentBrief('guide.md', '運用チームから当番向けの手順を頼まれた。');
+  const briefPrompt = prompts.at(-1);
+  assert.doesNotMatch(briefPrompt, /deploy\.sh/, '本文は渡さない');
+  assert.doesNotMatch(briefPrompt, /<document_brief>/, '保存済みの3点も混ぜない');
+  assert.match(briefPrompt, /運用チームから当番向けの手順を頼まれた。/);
+  assert.equal(draft.brief, null, '何も決まっていなければ、それらしい目的で埋めさせない');
+  assert.deepEqual(draft.questions, ['何のための資料ですか。']);
+
+  await assert.rejects(service.composeDocumentBrief('guide.md', '   '), /決まっていることを入力してください/);
+});
+
 test('a conversation catches up when the reading context changes, and stays quiet when it does not', async (t) => {
   const { root, store } = await testStore(t);
   await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\nRun the program.\n', 'utf8');

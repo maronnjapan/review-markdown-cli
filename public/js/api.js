@@ -83,6 +83,11 @@ export const api = {
     return fetchJson(`/api/ai/review-skill?id=${encodeURIComponent(id)}`, aiOptions());
   },
 
+  async composeAiBrief(payload, options = {}) {
+    await ensureAiToken();
+    return streamNdjson('/api/ai/brief', payload, { ...options, headers: aiHeaders() });
+  },
+
   async composeAiPersona(payload, options = {}) {
     await ensureAiToken();
     return streamNdjson('/api/ai/persona', payload, { ...options, headers: aiHeaders() });

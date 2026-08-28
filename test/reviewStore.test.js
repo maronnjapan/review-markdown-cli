@@ -259,6 +259,81 @@ test('buildReviewMarkdown writes the notes between the reading context and the c
   assert.match(markdown, /- 未決（2026-08-03）: 付録を入れるか未定。\n  担当と相談中。/);
 });
 
+test('the document brief lives with the review and survives a comment only save', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-store-brief-'));
+  await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n', 'utf8');
+
+  await writeReview(root, 'guide.md', [], {
+    aiContext: '入門書の第3章。',
+    brief: {
+      purpose: '  読者が第4章へ進める状態にする。  ',
+      story: '前提の確認 → 例 → 落とし穴 → まとめ。',
+      expectation: '第4章の質問が減る。',
+      updatedAt: '2026-08-01T00:00:00.000Z'
+    }
+  });
+  // コメントだけを保存する要求（画面を離れるときのビーコンがこの形です）。
+  await writeReview(root, 'guide.md', [{ type: 'document', comment: '結論を先に書く' }]);
+  const review = await readReview(root, 'guide.md');
+
+  assert.equal(review.brief.purpose, '読者が第4章へ進める状態にする。', 'コメントだけの保存で3点は消えない');
+  assert.equal(review.brief.updatedAt, '2026-08-01T00:00:00.000Z');
+  assert.equal(review.aiContext, '入門書の第3章。');
+
+  // 一部だけ決まっている状態も、そのまま残します。決めた分から前提として効かせるためです。
+  await writeReview(root, 'guide.md', [], { brief: { purpose: '読者が第4章へ進める。' } });
+  const partial = await readReview(root, 'guide.md');
+  assert.equal(partial.brief.story, '');
+
+  // null は「3つを消す」です。据え置きの undefined と区別します。
+  await writeReview(root, 'guide.md', [], { brief: null });
+  const cleared = await readReview(root, 'guide.md');
+  assert.equal(cleared.brief, null);
+  const saved = JSON.parse(await fs.readFile(path.join(root, '.review', 'guide.md.review.json'), 'utf8'));
+  assert.equal('brief' in saved, false, '3点の無い文書にキーは現れない');
+  assert.equal(saved.aiContext, '入門書の第3章。', '読み取りコンテキストは据え置く');
+
+  await assert.rejects(
+    writeReview(root, 'guide.md', [], { brief: { story: 'あ'.repeat(601) } }),
+    /「ストーリー」が長すぎます/
+  );
+});
+
+test('a review written before the document manager existed reads back without a brief', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-store-nobrief-'));
+  const reviewFile = path.join(root, '.review', 'guide.md.review.json');
+  await fs.mkdir(path.dirname(reviewFile), { recursive: true });
+  await fs.writeFile(reviewFile, `${JSON.stringify({
+    targetFile: 'guide.md',
+    aiContext: '入門書の第3章。',
+    comments: [{ id: 'comment-existing', type: 'document', comment: '既存コメント' }]
+  })}\n`, 'utf8');
+
+  const review = await readReview(root, 'guide.md');
+  assert.equal(review.brief, null);
+  assert.equal(review.comments.length, 1);
+});
+
+test('buildReviewMarkdown opens with what the document was for', () => {
+  const markdown = buildReviewMarkdown({
+    targetFile: 'guide.md',
+    aiContext: '入門書の第3章。',
+    brief: {
+      purpose: '読者が第4章へ進める状態にする。',
+      story: '前提の確認 → 例 → 落とし穴。\nまとめは短く。',
+      expectation: '第4章の質問が減る。'
+    },
+    comments: [{ type: 'document', comment: '結論を先に書く' }]
+  });
+
+  // 何を目指した資料かを知らないまま指摘だけ読んでも、直すかどうかを決められません。
+  assert.match(markdown, /# Review for guide\.md\n\n## 資料の管理者[\s\S]*## 読み取りコンテキスト[\s\S]*## 文書全体へのコメント/);
+  assert.match(markdown, /- 目的: 読者が第4章へ進める状態にする。/);
+  // 改行を含む欄は、2文字下げて同じ箇条書きの中へ収めます。
+  assert.match(markdown, /- ストーリー: 前提の確認 → 例 → 落とし穴。\n  まとめは短く。/);
+  assert.doesNotMatch(buildReviewMarkdown({ targetFile: 'guide.md', comments: [] }), /資料の管理者/);
+});
+
 test('listMarkdownFiles ignores .review, .git, and node_modules directories', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-files-'));
   await fs.mkdir(path.join(root, 'docs'), { recursive: true });

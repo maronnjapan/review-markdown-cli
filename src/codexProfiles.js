@@ -6,10 +6,10 @@ import { PURPOSES } from './prompts/codexRole.js';
  * 用途は2つだけです。
  *   - assistant: 翻訳・AIチャット・指摘の配置。待ち時間がそのまま使い心地になるので、
  *     速いモデルを低い推論強度で回します。
- *   - review   : AIレビューと読み手ペルソナの組み立て。1回の読みで見落としたものは
- *     そのまま結果から抜けるので、深く読むモデルを高い推論強度で回します。
- *     ペルソナがこちら側にあるのは、そこで組んだ読み手が以後のレビューの
- *     判断基準そのものになるからです。
+ *   - review   : AIレビューと、読み手ペルソナ・資料の管理者の組み立て。1回の読みで
+ *     見落としたものはそのまま結果から抜けるので、深く読むモデルを高い推論強度で
+ *     回します。ペルソナと管理者がこちら側にあるのは、そこで決めた読み手と目的が
+ *     以後のレビューの判断基準そのものになるからです。
  *
  * 費用と待ち時間の一番大きなつまみは `EFFORT_PREFERENCE` です。
  * 設定ファイルから固定したいときは `aiModel` / `aiEffort` / `aiReviewModel` /
@@ -21,6 +21,7 @@ const FEATURE_PURPOSE = {
   translate: 'assistant',
   chat: 'assistant',
   place: 'assistant',
+  brief: 'review',
   persona: 'review',
   review: 'review'
 };

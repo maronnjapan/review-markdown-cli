@@ -63,6 +63,7 @@
         <aside class="comments-pane card">
           <div class="side-pane-tabs" role="tablist" aria-label="サイドパネル">
             <button id="comments-tab-button" class="active" type="button" role="tab" aria-selected="true">コメント</button>
+            <button id="manager-tab-button" type="button" role="tab" aria-selected="false">管理者<span id="manager-tab-count" class="tab-count" hidden></span></button>
             <button id="ai-tab-button" type="button" role="tab" aria-selected="false">AI</button>
             <button id="placement-tab-button" type="button" role="tab" aria-selected="false">指摘の配置</button>
             <button id="review-tab-button" type="button" role="tab" aria-selected="false">AIレビュー</button>
@@ -80,6 +81,51 @@
               <button id="export-button" type="button" class="wide-button">レビューMarkdownを出力</button>
               <textarea id="export-output" class="export-output" readonly hidden></textarea>
               <div id="comments-list" class="comments-list"></div>
+            </div>
+          </section>
+          <section id="manager-panel" class="manager-panel hidden" aria-live="polite">
+            <div class="pane-scroll">
+              <div class="ai-header">
+                <div>
+                  <p class="eyebrow">Document manager</p>
+                  <h2>資料の管理者</h2>
+                </div>
+                <span id="brief-state" class="ai-context-state">0 / 3</span>
+              </div>
+              <p class="placement-hint">資料を作り始める前に、目的・ストーリー・期待値の3つを決めます。3つは前提として、翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。揃うまで、AIレビューは一度止まります。</p>
+              <div id="brief-form" class="brief-form">
+                <div class="brief-field">
+                  <label class="brief-field-label" for="brief-purpose">目的</label>
+                  <p id="brief-purpose-hint" class="brief-field-hint">この資料が終わったとき、読み手に何が起きていれば成功か。「資料を作ること」は目的になりません。</p>
+                  <textarea id="brief-purpose" rows="3" aria-describedby="brief-purpose-hint" placeholder="例：当番が、手順書を見ながら一人で再起動を完了できるようになる。"></textarea>
+                </div>
+                <div class="brief-field">
+                  <label class="brief-field-label" for="brief-story">ストーリー</label>
+                  <p id="brief-story-hint" class="brief-field-hint">その結論まで、何をどの順に示して連れて行くか。節の一覧ではなく、前が次を支える並びを書きます。</p>
+                  <textarea id="brief-story" rows="3" aria-describedby="brief-story-hint" placeholder="例：止めてよい条件を先に決める → 止める手順 → 戻ったことの確かめ方 → 戻らなかったときの連絡先。"></textarea>
+                </div>
+                <div class="brief-field">
+                  <label class="brief-field-label" for="brief-expectation">期待値</label>
+                  <p id="brief-expectation-hint" class="brief-field-hint">読んだあと、読み手や頼んだ人が何を判断・実行できるか。</p>
+                  <textarea id="brief-expectation" rows="3" aria-describedby="brief-expectation-hint" placeholder="例：当番から運用チームへの問い合わせが、再起動については来なくなる。"></textarea>
+                </div>
+                <div class="brief-actions">
+                  <button id="brief-clear-button" type="button" disabled>3つを消す</button>
+                </div>
+                <p id="brief-status" class="ai-context-status" aria-live="polite"></p>
+              </div>
+              <details id="brief-compose" class="ai-context">
+                <summary>管理者に組み立てさせる</summary>
+                <p class="ai-context-hint">決まっていることを走り書きで渡すと、管理者が3つの欄へ組み直し、決まっていない分は問いとして返します。本文は読ませません。書いてあることをそのまま目的として追認させないためです。</p>
+                <form id="brief-compose-form" class="persona-form">
+                  <textarea id="brief-input" rows="4" placeholder="例：運用チームから当番向けの再起動手順を頼まれた。事故が月1件ある。締め切りは来週。"></textarea>
+                  <div class="persona-actions">
+                    <button id="brief-stop-button" class="hidden" type="button">停止</button>
+                    <button id="brief-compose-button" type="submit">管理者に聞く</button>
+                  </div>
+                </form>
+                <div id="brief-result" class="brief-result"></div>
+              </details>
             </div>
           </section>
           <section id="ai-panel" class="ai-panel hidden" aria-live="polite">
@@ -158,7 +204,7 @@
                 </div>
               </div>
               <p class="placement-hint">指摘コメントを貼り付けると、AIが対象箇所を探してコメント候補を作ります。追加するまでレビューには保存しません。</p>
-              <p id="placement-context-hint" class="placement-hint" hidden>AIパネルの読み取りコンテキストとコンテキストメモも、ここへ渡します。</p>
+              <p id="placement-context-hint" class="placement-hint" hidden>「管理者」タブで決めた3点と、AIパネルの読み取りコンテキストとコンテキストメモも、ここへ渡します。</p>
               <form id="placement-form" class="placement-form">
                 <textarea id="placement-input" rows="5" placeholder="例：&#10;- 導入が長い。結論を先に書いてほしい&#10;- 図の説明に単位がない"></textarea>
                 <div class="placement-actions">
@@ -209,6 +255,7 @@
               </details>
 
               <form id="review-form" class="placement-form">
+                <p id="review-brief-hint" class="review-brief-hint" hidden></p>
                 <p id="review-run-hint" class="review-run-hint hidden">読み手が未設定です。決めておくと、指摘が「この読み手に何が起きるか」まで書かれます。</p>
                 <div class="placement-actions">
                   <button id="review-stop-button" class="hidden" type="button">停止</button>

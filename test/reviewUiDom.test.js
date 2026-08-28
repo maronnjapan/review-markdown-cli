@@ -1030,7 +1030,16 @@ test('an AI review runs with the chosen skills and the reader the AI rebuilt fro
       path: 'docs/note.md',
       markdown,
       ...await renderViews(markdown),
-      review: { targetFile: 'docs/note.md', comments: [] },
+      // 管理者の3点は決まっている文書。揃っていないときに止まることは別のテストで確かめる。
+      review: {
+        targetFile: 'docs/note.md',
+        comments: [],
+        brief: {
+          purpose: '当番が手順書だけで再起動を完了できるようになる。',
+          story: '止めてよい条件 → 止める手順 → 戻ったことの確かめ方。',
+          expectation: '再起動についての問い合わせが来なくなる。'
+        }
+      },
       reviewFile: '.review/docs/note.md.review.json'
     }),
     '/api/ai/status': () => ({ token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model' }),
@@ -1151,6 +1160,9 @@ test('an AI review runs with the chosen skills and the reader the AI rebuilt fro
   assert.equal(personaRequests.length, 1, 'そのまま使うときはAIを呼ばない');
   await waitFor(() => savedRequests.some((request) => request.persona?.source === 'manual'), 1600);
 
+  // 3点が決まっているので、管理者は止めない。
+  assert.equal(document.querySelector('#review-brief-hint').hidden, true);
+  assert.equal(document.querySelector('#review-run-button').textContent, 'レビューを実行');
   document.querySelector('#review-form').requestSubmit();
   await waitFor(() => reviewRequests.length === 1);
 
@@ -1280,6 +1292,187 @@ test('a PDF has no body to copy, so the copy button stays hidden', async (t) => 
   );
 });
 
+test('the manager asks for what is not settled, and holds the review back once', async (t) => {
+  const markdown = ['# 再起動手順', '', 'まず deploy.sh を実行します。'].join('\n');
+  const savedRequests = [];
+  const briefRequests = [];
+  const reviewRequests = [];
+  const { document, window } = await startApp(t, 'http://localhost/#/review/docs%2Fnote.md', {
+    '/api/file': async () => ({
+      path: 'docs/note.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'docs/note.md', comments: [] },
+      reviewFile: '.review/docs/note.md.review.json'
+    }),
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model' }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/review-skills': () => ({
+      skills: [{ id: 'reader-fit-review', name: '読み手適合レビュー', description: '読み手に届くかを見る。', source: 'builtin' }]
+    }),
+    '/api/ai/brief': (_input, options) => {
+      briefRequests.push(JSON.parse(options.body));
+      return ndjsonResponse([
+        { type: 'started' },
+        {
+          type: 'result',
+          // 走り書きが言っていない2つは、埋めずに問いとして返ってくる。
+          brief: { purpose: '当番が一人で再起動を完了できるようになる。', story: '', expectation: '' },
+          questions: ['止めてよい条件は誰が決めますか。', '読んだ人に何を判断してほしいですか。'],
+          assumptions: ['「当番」を運用当番と読みました']
+        }
+      ]);
+    },
+    '/api/ai/review': (_input, options) => {
+      reviewRequests.push(JSON.parse(options.body));
+      return ndjsonResponse([
+        { type: 'started' },
+        { type: 'result', skills: [], summary: '', verified: true, refuted: 0, placements: [], unplaced: [], droppedPlacements: 0 }
+      ]);
+    },
+    '/api/review': (_input, options) => {
+      const body = JSON.parse(options.body);
+      savedRequests.push(body);
+      return {
+        review: { targetFile: 'docs/note.md', comments: body.comments || [], brief: body.brief },
+        reviewFile: '.review/docs/note.md.review.json'
+      };
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content h1'));
+
+  document.querySelector('#manager-tab-button').click();
+  assert.equal(document.querySelector('#manager-panel').classList.contains('hidden'), false);
+  assert.equal(document.querySelector('#brief-state').textContent, '0 / 3');
+  assert.equal(document.querySelector('#brief-compose-button').disabled, true, '走り書きが空のうちは聞けない');
+
+  const briefInput = document.querySelector('#brief-input');
+  briefInput.value = '運用チームから当番向けの再起動手順を頼まれた。';
+  briefInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(document.querySelector('#brief-compose-button').disabled, false);
+  document.querySelector('#brief-compose-form').requestSubmit();
+  await waitFor(() => document.querySelector('.brief-questions'));
+
+  assert.deepEqual(briefRequests, [{ path: 'docs/note.md', input: '運用チームから当番向けの再起動手順を頼まれた。' }]);
+  assert.equal(document.querySelector('#brief-purpose').value, '当番が一人で再起動を完了できるようになる。');
+  assert.equal(document.querySelector('#brief-story').value, '', '言っていない項目は埋めない');
+  assert.equal(document.querySelectorAll('.brief-questions li').length, 2, '埋めない代わりに問い返す');
+  assert.match(document.querySelector('.brief-assumptions').textContent, /運用当番と読みました/);
+  assert.equal(document.querySelector('#brief-state').textContent, '1 / 3');
+
+  // 決まった分は、コメントと同じ自動保存でレビューファイルへ入る。
+  await waitFor(() => savedRequests.some((request) => request.brief?.purpose), 1600);
+
+  // まだ2つ足りないので、レビューのパネルは押す前から何が足りないかを言う。
+  document.querySelector('#review-tab-button').click();
+  await waitFor(() => document.querySelectorAll('#review-skill-list input[data-skill-id]').length === 1);
+  const briefHint = document.querySelector('#review-brief-hint');
+  assert.equal(briefHint.hidden, false);
+  assert.match(briefHint.textContent, /ストーリー・期待値を求めています/);
+
+  // 1度目の実行は止める。関門は「決めないまま進んでいる」ことに気づかせるためのもの。
+  document.querySelector('#review-form').requestSubmit();
+  await waitFor(() => document.querySelector('#review-run-button').textContent === 'それでも実行する');
+  assert.deepEqual(reviewRequests, [], '1度目は実行しない');
+  assert.match(document.querySelector('#toast-region').textContent, /資料の管理者が/);
+
+  // 止め続けはしない。押し直せば、決めないままでも実行する。
+  document.querySelector('#review-form').requestSubmit();
+  await waitFor(() => reviewRequests.length === 1);
+
+  // 3つとも決まれば、関門は開いたままになる。
+  document.querySelector('#manager-tab-button').click();
+  for (const [selector, value] of [
+    ['#brief-story', '止めてよい条件 → 止める手順 → 戻ったことの確かめ方。'],
+    ['#brief-expectation', '再起動についての問い合わせが来なくなる。']
+  ]) {
+    const field = document.querySelector(selector);
+    field.value = value;
+    field.dispatchEvent(new window.Event('input', { bubbles: true }));
+  }
+  assert.equal(document.querySelector('#brief-state').textContent, '揃いました');
+  assert.equal(document.querySelector('#review-brief-hint').hidden, true);
+  assert.equal(document.querySelector('#review-run-button').textContent, 'レビューを実行');
+
+  // 3点は前提の一部なので、質問と一緒に渡すもののなかにも出る。
+  document.querySelector('#ai-tab-button').click();
+  assert.match(document.querySelector('#placement-context-hint').textContent, /「管理者」タブで決めた3点/);
+  assert.equal(document.querySelector('#placement-context-hint').hidden, false);
+});
+
+test('a document with nothing written yet cannot be edited until the manager has been answered', async (t) => {
+  // 骨組みだけの資料。これから「作る」もので、依頼どおり作る手前で止める対象。
+  const markdown = '# 再起動手順\n';
+  const { document, window } = await startApp(t, 'http://localhost/#/review/docs%2Fnew.md', {
+    '/api/file': async () => ({
+      path: 'docs/new.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'docs/new.md', comments: [] },
+      reviewFile: '.review/docs/new.md.review.json'
+    }),
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model' }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/review-skills': () => ({ skills: [] }),
+    '/api/review': (_input, options) => ({
+      review: { targetFile: 'docs/new.md', comments: JSON.parse(options.body).comments || [] },
+      reviewFile: '.review/docs/new.md.review.json'
+    })
+  });
+  await waitFor(() => document.querySelector('#markdown-content h1'));
+
+  // タブは既定でコメントを開くので、決まっていない数をラベルへ出して求めていることを見せる。
+  const tabCount = document.querySelector('#manager-tab-count');
+  assert.equal(tabCount.hidden, false);
+  assert.equal(tabCount.textContent, '0 / 3');
+
+  document.querySelector('#edit-mode-button').click();
+  await waitFor(() => document.querySelector('#manager-panel').classList.contains('hidden') === false);
+  assert.equal(document.querySelector('#edit-mode-button').getAttribute('aria-pressed'), 'false',
+    'まだ本文の無い資料は、3点を決めるまで書き始めさせない');
+  assert.match(document.querySelector('#toast-region').textContent, /まだ本文の無い資料です/);
+
+  // 止め続けはしない。押し直せば、決めないままでも書き始められる。
+  document.querySelector('#edit-mode-button').click();
+  await waitFor(() => document.querySelector('#edit-mode-button').getAttribute('aria-pressed') === 'true');
+
+  // 3つとも決めれば、タブの印は消える。
+  document.querySelector('#manager-tab-button').click();
+  for (const [selector, value] of [
+    ['#brief-purpose', '当番が一人で再起動できるようになる。'],
+    ['#brief-story', '条件 → 手順 → 確認。'],
+    ['#brief-expectation', '問い合わせが来なくなる。']
+  ]) {
+    const field = document.querySelector(selector);
+    field.value = value;
+    field.dispatchEvent(new window.Event('input', { bubbles: true }));
+  }
+  assert.equal(tabCount.hidden, true);
+});
+
+test('a document that is already written is not held back, only told once', async (t) => {
+  const markdown = '# 再起動手順\n\nまず deploy.sh を実行します。\n';
+  const { document } = await startApp(t, 'http://localhost/#/review/docs%2Fwritten.md', {
+    '/api/file': async () => ({
+      path: 'docs/written.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'docs/written.md', comments: [] },
+      reviewFile: '.review/docs/written.md.review.json'
+    }),
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model' }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/review-skills': () => ({ skills: [] })
+  });
+  await waitFor(() => document.querySelector('#markdown-content h1'));
+
+  // 直しに来た人と読みに来た人を、編集の手前で締め出さない。言うのは1回だけ。
+  document.querySelector('#edit-mode-button').click();
+  await waitFor(() => document.querySelector('#edit-mode-button').getAttribute('aria-pressed') === 'true');
+  assert.match(document.querySelector('#toast-region').textContent, /資料の管理者が目的・ストーリー・期待値を求めています/);
+  assert.doesNotMatch(document.querySelector('#toast-region').textContent, /まだ本文の無い資料です/);
+});
+
 test('every side pane scrolls inside itself, so nothing is cut off below the fold', async (t) => {
   const indexHtml = await fs.readFile(path.join(projectDir, 'public', 'index.html'), 'utf8');
   const styles = await fs.readFile(path.join(projectDir, 'public', 'style.css'), 'utf8');
@@ -1290,6 +1483,7 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
   // パネルが伸びる部分は、外へはみ出さずここでスクロールします。
   for (const selector of [
     '#comments-list', '#export-button',
+    '#brief-form', '#brief-compose',
     '#ai-context', '#ai-target', '#translation-result', '#ai-messages',
     '#placement-form', '#placement-results',
     '#review-skill-list', '#review-persona', '#review-results'
@@ -1303,7 +1497,7 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
   assert.equal(document.querySelector('#ai-chat-form').closest('.pane-scroll'), null);
   assert.equal(document.querySelector('#save-button').closest('.pane-scroll'), null);
 
-  for (const panel of ['#comments-panel', '#ai-panel', '#placement-panel', '#review-panel']) {
+  for (const panel of ['#comments-panel', '#manager-panel', '#ai-panel', '#placement-panel', '#review-panel']) {
     assert.equal(document.querySelectorAll(`${panel} .pane-scroll`).length, 1, `${panel} のスクロール領域は1つ`);
   }
   assert.match(styles, /\.pane-scroll \{[^}]*overflow-y: auto;/, '.pane-scroll が実際にスクロールする');

@@ -16,6 +16,7 @@ import { AiStore, defaultAiDataDir, translationCacheKey } from './aiStore.js';
 import { CodexAppServer } from './codexAppServer.js';
 import { purposeFor } from './codexProfiles.js';
 import { collectCommentContext, commentContextBlock } from './commentContext.js';
+import { buildBriefDraft, normalizeBriefInput } from './documentBrief.js';
 import {
   applyVerification,
   buildReviewFindings,
@@ -32,6 +33,7 @@ import {
   placementPrompt
 } from './commentPlacement.js';
 import { followUpChatPrompt, initialChatPrompt } from './prompts/chat.js';
+import { BRIEF_SCHEMA, briefPrompt } from './prompts/manager.js';
 import { PASSAGE_SCHEMA, TERM_SCHEMA, translationPrompt } from './prompts/translate.js';
 import { listReviewSkills, readReviewSkill, readReviewSkills } from './reviewSkills.js';
 import { readReview } from './reviewStore.js';
@@ -51,6 +53,7 @@ import { readReview } from './reviewStore.js';
 const ANSWER_SUBJECTS = {
   translate: 'Codexの翻訳結果',
   place: 'Codexの配置結果',
+  brief: '管理者が組み立てた目的・ストーリー・期待値',
   persona: 'Codexが組み直した読み手ペルソナ',
   review: 'Codexのレビュー結果'
 };
@@ -85,17 +88,18 @@ export class AiService {
 
   /**
    * What the AI should assume while reading one document: the project wide
-   * context, the one saved with that document's review, the notes the reviewer
-   * left on it, and the reader it is written for.
+   * context, what the document is for, the one saved with that document's
+   * review, the notes the reviewer left on it, and the reader it is written for.
    *
    * 相談もレビューも翻訳も配置も、前提はこの1本から受け取ります。
    * 「残したメモの上でレビューする」が別配線ではなく既定の動きなのは、そのためです。
    */
   async readingContext(documentPath) {
-    const { aiContext, contextNotes, persona } = await readReview(this.rootDir, documentPath);
+    const { aiContext, brief, contextNotes, persona } = await readReview(this.rootDir, documentPath);
     return resolveAiContext({
       project: this.projectContext,
       document: aiContext,
+      brief,
       notes: contextNotes,
       persona
     });
@@ -167,6 +171,35 @@ export class AiService {
   }
 
   /**
+   * レビュアーの走り書きから、資料の管理者に目的・ストーリー・期待値を組み立てさせます。
+   * 保存はしません。組み立てた結果と、埋まらなかった項目への問いを返します。
+   */
+  async composeDocumentBrief(documentPath, input, { onDelta, signal } = {}) {
+    const notes = normalizeBriefInput(input);
+    if (!notes) throw new Error('決まっていることを入力してください');
+
+    // 本文は渡しません。すでに書かれているものから目的を起こすと、書いてあることが
+    // そのまま目的になります。それは「作る前に目的を決める」の逆で、手段が目的に
+    // 化けた状態を追認するだけです。保存済みのブリーフも混ぜません。組み直しの材料は
+    // 走り書きだけ、というのは読み手ペルソナと同じです。
+    const { aiContext, contextNotes, persona } = await readReview(this.rootDir, documentPath);
+    const readingContext = resolveAiContext({
+      project: this.projectContext,
+      document: aiContext,
+      notes: contextNotes,
+      persona
+    });
+    const { answer } = await this.askForJson({
+      feature: 'brief',
+      prompt: briefPrompt(notes, aiContextBlock(readingContext)),
+      outputSchema: BRIEF_SCHEMA,
+      onDelta,
+      signal
+    });
+    return buildBriefDraft(answer);
+  }
+
+  /**
    * レビュアーの走り書きを、読み手ペルソナへ組み直します。
    * 保存はしません。組み直した結果を確認したレビュアーが保存します。
    */
@@ -175,11 +208,14 @@ export class AiService {
     if (!notes) throw new Error('読み手ペルソナの説明を入力してください');
 
     // 組み直しの材料は走り書きだけです。保存済みのペルソナは前提に混ぜません。
-    // 読み取りコンテキストと残したメモは渡します。どんな原稿の読み手なのかが決まるからです。
-    const { aiContext, contextNotes } = await readReview(this.rootDir, documentPath);
+    // 読み取りコンテキストと残したメモ、そして管理者が決めた3点は渡します。
+    // どんな原稿の読み手なのかが決まるからで、なかでも期待値は「読んだあと何ができれば
+    // よいか」なので、読み手そのものの説明に一番近い前提です。
+    const { aiContext, brief, contextNotes } = await readReview(this.rootDir, documentPath);
     const readingContext = resolveAiContext({
       project: this.projectContext,
       document: aiContext,
+      brief,
       notes: contextNotes
     });
     const { answer } = await this.askForJson({
