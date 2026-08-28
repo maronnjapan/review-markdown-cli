@@ -18,11 +18,88 @@ import { normalizePatterns } from './pathFilter.js';
 
 export const CONFIG_FILE_NAME = '.review-markdown.json';
 
-export const LIST_KEYS = ['include', 'exclude'];
+/**
+ * 書ける設定キーの一覧です。1キー1行で、種類・値の読み方・`config` の説明文を持ちます。
+ *
+ * `kind` は3つ。
+ *   list  : 値の並び。設定ファイル同士では連結します（例: exclude）。
+ *   text  : 自由な文章。`config set` は与えられた語をすべてつなぎます。
+ *   scalar: 値1つ。`config set` は先頭の語だけを取ります。
+ *
+ * モデルの実行コマンドは、意図してここに置いていません。レビュー対象のリポジトリが
+ * 自前の `.review-markdown.json` を同梱していることがあり、そこから起動する実行ファイルを
+ * 選ばせると、原稿を開いただけで任意のコマンドが走ることになるからです。
+ */
+const CONFIG_KEY_SPECS = {
+  include: {
+    kind: 'list',
+    parse: (value, source) => normalizePatternList(value, source),
+    help: 'レビュー対象に含めるパスのパターン（一覧）'
+  },
+  exclude: {
+    kind: 'list',
+    parse: (value, source) => normalizePatternList(value, source),
+    help: 'レビュー対象から外すパスのパターン（一覧）'
+  },
+  port: {
+    kind: 'scalar',
+    parse: (value, source) => parsePort(value, source),
+    help: 'ローカルサーバーのポート番号'
+  },
+  open: {
+    kind: 'scalar',
+    parse: (value, source) => parseBoolean(value, source),
+    help: '起動時にブラウザを開くかどうか（true / false）'
+  },
+  aiContext: {
+    kind: 'text',
+    parse: (value, source) => normalizeAiContext(value, source),
+    help: 'AIがこのディレクトリの原稿を読むときの前提（文章）'
+  },
+  aiModel: {
+    kind: 'scalar',
+    parse: (value, source) => parseIdentifier(value, source),
+    help: '翻訳・AIチャット・指摘の配置に使うCodexのモデル（既定: 速いモデルを自動で選ぶ）'
+  },
+  aiEffort: {
+    kind: 'scalar',
+    parse: (value, source) => parseIdentifier(value, source),
+    help: '同上の推論強度（none / low / medium / high など、モデルが対応するもの）'
+  },
+  aiReviewModel: {
+    kind: 'scalar',
+    parse: (value, source) => parseIdentifier(value, source),
+    help: 'AIレビューと読み手ペルソナに使うCodexのモデル（既定: 深く読むモデルを自動で選ぶ）'
+  },
+  aiReviewEffort: {
+    kind: 'scalar',
+    parse: (value, source) => parseIdentifier(value, source),
+    help: '同上の推論強度。費用と待ち時間が一番大きく変わるつまみ'
+  }
+};
+
+export const CONFIG_KEYS = Object.keys(CONFIG_KEY_SPECS);
+export const LIST_KEYS = keysOfKind('list');
 /** Free text, so `config set` joins the words it was given instead of taking the first. */
-export const TEXT_KEYS = ['aiContext'];
-export const SCALAR_KEYS = ['port', 'open', ...TEXT_KEYS];
-export const CONFIG_KEYS = [...LIST_KEYS, ...SCALAR_KEYS];
+export const TEXT_KEYS = keysOfKind('text');
+export const SCALAR_KEYS = CONFIG_KEYS.filter((key) => !LIST_KEYS.includes(key));
+
+/** `config --help` の Keys 節。表から作るので、キーを足しても説明を書き忘れません。 */
+export const CONFIG_KEY_HELP = CONFIG_KEYS.map((key) => (
+  `  ${key.padEnd(15)}${CONFIG_KEY_SPECS[key].help}`
+)).join('\n');
+
+/** 用途ごとのモデル指定。設定していない用途は、Codexが持っているものから自動で選びます。 */
+export function aiModelsFromConfig(config = {}) {
+  return {
+    assistant: { model: config.aiModel, effort: config.aiEffort },
+    review: { model: config.aiReviewModel, effort: config.aiReviewEffort }
+  };
+}
+
+function keysOfKind(kind) {
+  return CONFIG_KEYS.filter((key) => CONFIG_KEY_SPECS[key].kind === kind);
+}
 
 /** Path of the user wide config file. `REVIEW_MARKDOWN_CONFIG_HOME` overrides the directory. */
 export function globalConfigPath(env = process.env, platform = process.platform) {
@@ -111,11 +188,18 @@ export function normalizeConfig(raw, source = 'config') {
 
 /** Coerces one value into the type its key expects, throwing on anything else. */
 export function normalizeConfigValue(key, value, source = 'config') {
-  if (LIST_KEYS.includes(key)) return normalizePatternList(value, `${source}: ${key}`);
-  if (key === 'port') return parsePort(value, `${source}: port`);
-  if (key === 'open') return parseBoolean(value, `${source}: open`);
-  if (key === 'aiContext') return normalizeAiContext(value, `${source}: aiContext`);
-  throw new Error(`${source}: 不明な設定キーです: ${key}（使えるキー: ${CONFIG_KEYS.join(', ')}）`);
+  const spec = CONFIG_KEY_SPECS[key];
+  if (!spec) throw new Error(`${source}: 不明な設定キーです: ${key}（使えるキー: ${CONFIG_KEYS.join(', ')}）`);
+  return spec.parse(value, `${source}: ${key}`);
+}
+
+/** モデル名や推論強度のような、空白を含まない1語の設定値。 */
+export function parseIdentifier(value, source = 'value') {
+  if (typeof value !== 'string') throw new Error(`${source} は文字列で指定してください: ${JSON.stringify(value)}`);
+  const text = value.trim();
+  if (!text) throw new Error(`${source} に空の値は指定できません`);
+  if (/\s/.test(text)) throw new Error(`${source} に空白は含められません: ${value}`);
+  return text;
 }
 
 export function normalizePatternList(value, source = 'patterns') {
@@ -209,7 +293,9 @@ export function applyConfigToOptions(options, config = {}) {
     exclude: dedupe([...(config.exclude || []), ...options.exclude]),
     port: usePort ? config.port : options.port,
     open: useOpen ? config.open : options.open,
-    aiContext: options.aiContext ?? config.aiContext ?? ''
+    aiContext: options.aiContext ?? config.aiContext ?? '',
+    // モデルの指定はコマンドラインに口を持たないので、設定ファイルの値がそのまま届きます。
+    aiModels: aiModelsFromConfig(config)
   };
 }
 

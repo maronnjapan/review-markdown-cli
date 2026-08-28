@@ -1,5 +1,6 @@
 import { existsSync, statSync } from 'node:fs';
 import { normalizeAiContext } from './aiContext.js';
+import { splitFlag, takeValue } from './argv.js';
 import { CONFIG_FILE_NAME, parsePort } from './config.js';
 import { normalizePatterns } from './pathFilter.js';
 
@@ -31,11 +32,12 @@ Glob:
 
 Config:
   ${CONFIG_FILE_NAME}（対象ディレクトリから親へ遡って探索）とユーザー全体の設定ファイルを
-  読み込み、そこに書いた include / exclude / port / open / aiContext を既定値として使います。
+  読み込み、そこに書いた設定を既定値として使います。
   コマンドラインの指定が常に優先され、include / exclude は設定ファイルの内容と合成します。
 
     review-markdown config add exclude 'drafts/**'   # 設定ファイルに除外パターンを追加
     review-markdown config set aiContext '入門者向けの技術書。読者はJavaScriptの基礎を知っている。'
+    review-markdown config set aiReviewModel gpt-5.6-codex   # レビューに使うモデルを固定
     review-markdown config list                      # 適用中の設定を表示
 
   詳しくは review-markdown config --help を参照してください。
@@ -85,11 +87,8 @@ export function parseArgs(argv, env = {}) {
     }
 
     if (VALUE_FLAGS.has(flag)) {
-      const value = inlineValue ?? argv[index + 1];
-      if (inlineValue === undefined) index += 1;
-      if (value === undefined || (inlineValue === undefined && value.startsWith('-'))) {
-        throw new Error(`${flag} requires a value`);
-      }
+      const { value, nextIndex } = takeValue(argv, index, flag, inlineValue);
+      index = nextIndex;
       const key = VALUE_FLAGS.get(flag);
       if (key === 'port') {
         options.port = parsePort(value, flag);
@@ -124,10 +123,4 @@ export function parseArgs(argv, env = {}) {
 export function assertTargetDirectory(targetDir) {
   if (!existsSync(targetDir)) throw new Error(`target directory not found: ${targetDir}`);
   if (!statSync(targetDir).isDirectory()) throw new Error(`target must be a directory: ${targetDir}`);
-}
-
-function splitFlag(arg) {
-  if (!arg.startsWith('--') || !arg.includes('=')) return [arg, undefined];
-  const separator = arg.indexOf('=');
-  return [arg.slice(0, separator), arg.slice(separator + 1)];
 }

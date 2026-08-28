@@ -11,8 +11,20 @@ export { listMarkdownFiles } from './markdownFiles.js';
 
 /**
  * @param {string} targetDir directory being reviewed.
- * @param {{include?: string[], exclude?: string[], aiContext?: string}} [options]
- *   --include / --exclude globs, and the reading context AI features start from.
+ * @param {object} [options]
+ *
+ * レビューの設定:
+ * @param {string[]} [options.include] レビュー対象に含めるグロブ。
+ * @param {string[]} [options.exclude] レビュー対象から外すグロブ。
+ * @param {string} [options.aiContext] 全文書に効く読み取りコンテキスト。
+ * @param {object} [options.aiModels] 用途ごとのモデル指定（`config.js` の `aiModelsFromConfig`）。
+ *
+ * テストのための差し替え口:
+ * @param {object} [options.aiService] AiService そのもの。渡すと下の3つは見ません。
+ * @param {object} [options.aiStore] 会話と翻訳キャッシュの保存先。
+ * @param {object} [options.codexClient] Codexクライアント。
+ * @param {string} [options.aiDataDir] 端末側の保存ディレクトリ。
+ * @param {string} [options.aiToken] AIエンドポイントのトークン。既定は起動ごとの乱数。
  */
 export function createServer(targetDir = '.', options = {}) {
   const rootDir = path.resolve(targetDir);

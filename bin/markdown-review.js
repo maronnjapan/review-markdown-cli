@@ -24,6 +24,8 @@ if (options.configSources?.length) console.log(`  config: ${options.configSource
 if (filter.include.length) console.log(`  include: ${filter.include.join(', ')}`);
 if (filter.exclude.length) console.log(`  exclude: ${filter.exclude.join(', ')}`);
 if (options.aiContext) console.log(`  ai context: ${summarize(options.aiContext)}`);
+// モデルを名指ししたときだけ出します。自動で選んだモデルは /api/ai/status が画面へ出します。
+for (const [label, value] of aiModelLines(options)) console.log(`  ${label}: ${value}`);
 if (port !== options.port) {
   console.log(`Port ${options.port} is already in use; using ${port} instead.`);
 }
@@ -99,6 +101,18 @@ function shutdown() {
 }
 
 /** One line for the startup banner; the whole text still goes to the AI. */
+/** 設定ファイルでモデルを固定したとき、それが効いていることを起動時に見せます。 */
+function aiModelLines({ aiModels = {} }) {
+  return [
+    ['ai model', describeProfile(aiModels.assistant)],
+    ['ai review model', describeProfile(aiModels.review)]
+  ].filter(([, value]) => value);
+}
+
+function describeProfile(profile = {}) {
+  return [profile.model, profile.effort].filter(Boolean).join(' / ');
+}
+
 function summarize(text) {
   const firstLine = text.split('\n')[0].trim();
   const rest = text.includes('\n') || firstLine.length > 60;

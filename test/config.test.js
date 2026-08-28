@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { parseArgs } from '../src/cli.js';
 import {
+  aiModelsFromConfig,
   applyConfigToOptions,
   globalConfigPath,
   loadConfig,
@@ -207,3 +208,41 @@ async function seedProject(config) {
   if (config) await fs.writeFile(path.join(root, '.review-markdown.json'), JSON.stringify(config, null, 2), 'utf8');
   return root;
 }
+
+test('AIのモデルと推論強度を設定ファイルから決められる', async () => {
+  const root = await seedProject({
+    aiModel: 'gpt-5.6-luna',
+    aiEffort: 'low',
+    aiReviewModel: 'gpt-5.6-codex',
+    aiReviewEffort: 'high'
+  });
+  const { config } = await loadConfig({ targetDir: root, env: {}, platform: 'linux' });
+
+  assert.deepEqual(aiModelsFromConfig(config), {
+    assistant: { model: 'gpt-5.6-luna', effort: 'low' },
+    review: { model: 'gpt-5.6-codex', effort: 'high' }
+  });
+  // 起動時のオプションへ、そのまま乗って CodexAppServer まで届きます。
+  assert.deepEqual(
+    applyConfigToOptions(parseArgs([root]), config).aiModels.review,
+    { model: 'gpt-5.6-codex', effort: 'high' }
+  );
+});
+
+test('設定していない用途は、Codexが持っているものから自動で選ばせる', async () => {
+  const root = await seedProject({ aiReviewEffort: 'high' });
+  const { config } = await loadConfig({ targetDir: root, env: {}, platform: 'linux' });
+
+  assert.deepEqual(aiModelsFromConfig(config), {
+    assistant: { model: undefined, effort: undefined },
+    review: { model: undefined, effort: 'high' }
+  });
+});
+
+test('モデル名に空白は書けない。値を取り違えたまま起動させないため', async () => {
+  const root = await seedProject({ aiModel: 'gpt 5.6 luna' });
+  await assert.rejects(
+    loadConfig({ targetDir: root, env: {}, platform: 'linux' }),
+    /aiModel に空白は含められません/
+  );
+});
