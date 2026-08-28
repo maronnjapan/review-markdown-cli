@@ -24,7 +24,8 @@
  * @param {Function} options.onUnavailable Codexが使えないとき。
  * @param {Function} options.onAbort 中断されたとき。省略すると何もしません。
  * @param {Function} options.onError 失敗したとき。
- * @param {Function} options.onSettled 成否によらず最後に必ず。
+ * @param {Function} options.onSettled 頼んだあとの後始末。中断でも失敗でも呼びます。
+ *   ただしCodexが使えずに頼めなかったときは呼びません（後始末する対象が無いので）。
  */
 export async function runAiRequest({
   state,

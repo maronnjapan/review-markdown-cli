@@ -19,8 +19,6 @@ import { readingContextBlock } from './prompts/readingContext.js';
  * `prompts/readingContext.js` にあります。
  */
 
-export { MAX_AI_CONTEXT_CHARS };
-
 /** Trims one context string and refuses anything longer than a prompt can carry. */
 export function normalizeAiContext(value, source = '読み取りコンテキスト') {
   if (value === undefined || value === null) return '';

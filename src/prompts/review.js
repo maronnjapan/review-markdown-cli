@@ -199,16 +199,3 @@ export function verificationPrompt({ findingsJson, unplacedJson, readingContextB
     unplacedJson ? `<unplaced_findings>${unplacedJson}</unplaced_findings>` : ''
   ].filter(Boolean).join('\n');
 }
-
-/**
- * 指摘の本文。依頼・影響・直し方をこの順で1つのコメントにします。
- * 3つを別々に見せても、採用するとき保存されるのはコメント本文だけなので、
- * 直し方が候補のうちに消えてしまうからです。
- */
-export function findingComment({ comment, impact, suggestion }) {
-  return [
-    comment,
-    impact ? `影響: ${impact}` : '',
-    suggestion ? `直し方: ${suggestion}` : ''
-  ].filter(Boolean).join('\n');
-}

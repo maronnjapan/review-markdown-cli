@@ -146,6 +146,26 @@ test('Codexが持っていないモデルを設定したら、黙って別のモ
   await client.close();
 });
 
+test('モデルが受け付けない推論強度を設定したら、そのまま送らずに止まる', async (t) => {
+  const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'review-codex-runtime-'));
+  t.after(() => fs.rm(runtimeDir, { recursive: true, force: true }));
+  const protocol = createFakeProtocol({ models: [FAST_MODEL, DEEP_MODEL] });
+  const client = new CodexAppServer({
+    runtimeDir,
+    spawnProcess: () => protocol.child,
+    // gpt-5.6-luna は none と low しか持っていません。
+    models: { assistant: { model: 'gpt-5.6-luna', effort: 'high' } }
+  });
+
+  await assert.rejects(
+    client.createThread({ ephemeral: true }),
+    /aiEffort を gpt-5\.6-luna は受け付けません: high（使える強度: none, low）/,
+    'モデル名と同じく、設定した強度も黙って落とさない'
+  );
+
+  await client.close();
+});
+
 const FAST_MODEL = {
   id: 'gpt-5.6-luna',
   supportedReasoningEfforts: [{ reasoningEffort: 'none' }, { reasoningEffort: 'low' }],

@@ -28,7 +28,7 @@ export async function collectCommentContext(rootDir, documentPath, target) {
   return { entries, dropped: marked.length - kept.length, revision: revisionOf(entries) };
 }
 
-/** The comments as the model reads them. Empty is stated rather than left out. */
+/** 集めたコメントを、モデルが読む文面にします。文面そのものは `prompts/readingContext.js`。 */
 export function commentContextBlock(context) {
   return reviewCommentsBlock(context);
 }

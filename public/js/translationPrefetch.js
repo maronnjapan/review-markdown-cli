@@ -11,7 +11,8 @@
  * @param {object} options
  * @param {string} options.key どの選択に対する先読みか。別の場所を選んだら作り直します。
  * @param {Function} options.request 実際に翻訳を頼む関数。`(signal, onEvent)` を受け取ります。
- * @param {Function} options.onEvent 途中経過の受け取り先。
+ * @param {object} options.progress 途中経過の受け取り口。`onEvent` を `request` へ渡し、
+ *   押されたときに `show()` でそこまでの結果を画面へ出せるようにします。
  * @param {number} [options.delayMs] 送るまでの待ち時間。
  * @returns {{key: string, promise: Promise, progress: object, start: Function, cancel: Function}}
  *   `start()` は送り始め（2回目以降は何もしません）、`cancel()` はまだ送っていなければ

@@ -20,7 +20,7 @@ import { composedReaderBlock, writtenReaderBlock } from './prompts/readingContex
  * `prompts/readingContext.js` と `prompts/persona.js` にあります。
  */
 
-export { MAX_PERSONA_INPUT_CHARS, PERSONA_SCHEMA, personaPrompt };
+export { PERSONA_SCHEMA, personaPrompt };
 
 /** そのまま使うペルソナの呼び名は、書き出しから作ります。 */
 const MANUAL_LABEL_CHARS = 24;

@@ -43,8 +43,6 @@ export const MODEL_LIST_QUERY = { limit: 50, includeHidden: false };
 /** JSON-RPCの1要求あたりの待ち時間。 */
 export const DEFAULT_TIMEOUT_MS = 30_000;
 
-export { PURPOSES };
-
 /** 機能名から用途を引きます。知らない機能は速い方です。 */
 export function purposeFor(feature) {
   return FEATURE_PURPOSE[feature] || 'assistant';
@@ -54,8 +52,8 @@ export function purposeFor(feature) {
  * Codexが使えるモデルの一覧から、用途ごとのモデルと推論強度を決めます。
  *
  * `overrides` に `{ assistant: { model, effort }, review: { … } }` を渡すと、
- * その用途はそちらを使います。名指ししたモデルがCodexに無ければ投げます。
- * 黙って別のモデルへ落とすと、設定したつもりの人が気づけないからです。
+ * その用途はそちらを使います。名指ししたモデルや推論強度をCodexが持っていなければ投げます。
+ * 黙って別のものへ落とすと、設定したつもりの人が気づけないからです。
  *
  * @returns {{assistant: {model: string, effort: string|undefined},
  *            review: {model: string, effort: string|undefined}}}
@@ -80,7 +78,9 @@ export function selectProfiles(models, overrides = {}) {
     const entry = override.model ? findModel(available, override.model, purpose) : chosen[purpose];
     profiles[purpose] = {
       model: modelId(entry),
-      effort: override.effort || effortOf(entry, EFFORT_PREFERENCE[purpose])
+      effort: override.effort
+        ? checkEffort(entry, override.effort, purpose)
+        : effortOf(entry, EFFORT_PREFERENCE[purpose])
     };
   }
   return profiles;
@@ -92,6 +92,19 @@ function findModel(models, wanted, purpose) {
   const known = models.map(modelId).filter(Boolean).join(', ') || '(なし)';
   throw new Error(
     `設定した${purpose === 'review' ? 'aiReviewModel' : 'aiModel'} がCodexにありません: ${wanted}（使えるモデル: ${known}）`
+  );
+}
+
+/**
+ * 設定された推論強度。そのモデルが対応していなければ投げます。
+ * Codexが対応する強度を申告していないモデルでは、確かめようがないのでそのまま通します。
+ */
+function checkEffort(entry, wanted, purpose) {
+  const efforts = (entry?.supportedReasoningEfforts || []).map((item) => item.reasoningEffort);
+  if (efforts.length === 0 || efforts.includes(wanted)) return wanted;
+  throw new Error(
+    `設定した${purpose === 'review' ? 'aiReviewEffort' : 'aiEffort'} を ${modelId(entry)} は受け付けません: `
+    + `${wanted}（使える強度: ${efforts.join(', ')}）`
   );
 }
 

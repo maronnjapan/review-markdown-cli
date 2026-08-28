@@ -2,12 +2,11 @@ import { load } from 'cheerio';
 import { aiContextBlock } from './aiContext.js';
 import {
   ANCHOR_CONTEXT_CHARS,
-  MAX_NOTES_CHARS,
   MAX_PLACEMENTS,
   MAX_SEGMENTS,
   MAX_SEGMENT_PROMPT_CHARS
 } from './aiLimits.js';
-import { DEFAULT_CONFIDENCE, SEVERITIES, isConfidence, isSeverity } from './aiVocabulary.js';
+import { DEFAULT_CONFIDENCE, isConfidence, isSeverity } from './aiVocabulary.js';
 import { renderMarkdown } from './markdown.js';
 import { PLACEMENT_SCHEMA, placementPrompt as buildPlacementPrompt } from './prompts/placement.js';
 
@@ -26,7 +25,7 @@ const HEADING_PATTERN = /^h[1-6]$/;
 /** The review UI decorates only these blocks, so only they can carry a block comment. */
 const BLOCK_COMMENT_TAGS = new Set(['p', 'li', 'blockquote', 'pre']);
 
-export { MAX_NOTES_CHARS, PLACEMENT_SCHEMA, SEVERITIES };
+export { PLACEMENT_SCHEMA };
 
 /**
  * Splits the rendered document into the blocks a comment can point at. Each

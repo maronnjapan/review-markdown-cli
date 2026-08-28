@@ -82,7 +82,6 @@ export const CONFIG_KEYS = Object.keys(CONFIG_KEY_SPECS);
 export const LIST_KEYS = keysOfKind('list');
 /** Free text, so `config set` joins the words it was given instead of taking the first. */
 export const TEXT_KEYS = keysOfKind('text');
-export const SCALAR_KEYS = CONFIG_KEYS.filter((key) => !LIST_KEYS.includes(key));
 
 /** `config --help` の Keys 節。表から作るので、キーを足しても説明を書き忘れません。 */
 export const CONFIG_KEY_HELP = CONFIG_KEYS.map((key) => (

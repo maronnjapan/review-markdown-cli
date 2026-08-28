@@ -4,7 +4,6 @@ import { CONFIDENCE_ORDER, SEVERITY_ORDER, isConfidence, isSeverity } from './ai
 import { buildPlacements, promptSegments } from './commentPlacement.js';
 import { hasPersonaContent } from './persona.js';
 import {
-  findingComment,
   firstPassPrompt,
   reviewSchema as buildReviewSchema,
   verificationPrompt as buildVerificationPrompt,
@@ -146,16 +145,22 @@ function list(value) {
   return Array.isArray(value) ? value : [];
 }
 
-/** 依頼・影響・直し方を、保存されるコメント本文1つへまとめます。 */
+/**
+ * 指摘の本文。依頼・影響・直し方をこの順で1つのコメントにします。
+ *
+ * 3つを別々に見せても、採用するとき保存されるのはコメント本文だけなので、
+ * 直し方が候補のうちに消えてしまうからです。この文面はモデルへは渡らず、
+ * レビューファイルへ書かれるものなので、`prompts/` ではなくここにあります。
+ */
 function commentedFinding(placement) {
-  return {
-    ...placement,
-    comment: findingComment({
-      comment: text(placement?.comment),
-      impact: text(placement?.impact),
-      suggestion: text(placement?.suggestion)
-    })
-  };
+  const impact = text(placement?.impact);
+  const suggestion = text(placement?.suggestion);
+  const comment = [
+    text(placement?.comment),
+    impact ? `影響: ${impact}` : '',
+    suggestion ? `直し方: ${suggestion}` : ''
+  ].filter(Boolean).join('\n');
+  return { ...placement, comment };
 }
 
 /** 反証が直した文面を取り込みます。空で返ってきた項目は、1周目のまま残します。 */

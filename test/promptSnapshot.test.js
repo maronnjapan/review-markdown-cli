@@ -104,10 +104,15 @@ const EXPECTED = {
   'block:readingContext(project+document)': '0f0ecfe3f89bcc882ded3d7ef83c5e0b010d70f4b06d67edbd57cdac0e22deb1',
   'block:readingContext(all)': '14a622b3e6354b5453df1ff68160555b64496b78aa41a3483248b02c9f3e4a1e',
   'block:readingContext(personaOnly)': '23fb353a8c9e17eb35bf275869a4acdfe1983a907b08c3d19fa97c9309513113',
+  'block:readingContext(projectOnly)': '877599c333be65abdb7248add31320e3352bbddd35b8f6e6394bd7c2b6a7ecbf',
+  'block:readingContext(documentOnly)': '57287b0d3fdf96e694a91d96fec58039f2eaa9571d95618f82c4633270835f4a',
+  'block:readingContext(manualPersona)': 'd31794a0268a8ebf93e47aaf1839bb2000c7cd2e14dd14d1366a1002911d4ebd',
+  'block:readingContext(none)': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
   'block:persona(ai)': '23fb353a8c9e17eb35bf275869a4acdfe1983a907b08c3d19fa97c9309513113',
   'block:persona(manual)': '91367577d26fcb16e2d1ed21d839e8b27d8ad5f4b51fb138c1499d2d84fa791b',
   'block:commentContext(some)': 'bd8844700f7878e71d277d2903d9f6dda7b142d9ab6511ac4d77b0cc4d4cb1ff',
   'block:commentContext(none)': '59de2b9ab17bcec9deb36fef0c2ac08d14e8797d5080fc11b197a8906847e892',
+  'block:commentContext(dropped)': '7d9537128afe2173e8ea1a742b44075ae9a8eb7ced638eb434c675f3840b8f26',
   'prompt:translate(term)': 'b04375003c0f8cd71bea48b3b28ff7d7947b96e549531caa74660081910ca6f3',
   'prompt:translate(passage)': '8fda0a37aa7b6e4d1059e1cacb05b5847d749359a1f12b54892969f57d008716',
   'prompt:placement': '12a4649889aa467e1d1d1c39f1a9eb416d36b5d93e01869c413ac166087ddd74',
@@ -115,9 +120,13 @@ const EXPECTED = {
   'prompt:review(oneSkill)': '9e62fad91221b85710e0d5ef0bb0b00a373c03752dd8c8f575b861ae315aecab',
   'prompt:review(twoSkills,noPersona)': '5db8840bf69e002938263bec953e4c1421f0ad569445c79c81a3d7ef9f091453',
   'prompt:verification': '085ff7a7bb8519eb23c60bd6720d192218b793e50898f04251c03cfc2529d07f',
+  'prompt:verification(noUnplaced)': '51e2e6f863217e71ea083942aa522d657fba5c8c8350956630be9de702e9d5c8',
   'prompt:chat(first)': 'eca6465f453c6d1cd1845608167f881f915bdd589c8057ce9d2b63e63f1a9ef5',
+  'prompt:chat(firstWithTranscript)': 'ac2b844af404254f9372d41794a5b7d60b1f07f1010a9f32f5aa7dc896a68ca1',
   'prompt:chat(followUpUnchanged)': 'a2847a54fee98149f0221be22f89814e6e08aac58d56453beec780756bcbed5f',
   'prompt:chat(followUpChanged)': '5eedb900e26380c5cdffa879c10160dd930c2816c90298aadee00a27be3b264c',
+  'prompt:chat(followUpContextChanged)': 'a442cba0b9cd679a0b82b2dece86ff05ed2f096ca76d34fc0f1b5cb8ca247e34',
+  'prompt:chat(followUpContextCleared)': '13205ad768095fb501aff55a801f6930bf5539e7f11e8fc4baeb2285995c86ba',
   'role:base(assistant)': '80a799a840228f8753fdb0cfac2384317128936feb6924acb28639e11a43cec9',
   'role:base(review)': 'c6f201881e6e1b690222781e27a251ab3a3c174778c917964edb2dabc0fc3fe6',
   'role:developer(assistant)': '8cb12fbc7dd880763fef5459ed33eb3e56dc594df510454e1b8cf831dcc2d250',
@@ -145,6 +154,14 @@ test('AIへ渡す文面は、書き換えるまで一字も変わらない', asy
     persona: PERSONA
   })));
   record('block:readingContext(personaOnly)', aiContextBlock(resolveAiContext({ persona: PERSONA })));
+  record('block:readingContext(projectOnly)', aiContextBlock(resolveAiContext({ project: 'ディレクトリ全体の前提。' })));
+  record('block:readingContext(documentOnly)', aiContextBlock(resolveAiContext({ document: 'この文書の前提。' })));
+  record('block:readingContext(manualPersona)', aiContextBlock(resolveAiContext({
+    document: 'この文書の前提。',
+    persona: MANUAL_PERSONA
+  })));
+  // 前提を何も設定していない文書では、枠ごと出しません。ここが空文字であることも約束です。
+  record('block:readingContext(none)', aiContextBlock(resolveAiContext({})));
   record('block:persona(ai)', personaBlock(PERSONA));
   record('block:persona(manual)', personaBlock(MANUAL_PERSONA));
 
@@ -152,6 +169,12 @@ test('AIへ渡す文面は、書き換えるまで一字も変わらない', asy
     await collectCommentContext(root, 'guide.md', TARGET)
   ));
   record('block:commentContext(none)', commentContextBlock({ entries: [], dropped: 0, revision: '' }));
+  // 「渡しきれなかった件数」は、モデルがコメントを全部見たと思い込まないための唯一の合図です。
+  record('block:commentContext(dropped)', commentContextBlock({
+    entries: [{ n: 1, attached: true, type: 'text-selection', status: 'open', comment: '確認を足してください。' }],
+    dropped: 11,
+    revision: ''
+  }));
 
   /* ---- 各機能のプロンプト（AiService を通して、実際に送る形で取ります） ---- */
 
@@ -177,6 +200,11 @@ test('AIへ渡す文面は、書き換えるまで一字も変わらない', asy
   await service.reviewDocument('no-persona.md', { skillIds: ['fixture-skill', 'other-skill'] });
   record('prompt:review(twoSkills,noPersona)', prompts.at(-2));
 
+  // 箇所を持たない指摘が1件も出なかったレビュー。反証の指示文が別の一文へ切り替わります。
+  const placedOnly = new AiService(root, { store, codex: fakeCodex(prompts, PLACED_ONLY_ANSWER), projectContext: 'ディレクトリ全体の前提。' });
+  await placedOnly.reviewDocument('guide.md', { skillIds: ['fixture-skill'] });
+  record('prompt:verification(noUnplaced)', prompts.at(-1));
+
   const { conversation } = await createConversation(service, 'guide.md');
   await service.sendMessage(conversation.id, 'ここはどう直しますか？');
   record('prompt:chat(first)', prompts.at(-1));
@@ -185,6 +213,26 @@ test('AIへ渡す文面は、書き換えるまで一字も変わらない', asy
   await writeReview(root, 'guide.md', [COMMENT, { ...COMMENT, id: 'comment-fixed-2', comment: '確認手順を足してください。' }]);
   await service.sendMessage(conversation.id, 'コメントを踏まえるとどうですか？');
   record('prompt:chat(followUpChanged)', prompts.at(-1));
+
+  // 会話の途中で前提を書き換えたときと、消したとき。文面が別々に切り替わります。
+  await writeReview(root, 'guide.md', [COMMENT], { aiContext: '書き換えた前提。', persona: PERSONA });
+  await service.sendMessage(conversation.id, '前提が変わりました。');
+  record('prompt:chat(followUpContextChanged)', prompts.at(-1));
+  await writeReview(root, 'guide.md', [COMMENT], { aiContext: '', persona: null });
+  const cleared = new AiService(root, { store, codex, projectContext: '' });
+  const clearedConversation = await service.store.getConversation(conversation.id);
+  await cleared.sendMessage(clearedConversation.id, '前提を消しました。');
+  record('prompt:chat(followUpContextCleared)', prompts.at(-1));
+
+  // 会話を開き直したとき、それまでのやり取りを1回目のプロンプトへ載せ直します。
+  const reopened = await service.createConversation({ documentPath: 'guide.md', target: TARGET });
+  reopened.messages.push(
+    { id: 'm1', role: 'user', content: '前の質問。', createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'm2', role: 'assistant', content: '前の答え。', createdAt: '2026-01-01T00:00:01.000Z' }
+  );
+  await service.store.saveConversation(reopened);
+  await service.sendMessage(reopened.id, '続きを聞かせてください。');
+  record('prompt:chat(firstWithTranscript)', prompts.at(-1));
 
   /* ---- スレッドを開くときにモデルへ渡す立場 ---- */
 
@@ -264,6 +312,12 @@ const REVIEW_ANSWER = JSON.stringify({
   unplaced: [{ note: '全体の前置きが欲しいです。', reason: '特定の段落に結び付きません。' }]
 });
 
+/** 箇所に結び付いた指摘だけを返す答え。反証の「箇所なし指摘は無い」分岐を通します。 */
+const PLACED_ONLY_ANSWER = JSON.stringify({
+  ...JSON.parse(REVIEW_ANSWER),
+  unplaced: []
+});
+
 const VERIFICATION_ANSWER = JSON.stringify({ summary: '1件残しました。', verdicts: [], unplacedVerdicts: [] });
 
 const TRANSLATION_ANSWER = JSON.stringify({
@@ -289,7 +343,7 @@ const PERSONA_ANSWER = JSON.stringify({
 });
 
 /** 送られたプロンプトを順に集めるだけの Codex。答えは形が合っていれば中身は問いません。 */
-function fakeCodex(prompts) {
+function fakeCodex(prompts, reviewAnswer = REVIEW_ANSWER) {
   let nextThread = 1;
   return {
     model: 'fast-test-model',
@@ -302,17 +356,17 @@ function fakeCodex(prompts) {
     async deleteThread() {},
     async runTurn({ prompt, outputSchema }) {
       prompts.push(prompt);
-      return { text: answerFor(outputSchema) };
+      return { text: answerFor(outputSchema, reviewAnswer) };
     },
     async close() {}
   };
 }
 
 /** 求められた答えの形から、返すべき固定の答えを選びます。 */
-function answerFor(outputSchema) {
+function answerFor(outputSchema, reviewAnswer) {
   const fields = Object.keys(outputSchema?.properties || {});
   if (fields.includes('verdicts')) return VERIFICATION_ANSWER;
-  if (fields.includes('summary') && fields.includes('placements')) return REVIEW_ANSWER;
+  if (fields.includes('summary') && fields.includes('placements')) return reviewAnswer;
   if (fields.includes('placements')) return PLACEMENT_ANSWER;
   if (fields.includes('assumptions')) return PERSONA_ANSWER;
   if (fields.length) return TRANSLATION_ANSWER;

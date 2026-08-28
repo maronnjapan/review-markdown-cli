@@ -100,19 +100,29 @@ function shutdown() {
   server.closeAllConnections();
 }
 
-/** One line for the startup banner; the whole text still goes to the AI. */
-/** 設定ファイルでモデルを固定したとき、それが効いていることを起動時に見せます。 */
+/**
+ * 設定ファイルでモデルや推論強度を固定したとき、それが効いていることを起動時に見せます。
+ * 設定していないものは自動で選ぶので、何も出しません（画面のAIパネルが実際の値を出します）。
+ */
 function aiModelLines({ aiModels = {} }) {
   return [
-    ['ai model', describeProfile(aiModels.assistant)],
-    ['ai review model', describeProfile(aiModels.review)]
-  ].filter(([, value]) => value);
+    ...profileLines('ai model', aiModels.assistant),
+    ...profileLines('ai review model', aiModels.review)
+  ];
 }
 
-function describeProfile(profile = {}) {
-  return [profile.model, profile.effort].filter(Boolean).join(' / ');
+/**
+ * モデルと推論強度は別々に設定できるので、別々の行にします。
+ * 1行にまとめると、推論強度だけを設定したときにモデル名の場所へ強度が出てしまいます。
+ */
+function profileLines(label, { model, effort } = {}) {
+  return [
+    ...(model ? [[label, model]] : []),
+    ...(effort ? [[`${label.replace(' model', '')} effort`, effort]] : [])
+  ];
 }
 
+/** One line for the startup banner; the whole text still goes to the AI. */
 function summarize(text) {
   const firstLine = text.split('\n')[0].trim();
   const rest = text.includes('\n') || firstLine.length > 60;
