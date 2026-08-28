@@ -298,3 +298,36 @@ test('the review endpoints list skills, read one, rebuild a persona, and stream 
   });
   assert.equal(outsideRoot.status, 400, 'レビュー対象ディレクトリの外は読ませない');
 });
+
+test('path を書き忘れたAI要求は、ストリームを開く前に400で断る', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-ai-routes-'));
+  await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n', 'utf8');
+  const aiService = {
+    async status() { return { available: true, provider: 'codex' }; },
+    async translate() { throw new Error('対象が決まる前に呼んではいけない'); },
+    close() {}
+  };
+  const { app } = createServer(root, { aiService, aiToken: 'test-launch-token' });
+  const server = app.listen(0);
+  await new Promise((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  const response = await fetch(`${baseUrl}/api/ai/translate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Review-Markdown-Token': 'test-launch-token' },
+    body: JSON.stringify({ target: { selectedText: 'run' } })
+  });
+
+  // 200 でストリームを開いてから中身をエラーにすると、呼ぶ側は「使い方の誤り」と
+  // 「AIの失敗」を区別できません。
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error, /path is required/);
+});

@@ -104,13 +104,16 @@ async function aiConversation(context) {
  * @param {Function} options.run ({ aiService, documentPath, body, signal, onDelta, send }) を
  *   受け取り、結果を返します。`send` は途中経過を足したいときだけ使います（AIレビューの phase）。
  * @param {Function} options.toEvent 結果を `result` イベントの中身へ包みます。
+ * @param {boolean} [options.needsDocument] 対象ファイルを要求するか。チャットだけが false です
+ *   （どの文書の話かは会話idで決まるので、リクエストは path を持ちません）。
  */
-async function streamAiRequest(context, { run, toEvent }) {
+async function streamAiRequest(context, { run, toEvent, needsDocument = true }) {
   const { rootDir, filter, aiService, request, response } = context;
   authorizeAiRequest(context);
   const body = await readJsonBody(request);
-  // path を持たないのはチャットだけです（会話idで対象が決まります）。
-  const documentPath = body.path === undefined ? null : reviewTarget(rootDir, filter, body.path);
+  // ここで弾けば、NDJSONを開く前に 400 を返せます。開いてしまうと 200 のまま
+  // 中身がエラーになり、呼ぶ側は「使い方の誤り」と「AIの失敗」を区別できません。
+  const documentPath = needsDocument ? reviewTarget(rootDir, filter, body.path) : null;
   return streamAiResponse(request, response, async ({ send, signal }) => {
     send({ type: 'started' });
     const result = await run({
@@ -171,6 +174,7 @@ function reviewWithAi(context) {
 
 function sendAiMessage(context) {
   return streamAiRequest(context, {
+    needsDocument: false,
     run: ({ aiService, body, signal, onDelta }) => (
       aiService.sendMessage(body.conversationId, body.message, { signal, onDelta })
     ),
