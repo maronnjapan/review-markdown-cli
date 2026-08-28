@@ -11,7 +11,12 @@ const TARGET_LABELS = {
   'text-selection': '範囲選択'
 };
 
-export function createAiController({ refs, state, api, toaster, panes, flushComments = async () => true }) {
+export function createAiController({
+  refs, state, api, toaster, panes,
+  flushComments = async () => true,
+  // 相談して分かったことをコンテキストメモの下書きへ渡します。
+  onKeepContext = () => {}
+}) {
   let preparePromise = null;
 
   bindEvents();
@@ -287,15 +292,19 @@ export function createAiController({ refs, state, api, toaster, panes, flushComm
   /** Says what else goes to the AI, so the target quote is not the whole story. */
   function renderSharedComments() {
     const count = state.comments.length;
+    const noteCount = (state.contextNotes || []).length;
     const hasContext = Boolean((state.aiContext || '').trim() || (state.projectAiContext || '').trim());
-    const notes = [
+    const shared = [
       count ? `この文書のコメント${count}件` : '',
       hasContext ? '読み取りコンテキスト' : '',
+      // 残したメモも前提の一部です。件数まで出すのは、残したはずのメモが
+      // 渡っていないことに、質問を投げる前に気づけるようにするためです。
+      noteCount ? `コンテキストメモ${noteCount}件` : '',
       // 読み手ペルソナも前提の一部なので、翻訳やチャットにも一緒に渡します。
       state.persona ? '読み手ペルソナ' : ''
     ].filter(Boolean);
-    refs.aiTargetComments.textContent = notes.length ? `${notes.join('と')}も渡します。` : '';
-    refs.aiTargetComments.hidden = notes.length === 0;
+    refs.aiTargetComments.textContent = shared.length ? `${shared.join('と')}も渡します。` : '';
+    refs.aiTargetComments.hidden = shared.length === 0;
   }
 
   function renderTranslation() {
@@ -324,7 +333,9 @@ export function createAiController({ refs, state, api, toaster, panes, flushComm
       return;
     }
     refs.aiMessages.innerHTML = [
-      ...messages.map(messageHtml),
+      // map へ直接渡すと添字が第2引数（生成中かどうか）に入り、2件目以降が
+      // 生成中の扱いになります。
+      ...messages.map((message) => messageHtml(message)),
       streaming !== null ? messageHtml({ role: 'assistant', content: streaming || '…' }, true) : ''
     ].join('');
     refs.aiMessages.scrollTop = refs.aiMessages.scrollHeight;
@@ -354,6 +365,13 @@ export function createAiController({ refs, state, api, toaster, panes, flushComm
       sendMessage();
     });
     refs.aiStopButton.addEventListener('click', () => state.aiAbortController?.abort());
+    // 相談の答えは、そのままでは次の相談にもレビューにも残りません。
+    // 前提として残す価値があると判断した回答だけを、レビュアーがメモへ移します。
+    refs.aiMessages.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-keep-context]');
+      if (!button) return;
+      onKeepContext(button.closest('.ai-message')?.querySelector('.ai-message-body')?.textContent || '');
+    });
   }
 
   return {
@@ -405,9 +423,12 @@ function translationHtml(translation) {
 
 function messageHtml(message, streaming = false) {
   const label = message.role === 'user' ? 'あなた' : 'Codex';
+  // 生成し終えた回答にだけ出します。途中の文をメモへ移しても、前提にはなりません。
+  const keepable = message.role === 'assistant' && !streaming && Boolean(message.content);
   return `
     <article class="ai-message" data-role="${escapeHtml(message.role)}"${streaming ? ' data-streaming="true"' : ''}>
       <strong>${label}</strong>
-      <p>${escapeHtml(message.content || '')}</p>
+      <p class="ai-message-body">${escapeHtml(message.content || '')}</p>
+      ${keepable ? '<button type="button" class="ai-message-keep" data-keep-context>コンテキストに残す</button>' : ''}
     </article>`;
 }

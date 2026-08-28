@@ -104,6 +104,25 @@
                   <blockquote id="ai-context-project-text"></blockquote>
                 </div>
               </details>
+              <details id="context-notes" class="ai-context">
+                <summary>
+                  コンテキストメモ
+                  <span id="context-notes-state" class="ai-context-state">未設定</span>
+                </summary>
+                <p class="ai-context-hint">この文書について分かったことを1件ずつ残します。残したメモは前提として、翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。</p>
+                <form id="context-note-form" class="context-note-form">
+                  <select id="context-note-kind" aria-label="メモの種類" aria-describedby="context-note-kind-hint"></select>
+                  <p id="context-note-kind-hint" class="context-note-kind-hint" aria-live="polite"></p>
+                  <textarea id="context-note-input" rows="3" placeholder="例：この節は前の版から移してきた。並び順は検討済みで、変えない。"></textarea>
+                  <div class="context-note-actions">
+                    <button id="context-note-cancel" type="button" class="hidden">編集をやめる</button>
+                    <button id="context-note-submit" type="submit" disabled>残す</button>
+                  </div>
+                </form>
+                <p id="context-note-full" class="context-note-full" hidden>メモが上限に達しました。古いものを消すか、まとめてください。</p>
+                <p id="context-notes-status" class="ai-context-status" aria-live="polite"></p>
+                <div id="context-notes-list" class="context-notes-list"></div>
+              </details>
               <div class="ai-conversation-controls">
                 <select id="ai-conversation-select" aria-label="保存された会話">
                   <option value="">新しい会話</option>
@@ -139,7 +158,7 @@
                 </div>
               </div>
               <p class="placement-hint">指摘コメントを貼り付けると、AIが対象箇所を探してコメント候補を作ります。追加するまでレビューには保存しません。</p>
-              <p id="placement-context-hint" class="placement-hint" hidden>AIパネルの読み取りコンテキストもここへ渡します。</p>
+              <p id="placement-context-hint" class="placement-hint" hidden>AIパネルの読み取りコンテキストとコンテキストメモも、ここへ渡します。</p>
               <form id="placement-form" class="placement-form">
                 <textarea id="placement-input" rows="5" placeholder="例：&#10;- 導入が長い。結論を先に書いてほしい&#10;- 図の説明に単位がない"></textarea>
                 <div class="placement-actions">
@@ -159,6 +178,7 @@
                 </div>
               </div>
               <p class="placement-hint">レビューの観点（レビュースキル）と読み手を決めてから実行します。結果はコメント候補で、追加するまでレビューには保存しません。</p>
+              <p id="review-context-hint" class="placement-hint" hidden></p>
 
               <section class="review-skill">
                 <div class="review-field-head">

@@ -145,7 +145,7 @@ export function firstPassPrompt({
     // 根拠の無い指摘と、どの原稿にも言える一般論。この2つがAIレビューを無価値にします。
     'Every finding must be grounded in the text you quote. Never report a problem the document text does not show.',
     'Never report advice that would read the same about any other document. If your finding survives with this document\'s words removed, it is not a finding.',
-    'Never assume a fact the document does not state, and never ask for something the document already does elsewhere: check before you report it.',
+    'Never assume a fact that neither the document nor the reading context states, and never ask for something the document already does elsewhere: check before you report it.',
     'Write "comment" in Japanese, addressed to the author: one or two sentences on what to change here.',
     'Write "impact" in Japanese: one sentence on what happens to the reader if this stays as it is.',
     'Write "suggestion" in Japanese: how to change it, concretely enough to act on, in this document\'s own words and terms. When you cannot know the content, say what the author must supply.',
@@ -182,7 +182,7 @@ export function verificationPrompt({ findingsJson, unplacedJson, readingContextB
     'Now check the findings you just reported, one by one, before they reach the author.',
     'Respond only with the requested JSON object.',
     'Treat each finding as a claim to refute, not as your own work to defend.',
-    'Drop a finding when any of these is true: the quoted text does not show the problem; the same objection would fit any other document; another finding already says it; the document already does what it asks; it rests on a fact the document does not state; or it costs the reader described above nothing.',
+    'Drop a finding when any of these is true: the quoted text does not show the problem; the same objection would fit any other document; another finding already says it; the document already does what it asks; it rests on a fact that neither the document nor the reading context states; or it costs the reader described above nothing.',
     'Keep a finding whose problem is real but whose wording is weak, and rewrite it: "comment" is what to change, "impact" is what it costs the reader, "suggestion" is how to change it in this document\'s own words.',
     'Correct "severity" and "confidence" to what the finding deserves once checked. Lower "confidence" rather than dropping a finding you are merely unsure of.',
     'For a finding you drop, repeat its text unchanged: only "keep" and "reason" are read.',

@@ -197,6 +197,68 @@ test('buildReviewMarkdown puts the reading context ahead of the comments', () =>
   assert.doesNotMatch(buildReviewMarkdown({ targetFile: 'guide.md', comments: [] }), /読み取りコンテキスト/);
 });
 
+test('context notes live with the review and survive a comment only save', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-store-'));
+  await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n', 'utf8');
+
+  await writeReview(root, 'guide.md', [], {
+    aiContext: '入門書の第3章。',
+    contextNotes: [
+      { kind: 'decision', body: '節の並び順は検討済みで、変えない', createdAt: '2026-08-01T00:00:00.000Z' },
+      { kind: 'constraint', body: '用語は原著の訳語に合わせる', source: 'chat', createdAt: '2026-08-02T00:00:00.000Z' }
+    ]
+  });
+  // コメントだけを保存する要求（画面を離れるときのビーコンがこの形です）。
+  await writeReview(root, 'guide.md', [{ type: 'document', comment: '結論を先に書く' }]);
+  const review = await readReview(root, 'guide.md');
+
+  assert.equal(review.contextNotes.length, 2, 'コメントだけの保存でメモは消えない');
+  assert.equal(review.aiContext, '入門書の第3章。');
+  assert.deepEqual(review.contextNotes.map(({ kind }) => kind), ['decision', 'constraint']);
+  assert.equal(review.contextNotes[1].source, 'chat');
+  assert.ok(review.contextNotes[0].id, '編集と削除のためにidを振る');
+
+  // 空の配列は「最後の1件を消した」です。据え置きの undefined と区別します。
+  await writeReview(root, 'guide.md', [], { contextNotes: [] });
+  const cleared = await readReview(root, 'guide.md');
+  assert.deepEqual(cleared.contextNotes, []);
+  const saved = JSON.parse(await fs.readFile(path.join(root, '.review', 'guide.md.review.json'), 'utf8'));
+  assert.equal('contextNotes' in saved, false, 'メモの無い文書にキーは現れない');
+  assert.equal(saved.aiContext, '入門書の第3章。', '読み取りコンテキストは据え置く');
+});
+
+test('a review written before context notes existed reads back as an empty list', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-store-'));
+  const reviewFile = path.join(root, '.review', 'guide.md.review.json');
+  await fs.mkdir(path.dirname(reviewFile), { recursive: true });
+  await fs.writeFile(reviewFile, `${JSON.stringify({
+    targetFile: 'guide.md',
+    aiContext: '入門書の第3章。',
+    comments: [{ id: 'comment-existing', type: 'document', comment: '既存コメント' }]
+  })}\n`, 'utf8');
+
+  const review = await readReview(root, 'guide.md');
+  assert.deepEqual(review.contextNotes, []);
+  assert.equal(review.comments.length, 1);
+});
+
+test('buildReviewMarkdown writes the notes between the reading context and the comments', () => {
+  const markdown = buildReviewMarkdown({
+    targetFile: 'guide.md',
+    aiContext: '入門書の第3章。',
+    contextNotes: [
+      { kind: 'decision', body: '節の並び順は変えない', createdAt: '2026-08-01T00:00:00.000Z' },
+      { kind: 'question', body: '付録を入れるか未定。\n担当と相談中。', updatedAt: '2026-08-03T00:00:00.000Z' }
+    ],
+    comments: [{ type: 'document', comment: '結論を先に書く' }]
+  });
+
+  assert.match(markdown, /## 読み取りコンテキスト[\s\S]*## コンテキストメモ[\s\S]*## 文書全体へのコメント/);
+  assert.match(markdown, /- 決定（2026-08-01）: 節の並び順は変えない/);
+  // 改行を含むメモは、2文字下げて同じ箇条書きの中へ収めます。
+  assert.match(markdown, /- 未決（2026-08-03）: 付録を入れるか未定。\n  担当と相談中。/);
+});
+
 test('listMarkdownFiles ignores .review, .git, and node_modules directories', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-files-'));
   await fs.mkdir(path.join(root, 'docs'), { recursive: true });

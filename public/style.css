@@ -557,6 +557,83 @@ button.danger:hover { background: #9b2116; border-color: #9b2116; color: #fff; }
 }
 .ai-context-status[data-state="saved"] { color: #087443; }
 .ai-context-status[data-state="error"], .ai-context-status[data-state="toolong"] { color: #b42318; }
+.context-note-form {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+.context-note-form select {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font: inherit;
+  justify-self: start;
+  padding: 0.3rem 0.45rem;
+}
+.context-note-form textarea { margin-top: 0; }
+.context-note-kind-hint {
+  color: var(--muted);
+  font-size: 0.72rem;
+  margin: 0;
+  min-height: 1rem;
+}
+.context-note-actions {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
+.context-note-actions button { font-size: 0.75rem; padding: 0.3rem 0.7rem; }
+#context-note-submit {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+#context-note-submit:disabled { opacity: 0.55; }
+.context-note-full { color: #b42318; font-size: 0.72rem; margin: 0.35rem 0 0; }
+.context-notes-list { display: grid; gap: 0.4rem; margin-top: 0.5rem; }
+.context-notes-list > .muted { font-size: 0.75rem; margin: 0; }
+.context-note {
+  background: #f7f9fc;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.5rem 0.6rem;
+}
+.context-note[data-editing="true"] { border-color: var(--primary); }
+.context-note-head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+/* 種類ごとに色を変えるのは、一覧を上から見て「決定」だけを拾えるようにするためです。 */
+.context-note-kind {
+  background: #e7ecf5;
+  border-radius: 999px;
+  color: #344054;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+}
+.context-note-kind[data-kind="decision"] { background: #e3f4ea; color: #087443; }
+.context-note-kind[data-kind="constraint"] { background: #fdecea; color: #b42318; }
+.context-note-kind[data-kind="question"] { background: #fdf3e2; color: #8a5b00; }
+.context-note-date, .context-note-source { color: var(--muted); font-size: 0.68rem; }
+.context-note-source::before { content: '· '; }
+.context-note-body {
+  font-size: 0.8rem;
+  margin: 0.3rem 0 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.context-note-item-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  justify-content: flex-end;
+  margin-top: 0.35rem;
+}
+.context-note-item-actions button { font-size: 0.7rem; padding: 0.15rem 0.45rem; }
+.context-note-confirm { color: #b42318; font-size: 0.7rem; margin-right: auto; }
 .ai-context-project { margin-top: 0.6rem; }
 .ai-context-project-label {
   color: var(--muted);
@@ -664,6 +741,12 @@ button.danger:hover { background: #9b2116; border-color: #9b2116; color: #fff; }
   margin: 0.35rem 0 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+.ai-message-keep {
+  display: block;
+  font-size: 0.7rem;
+  margin: 0.45rem 0 0 auto;
+  padding: 0.15rem 0.5rem;
 }
 .ai-chat-form {
   border-top: 1px solid var(--border);

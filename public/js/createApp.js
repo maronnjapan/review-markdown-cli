@@ -12,6 +12,7 @@ import {
   statusForComment
 } from './comments.js';
 import { createCommentPlacementController } from './commentPlacement.js';
+import { createContextNotesController } from './contextNotes.js';
 import { renderDiagrams } from './diagrams.js';
 import { createDocumentReviewController } from './documentReview.js';
 import { createDocumentTargets } from './documentTargets.js';
@@ -46,9 +47,15 @@ export function createApp(document, { api = defaultApi } = {}) {
     // Edit mode saves comments alongside the document, so there is nothing to
     // flush here. The reading context has no other writer, so it always does.
     hasPendingWork: () => (state.mode !== 'edit' && state.commentsDirty)
-      || state.aiContextDirty || state.personaDirty
+      || state.aiContextDirty || state.contextNotesDirty || state.personaDirty
   });
   const aiContext = createAiContextController({ refs, state, onChange: markAiContextDirty });
+  const contextNotes = createContextNotesController({
+    refs,
+    state,
+    toaster,
+    onChange: markContextNotesDirty
+  });
   const editor = createEditor({
     refs,
     state,
@@ -71,7 +78,10 @@ export function createApp(document, { api = defaultApi } = {}) {
     toaster,
     panes,
     // A question about a comment the reviewer just typed needs it saved first.
-    flushComments: () => commentSaves.flush()
+    flushComments: () => commentSaves.flush(),
+    // 相談して分かったことは、その場でメモへ流し込めます。残すかどうかと、
+    // どこまでを前提として書くかはレビュアーが決めます。
+    onKeepContext: (text) => contextNotes.keepFromChat(text)
   });
   const placement = createCommentPlacementController({
     refs,
@@ -141,14 +151,26 @@ export function createApp(document, { api = defaultApi } = {}) {
   /** Saves (or asks about) pending work before the current document goes away. */
   async function leaveDocument() {
     if (state.mode === 'edit') {
-      if (await editor.flush()) return true;
-      return window.confirm('本文を保存できていません。編集内容を破棄して移動しますか？');
+      if (!(await editor.flush())) {
+        return window.confirm('本文を保存できていません。編集内容を破棄して移動しますか？');
+      }
+      // 編集モードでも、AIパネルで書いた前提（読み取りコンテキスト・コンテキストメモ・
+      // 読み手ペルソナ）はコメントと同じ自動保存に乗っています。本文だけ流して戻ると、
+      // 直後の openFile が自動保存を取り消すので、書いた前提が黙って消えます。
+      if (await commentSaves.flush()) return true;
+      if (!window.confirm('AIパネルに書いた前提を保存できていません。破棄して移動しますか？')) return false;
+      state.aiContextDirty = false;
+      state.contextNotesDirty = false;
+      state.personaDirty = false;
+      return true;
     }
-    if (state.commentsDirty || state.aiContextDirty || state.personaDirty || commentSaves.isBusy()) {
+    if (state.commentsDirty || state.aiContextDirty || state.contextNotesDirty
+      || state.personaDirty || commentSaves.isBusy()) {
       if (await commentSaves.flush()) return true;
       if (!window.confirm('コメントを保存できていません。破棄して移動しますか？')) return false;
       state.commentsDirty = false;
       state.aiContextDirty = false;
+      state.contextNotesDirty = false;
       state.personaDirty = false;
     }
     return true;
@@ -181,6 +203,7 @@ export function createApp(document, { api = defaultApi } = {}) {
     content.innerHTML = '<p class="muted">Markdownをレンダリング中...</p>';
     panes.show('comments');
     placement.reset();
+    contextNotes.load();
     documentReview.load();
     renderComments();
 
@@ -206,9 +229,11 @@ export function createApp(document, { api = defaultApi } = {}) {
     if (typeof data.projectAiContext === 'string') state.projectAiContext = data.projectAiContext;
     // A save that carried the context back confirms it; nothing typed since is lost.
     if (!state.aiContextDirty) state.aiContext = data.review?.aiContext || '';
+    if (!state.contextNotesDirty) state.contextNotes = data.review?.contextNotes || [];
     if (!state.personaDirty) state.persona = data.review?.persona || null;
     state.commentsDirty = false;
     aiContext.load();
+    contextNotes.render();
     documentReview.refresh();
     bodyCopy.syncControl();
   }
@@ -452,6 +477,23 @@ export function createApp(document, { api = defaultApi } = {}) {
     commentSaves.schedule();
   }
 
+  /**
+   * 残したメモも、コメントと同じ自動保存でレビューファイルへ入ります。
+   * 相談やレビューを始める直前にも保存するので、残した直後のメモがその回から効きます。
+   */
+  function markContextNotesDirty() {
+    state.contextNotesDirty = true;
+    // Every edit invalidates in-flight saves: their response must not overwrite newer text.
+    state.commentsVersion += 1;
+    // The AI pane promises to say what travels with a question; the notes are part of it.
+    ai.refreshTarget();
+    // 「指摘の配置にも渡る」の表示は書いた前提と合わせて決まるので、そちらへ見直させます。
+    aiContext.renderSummary();
+    contextNotes.setStatus('dirty');
+    if (!state.currentPath) return;
+    commentSaves.schedule();
+  }
+
   /** 組み直したペルソナは、コメントと同じ自動保存でレビューファイルへ入ります。 */
   function markPersonaDirty() {
     state.personaDirty = true;
@@ -477,26 +519,36 @@ export function createApp(document, { api = defaultApi } = {}) {
    */
   async function pushComments() {
     if (!state.currentPath) return true;
-    if (state.mode === 'edit' && !state.aiContextDirty && !state.personaDirty) return true;
+    if (state.mode === 'edit' && !state.aiContextDirty && !state.contextNotesDirty && !state.personaDirty) {
+      return true;
+    }
     const version = state.commentsVersion;
     const path = state.currentPath;
     const savedContext = state.aiContext;
+    const savedNotes = state.contextNotes;
+    // メモは変わったときだけ送るので、状態表示もそのときだけ動かします。
+    // 触っていない保存で「保存しました」と出ると、送っていないものを送ったと言うことになります。
+    const savingNotes = state.contextNotesDirty;
     const savedPersona = state.persona;
     // Leaving the comments out keeps the ones on file, which is what edit mode wants.
     const savingComments = state.mode !== 'edit';
     setCommentStatus('saving', '保存中…');
     aiContext.setStatus('saving');
+    if (savingNotes) contextNotes.setStatus('saving');
 
     try {
       const result = await api.saveComments({
         path,
         comments: savingComments ? state.comments : undefined,
         aiContext: savedContext,
+        // 空の配列は「最後の1件を消した」なので、未変更の undefined と区別して送ります。
+        ...(savingNotes ? { contextNotes: savedNotes } : {}),
         // null は「ペルソナを消す」なので、未変更の undefined と区別して送ります。
         ...(state.personaDirty ? { persona: savedPersona } : {})
       });
       state.commentSaveFailed = false;
       if (state.currentPath === path && state.aiContext === savedContext) state.aiContextDirty = false;
+      if (state.currentPath === path && state.contextNotes === savedNotes) state.contextNotesDirty = false;
       if (state.currentPath === path && state.persona === savedPersona) state.personaDirty = false;
       if (state.commentsVersion !== version || state.currentPath !== path) return true;
       if (savingComments) {
@@ -506,11 +558,13 @@ export function createApp(document, { api = defaultApi } = {}) {
         setCommentStatus('saved', `自動保存しました ${new Date().toLocaleTimeString()}: ${result.reviewFile}`);
       }
       aiContext.setStatus(state.aiContextDirty ? 'dirty' : 'saved');
+      if (savingNotes) contextNotes.setStatus(state.contextNotesDirty ? 'dirty' : 'saved');
       return true;
     } catch (error) {
       state.commentSaveFailed = true;
       setCommentStatus('error', `保存できませんでした: ${error.message}`);
       aiContext.setStatus('error', `保存できませんでした: ${error.message}`);
+      if (savingNotes) contextNotes.setStatus('error', `保存できませんでした: ${error.message}`);
       return false;
     }
   }
@@ -580,6 +634,7 @@ export function createApp(document, { api = defaultApi } = {}) {
     return editor.hasUnsavedChanges()
       || state.commentsDirty
       || state.aiContextDirty
+      || state.contextNotesDirty
       || state.personaDirty
       || state.commentSaveFailed
       || commentSaves.isBusy();
@@ -588,12 +643,13 @@ export function createApp(document, { api = defaultApi } = {}) {
   function beaconComments() {
     if (!state.currentPath) return;
     const savingComments = state.mode === 'comment' && state.commentsDirty;
-    if (!savingComments && !state.aiContextDirty && !state.personaDirty) return;
+    if (!savingComments && !state.aiContextDirty && !state.contextNotesDirty && !state.personaDirty) return;
     api.beaconComments({
       path: state.currentPath,
       // Edit mode owns the comments; only the reading context is ours to send.
       comments: savingComments ? state.comments : undefined,
       aiContext: state.aiContext,
+      ...(state.contextNotesDirty ? { contextNotes: state.contextNotes } : {}),
       ...(state.personaDirty ? { persona: state.persona } : {})
     });
   }

@@ -333,13 +333,15 @@ function commentsOf(body) {
 }
 
 /**
- * A request that says nothing about the reading context or the reader persona
- * keeps the saved ones: the page beacon on the way out carries comments only.
- * `persona: null` is how the reviewer clears the persona.
+ * A request that says nothing about the reading context, the context notes or
+ * the reader persona keeps the saved ones: the page beacon on the way out
+ * carries comments only. `persona: null` is how the reviewer clears the persona,
+ * and an empty `contextNotes` array is how they clear the last note.
  */
 function reviewPremiseOf(body) {
   return {
     ...(typeof body.aiContext === 'string' ? { aiContext: body.aiContext } : {}),
+    ...(Array.isArray(body.contextNotes) ? { contextNotes: body.contextNotes } : {}),
     ...(body.persona !== undefined ? { persona: body.persona } : {})
   };
 }

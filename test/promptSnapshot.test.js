@@ -11,6 +11,7 @@ import { AiStore } from '../src/aiStore.js';
 import { CodexAppServer } from '../src/codexAppServer.js';
 import { aiContextBlock, resolveAiContext } from '../src/aiContext.js';
 import { collectCommentContext, commentContextBlock } from '../src/commentContext.js';
+import { contextNotesBlock, normalizeContextNotes } from '../src/contextNotes.js';
 import { personaBlock } from '../src/persona.js';
 import { writeReview } from '../src/reviewStore.js';
 
@@ -57,6 +58,23 @@ const MANUAL_PERSONA = {
   source: 'manual',
   input: '運用当番の新人。\n製品は初めてで、手順書だけが頼り。'
 };
+
+/** 4種類のうち2つを使った固定のメモ。種類ごとの読み方の説明は枠の中に必ず全部出ます。 */
+const CONTEXT_NOTES = [
+  {
+    id: 'note-fixed-1',
+    kind: 'decision',
+    body: '節の並び順は検討済みで、変えない。',
+    createdAt: '2026-01-01T00:00:00.000Z'
+  },
+  {
+    id: 'note-fixed-2',
+    kind: 'constraint',
+    body: '用語は原著の訳語に合わせる。',
+    source: 'chat',
+    createdAt: '2026-01-02T00:00:00.000Z'
+  }
+];
 
 const COMMENT = {
   id: 'comment-fixed-1',
@@ -108,6 +126,9 @@ const EXPECTED = {
   'block:readingContext(documentOnly)': '57287b0d3fdf96e694a91d96fec58039f2eaa9571d95618f82c4633270835f4a',
   'block:readingContext(manualPersona)': 'd31794a0268a8ebf93e47aaf1839bb2000c7cd2e14dd14d1366a1002911d4ebd',
   'block:readingContext(none)': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+  'block:readingContext(notesOnly)': 'ec66165825c5638c0d8fb36800a95c3ec6de967840fc431e5707e003f53c87b7',
+  'block:readingContext(document+notes+persona)': '66535d11fc88b6f66e0dbe25f21756c9937e12160bbbdef3a1705ddfe0f4b2f9',
+  'block:contextNotes(kinds)': 'ec66165825c5638c0d8fb36800a95c3ec6de967840fc431e5707e003f53c87b7',
   'block:persona(ai)': '23fb353a8c9e17eb35bf275869a4acdfe1983a907b08c3d19fa97c9309513113',
   'block:persona(manual)': '91367577d26fcb16e2d1ed21d839e8b27d8ad5f4b51fb138c1499d2d84fa791b',
   'block:commentContext(some)': 'bd8844700f7878e71d277d2903d9f6dda7b142d9ab6511ac4d77b0cc4d4cb1ff',
@@ -117,10 +138,10 @@ const EXPECTED = {
   'prompt:translate(passage)': '8fda0a37aa7b6e4d1059e1cacb05b5847d749359a1f12b54892969f57d008716',
   'prompt:placement': '12a4649889aa467e1d1d1c39f1a9eb416d36b5d93e01869c413ac166087ddd74',
   'prompt:persona': '79d8352d6e49d101ade501f53ec6c7aab30dc2e0fa2abbf02b38fd59f0dc8618',
-  'prompt:review(oneSkill)': '9e62fad91221b85710e0d5ef0bb0b00a373c03752dd8c8f575b861ae315aecab',
-  'prompt:review(twoSkills,noPersona)': '5db8840bf69e002938263bec953e4c1421f0ad569445c79c81a3d7ef9f091453',
-  'prompt:verification': '085ff7a7bb8519eb23c60bd6720d192218b793e50898f04251c03cfc2529d07f',
-  'prompt:verification(noUnplaced)': '51e2e6f863217e71ea083942aa522d657fba5c8c8350956630be9de702e9d5c8',
+  'prompt:review(oneSkill)': 'b1713fdaceaf22569c590925adebc754ccb95e1ab13b6b8c2637aa4d09e19f93',
+  'prompt:review(twoSkills,noPersona)': '4854674eaaea50e2dc4658668e2e0c4eb83910a8b6d8230910a09c4bc3b04d39',
+  'prompt:verification': '92aee8dde5f7995a1f09d36ef462a3b4b7502a0128a9cb745394745d45d47310',
+  'prompt:verification(noUnplaced)': '335c145ccc4a6d3e65200bcfe9e7c6b92fa632453071f7b558989ea94b2c0e82',
   'prompt:chat(first)': 'eca6465f453c6d1cd1845608167f881f915bdd589c8057ce9d2b63e63f1a9ef5',
   'prompt:chat(firstWithTranscript)': 'ac2b844af404254f9372d41794a5b7d60b1f07f1010a9f32f5aa7dc896a68ca1',
   'prompt:chat(followUpUnchanged)': 'a2847a54fee98149f0221be22f89814e6e08aac58d56453beec780756bcbed5f',
@@ -162,6 +183,14 @@ test('AIへ渡す文面は、書き換えるまで一字も変わらない', asy
   })));
   // 前提を何も設定していない文書では、枠ごと出しません。ここが空文字であることも約束です。
   record('block:readingContext(none)', aiContextBlock(resolveAiContext({})));
+  // 残したメモは、書いた前提とペルソナの間の別の枠で渡します。1件も無ければ枠ごと出しません。
+  record('block:readingContext(notesOnly)', aiContextBlock(resolveAiContext({ notes: CONTEXT_NOTES })));
+  record('block:readingContext(document+notes+persona)', aiContextBlock(resolveAiContext({
+    document: 'この文書の前提。',
+    notes: CONTEXT_NOTES,
+    persona: PERSONA
+  })));
+  record('block:contextNotes(kinds)', contextNotesBlock(normalizeContextNotes(CONTEXT_NOTES)));
   record('block:persona(ai)', personaBlock(PERSONA));
   record('block:persona(manual)', personaBlock(MANUAL_PERSONA));
 

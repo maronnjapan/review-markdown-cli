@@ -39,15 +39,19 @@ export function createAiContextController({ refs, state, onChange }) {
       ? '設定済み'
       : hasProjectContext ? 'ディレクトリ全体の前提のみ' : '未設定';
     refs.aiContextState.dataset.state = hasDocumentContext || hasProjectContext ? 'set' : 'unset';
+    // 「指摘の配置にも前提が渡る」の判定は、書いた前提とメモの両方を見ます。
+    // 出す・出さないを1か所で決めるため、メモが増えたときもここを呼び直します。
+    if (refs.placementContextHint) {
+      refs.placementContextHint.hidden = !hasProjectContext
+        && !hasDocumentContext
+        && (state.contextNotes || []).length === 0;
+    }
   }
 
   function renderProjectContext() {
     const projectContext = (state.projectAiContext || '').trim();
     refs.aiContextProject.hidden = !projectContext;
     refs.aiContextProjectText.textContent = projectContext;
-    if (refs.placementContextHint) {
-      refs.placementContextHint.hidden = !projectContext && !(state.aiContext || '').trim();
-    }
   }
 
   /** Text past the limit stays on screen but never becomes what we save. */
