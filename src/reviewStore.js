@@ -3,6 +3,7 @@ import path from 'node:path';
 import { normalizeAiContext } from './aiContext.js';
 import { SEVERITY_LABELS } from './aiVocabulary.js';
 import { CONTEXT_NOTE_LABELS, normalizeContextNotes, readContextNotes } from './contextNotes.js';
+import { BRIEF_FIELDS, normalizeDocumentBrief, readDocumentBrief } from './documentBrief.js';
 import { PERSONA_FIELD_LABELS, normalizePersona } from './persona.js';
 
 export const REVIEW_DIR = '.review';
@@ -38,6 +39,9 @@ export async function readReview(rootDir, relativeFile) {
       targetFile,
       comments: Array.isArray(parsed.comments) ? parsed.comments.map(withCommentStatus) : [],
       aiContext: typeof parsed.aiContext === 'string' ? parsed.aiContext : '',
+      // 管理者の3点を持たないレビューファイルは、この機能より前に書かれたものです。
+      // 未設定として読みます。
+      brief: readDocumentBrief(parsed.brief),
       // メモを持たないレビューファイルは、この機能より前に書かれたものです。空の一覧として読みます。
       // 壊れた値でも投げません。ここで投げると、その文書は画面から開けなくなります。
       contextNotes: readContextNotes(parsed.contextNotes),
@@ -46,28 +50,29 @@ export async function readReview(rootDir, relativeFile) {
     };
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
-    return { targetFile, comments: [], aiContext: '', contextNotes: [], persona: null };
+    return { targetFile, comments: [], aiContext: '', brief: null, contextNotes: [], persona: null };
   }
 }
 
 /**
  * Replaces the comments of one review.
  *
- * 本文以外の3つ、読み取りコンテキスト（`aiContext`）・コンテキストメモ（`contextNotes`）・
- * 読み手ペルソナ（`persona`）は、渡さなければファイルにあるものを据え置きます。
- * コメントだけを保存するとき（画面を離れるときのビーコンもそうです）に、
- * 書いた前提が黙って消えないようにするためです。
+ * 本文以外の4つ、読み取りコンテキスト（`aiContext`）・資料の管理者（`brief`）・
+ * コンテキストメモ（`contextNotes`）・読み手ペルソナ（`persona`）は、渡さなければ
+ * ファイルにあるものを据え置きます。コメントだけを保存するとき（画面を離れるときの
+ * ビーコンもそうです）に、書いた前提が黙って消えないようにするためです。
  */
-export async function writeReview(rootDir, relativeFile, comments, { aiContext, contextNotes, persona } = {}) {
+export async function writeReview(rootDir, relativeFile, comments, { aiContext, brief, contextNotes, persona } = {}) {
   const requestedTargetFile = relativeFile.split(path.sep).join('/');
   const { filePath, targetFile } = await findExistingReviewLocation(rootDir, requestedTargetFile);
   // 1つでも省かれていれば、据え置く値を知るために現在の中身を読みます。
   // 条件を `a === undefined || b === undefined` と書き足していくと、項目が増えたときに
   // 足し忘れて、保存のたびに前提が消えるようになります。
-  const saved = [aiContext, contextNotes, persona].some((value) => value === undefined)
+  const saved = [aiContext, brief, contextNotes, persona].some((value) => value === undefined)
     ? await readReview(rootDir, requestedTargetFile)
     : null;
   const nextAiContext = aiContext === undefined ? saved.aiContext : normalizeAiContext(aiContext);
+  const nextBrief = brief === undefined ? saved.brief : normalizeDocumentBrief(brief);
   const nextNotes = contextNotes === undefined ? saved.contextNotes : normalizeContextNotes(contextNotes);
   const nextPersona = persona === undefined ? saved.persona : normalizePersona(persona);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -75,6 +80,7 @@ export async function writeReview(rootDir, relativeFile, comments, { aiContext, 
     targetFile,
     updatedAt: new Date().toISOString(),
     ...(nextAiContext ? { aiContext: nextAiContext } : {}),
+    ...(nextBrief ? { brief: nextBrief } : {}),
     ...(nextNotes.length ? { contextNotes: nextNotes.map(withNoteTimestamp) } : {}),
     ...(nextPersona ? { persona: nextPersona } : {}),
     comments: comments.map((comment) => ({
@@ -157,6 +163,7 @@ export function buildReviewMarkdown(review) {
   const grouped = groupByType(Array.isArray(review.comments) ? review.comments : []);
 
   const lines = [`# Review for ${review.targetFile}`, ''];
+  appendDocumentBrief(lines, review.brief);
   if (review.aiContext) lines.push('## 読み取りコンテキスト', '', review.aiContext, '');
   appendContextNotes(lines, review.contextNotes);
   appendPersona(lines, review.persona);
@@ -176,6 +183,22 @@ function groupByType(comments) {
     grouped.get(group).push(comment);
   }
   return grouped;
+}
+
+/**
+ * 資料の管理者が決めた3点。レビュー結果を渡す相手が最初に読むべきものなので、
+ * 読み取りコンテキストより前に置きます。この資料が何を目指していたかを知らないまま
+ * 指摘だけを読むと、直すべきかどうかを決められないからです。
+ */
+function appendDocumentBrief(lines, brief) {
+  if (!brief) return;
+  lines.push('## 資料の管理者', '');
+  for (const { id, label } of BRIEF_FIELDS) {
+    if (!brief[id]) continue;
+    // 改行を含む欄は、2文字下げて同じ箇条書きの中に収めます。
+    lines.push(...indentedListItem(`${label}: ${brief[id]}`));
+  }
+  lines.push('');
 }
 
 /**

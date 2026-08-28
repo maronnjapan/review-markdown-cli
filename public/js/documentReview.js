@@ -1,4 +1,5 @@
 import { runAiRequest } from './aiRequest.js';
+import { missingBriefFields } from './documentBrief.js';
 import { createProposalList } from './proposalList.js';
 import { escapeHtml } from './util.js';
 
@@ -34,6 +35,12 @@ const PERSONA_FIELDS = [
  * どれだけ絞り込まれた指摘なのかが分からないと、レビュアーは結局全部読み直すからです。
  *
  * レビュー結果は「指摘の配置」と同じコメント候補で、追加するまで保存しません。
+ *
+ * ── 資料の管理者の関門 ─────────────────────────────────
+ * 目的・ストーリー・期待値が揃っていない文書では、実行を1度止めます。3点はレビューの
+ * 判断基準そのもので、無いままのレビューは「一般に良い文章か」を見る読みにしかなりません。
+ * 止め続けはしません。押し直せば実行します。関門は「決めないまま進んでいることに
+ * 気づかせる」ためのもので、レビュアーの判断より上に置くものではないからです。
  */
 export function createDocumentReviewController({
   refs, state, api, toaster, prepareAi, flushComments = async () => true,
@@ -57,12 +64,15 @@ export function createDocumentReviewController({
 
   // 書きかけの説明を、保存の往復で消さないための目印です。
   let personaInputTouched = false;
+  // 管理者の関門で1度止めたかどうか。止めるのは文書ごとに1回だけです。
+  let briefWarned = false;
 
   bindEvents();
 
   /** 文書を開いたときの初期化。スキル一覧は最初の1回だけ取りに行きます。 */
   function load() {
     personaInputTouched = false;
+    briefWarned = false;
     refs.personaInput.value = state.persona?.input || '';
     state.review = null;
     renderPersona();
@@ -289,6 +299,15 @@ export function createDocumentReviewController({
   async function runReview() {
     const skillIds = [...state.reviewSkillIds];
     if (skillIds.length === 0) return;
+    // 管理者が3点を求めている間は、1度目の実行を止めます。押し直せば実行します。
+    const missing = missingBriefFields(state.brief);
+    if (missing.length > 0 && !briefWarned) {
+      briefWarned = true;
+      syncRunState();
+      toaster.info(`資料の管理者が${fieldNames(missing)}を求めています。`
+        + '「管理者」タブで決めるか、もう一度押すとこのまま実行します。');
+      return;
+    }
     await runAiRequest({
       state,
       prepareAi,
@@ -361,6 +380,23 @@ export function createDocumentReviewController({
     refs.reviewRunButton.disabled = Boolean(state.reviewAbortController)
       || Boolean(state.personaAbortController)
       || state.reviewSkillIds.length === 0;
+    // 何が足りないかは、押す前に見えている必要があります。押してから初めて止められると、
+    // 待たされたうえに引き返させられたようにしか見えません。
+    const missing = missingBriefFields(state.brief);
+    // 揃った時点で関門は閉じ直します。あとで3点を消したのなら、それはもう一度
+    // 気づくべき変化で、一度通したことを理由に黙って通すものではありません。
+    if (missing.length === 0) briefWarned = false;
+    refs.reviewBriefHint.hidden = missing.length === 0;
+    refs.reviewBriefHint.textContent = missing.length === 0 ? '' : briefHint(missing);
+    refs.reviewRunButton.textContent = missing.length > 0 && briefWarned
+      ? 'それでも実行する'
+      : 'レビューを実行';
+  }
+
+  function briefHint(missing) {
+    return briefWarned
+      ? `${fieldNames(missing)}は決まっていないままです。このまま実行すると、その3点を基準にしない読みになります。`
+      : `資料の管理者が${fieldNames(missing)}を求めています。「管理者」タブで決めてから実行してください。`;
   }
 
   function bindEvents() {
@@ -391,6 +427,10 @@ export function createDocumentReviewController({
   }
 
   return { load, refresh };
+}
+
+function fieldNames(missing) {
+  return missing.map(({ label }) => label).join('・');
 }
 
 /** 2周のうちどちらを読んでいるか。待たされる長さの理由が分かるようにします。 */

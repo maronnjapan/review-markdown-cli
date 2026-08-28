@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { MAX_AI_CONTEXT_CHARS } from './aiLimits.js';
 import { contextNotesBlock, hasContextNotes, readContextNotes } from './contextNotes.js';
+import { documentBriefBlock, hasDocumentBrief, readDocumentBrief } from './documentBrief.js';
 import { hasPersonaContent, normalizePersona, personaBlock } from './persona.js';
 import { readingContextBlock } from './prompts/readingContext.js';
 
@@ -10,9 +11,10 @@ import { readingContextBlock } from './prompts/readingContext.js';
  * 対象読者、原稿の位置づけ、守りたい用語など、本文からは読み取れない前提を渡すと、
  * 翻訳・AIチャット・指摘の配置・AIレビューが同じ前提の上で動きます。
  *
- * コンテキストは4か所から集めます。
+ * コンテキストは5か所から集めます。
  *   - project : 設定ファイルの `aiContext`（`--ai-context` で上書きできる。全文書に効く）
  *   - document: レビューファイルへ保存した文書ごとのコンテキスト
+ *   - brief   : 資料の管理者が決めた目的・ストーリー・期待値（`documentBrief.js`）
  *   - notes   : レビューファイルへ残したコンテキストメモ（`contextNotes.js`）
  *   - persona : レビューファイルへ保存した読み手ペルソナ（`persona.js`）
  * どれも本文と同じくデータとして扱い、指示としては読ませません。
@@ -33,14 +35,15 @@ export function normalizeAiContext(value, source = '読み取りコンテキス�
 }
 
 /**
- * Merges the four sources into the object every prompt builder takes.
+ * Merges the five sources into the object every prompt builder takes.
  * `revision` changes whenever any of them changes, and stays empty while all are unset.
  */
-export function resolveAiContext({ project, document, notes, persona } = {}) {
+export function resolveAiContext({ project, document, brief, notes, persona } = {}) {
   const context = {
     project: normalizeAiContext(project, 'aiContext'),
     document: normalizeAiContext(document, '読み取りコンテキスト'),
-    // ここへ来るのは保存済みのメモなので、上限では断りません（断るのは受け取る側）。
+    // ここへ来るのは保存済みの値なので、上限では断りません（断るのは受け取る側）。
+    brief: readDocumentBrief(brief),
     notes: readContextNotes(notes),
     persona: normalizePersona(persona)
   };
@@ -49,7 +52,7 @@ export function resolveAiContext({ project, document, notes, persona } = {}) {
 
 export function hasAiContext(context) {
   return Boolean(
-    context?.project || context?.document
+    context?.project || context?.document || hasDocumentBrief(context?.brief)
     || hasContextNotes(context?.notes) || hasPersonaContent(context?.persona)
   );
 }
@@ -60,6 +63,7 @@ export function aiContextBlock(context) {
   return readingContextBlock({
     project: context.project,
     document: context.document,
+    brief: documentBriefBlock(context.brief),
     notes: contextNotesBlock(context.notes),
     persona: personaBlock(context.persona)
   });

@@ -251,6 +251,63 @@ test('every AI feature reads the document under the reading context the reviewer
   }
 });
 
+test('what the manager settled reaches every AI feature, and the manager itself never reads the body', async (t) => {
+  const { root, store } = await testStore(t);
+  await fs.writeFile(path.join(root, 'guide.md'), '# 再起動手順\n\nまず deploy.sh を実行します。\n', 'utf8');
+  await writeReview(root, 'guide.md', [], {
+    brief: {
+      purpose: '当番が手順書だけで再起動を完了できるようになる。',
+      story: '止めてよい条件 → 止める手順 → 戻ったことの確かめ方。',
+      expectation: '再起動についての問い合わせが来なくなる。'
+    }
+  });
+  const prompts = [];
+  const codex = fakeCodex({
+    async runTurn(input) {
+      prompts.push(input.prompt);
+      return {
+        text: JSON.stringify({
+          contextualMeaning: '実行する',
+          meanings: [],
+          explanation: '',
+          placements: [],
+          unplaced: [],
+          purpose: '',
+          story: '',
+          expectation: '',
+          questions: ['何のための資料ですか。'],
+          assumptions: []
+        })
+      };
+    }
+  });
+  const service = new AiService(root, { store, codex });
+
+  await service.translate('guide.md', { type: 'text-selection', selectedText: 'deploy' });
+  await service.placeComments('guide.md', '前提が抜けている');
+  const conversation = await service.createConversation({ documentPath: 'guide.md', target: { type: 'document' } });
+  await service.sendMessage(conversation.id, 'この節は誰向け？');
+
+  assert.equal(prompts.length, 3);
+  for (const prompt of prompts) {
+    assert.match(prompt, /<document_brief>/, '翻訳・配置・チャットのどれも3点を読む');
+    assert.match(prompt, /当番が手順書だけで再起動を完了できるようになる。/);
+    assert.match(prompt, /not something the document says/, '3点は資料の設計であって中身ではない');
+  }
+
+  // 管理者の組み立てだけは本文を渡しません。書いてあることから目的を起こすと、
+  // 手段が目的に化けた状態を追認するだけになるからです。
+  const draft = await service.composeDocumentBrief('guide.md', '運用チームから当番向けの手順を頼まれた。');
+  const briefPrompt = prompts.at(-1);
+  assert.doesNotMatch(briefPrompt, /deploy\.sh/, '本文は渡さない');
+  assert.doesNotMatch(briefPrompt, /<document_brief>/, '保存済みの3点も混ぜない');
+  assert.match(briefPrompt, /運用チームから当番向けの手順を頼まれた。/);
+  assert.equal(draft.brief, null, '何も決まっていなければ、それらしい目的で埋めさせない');
+  assert.deepEqual(draft.questions, ['何のための資料ですか。']);
+
+  await assert.rejects(service.composeDocumentBrief('guide.md', '   '), /決まっていることを入力してください/);
+});
+
 test('a conversation catches up when the reading context changes, and stays quiet when it does not', async (t) => {
   const { root, store } = await testStore(t);
   await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\nRun the program.\n', 'utf8');

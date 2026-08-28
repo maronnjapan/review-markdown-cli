@@ -535,6 +535,8 @@ button.danger:hover { background: #9b2116; border-color: #9b2116; color: #fff; }
   font-weight: 400;
 }
 .ai-context-state[data-state="set"] { color: #087443; }
+/* 3点のうち一部だけ決まっている状態。未設定とも設定済みとも違うので色を分けます。 */
+.ai-context-state[data-state="partial"] { color: #8a5b00; }
 .ai-context-hint {
   color: var(--muted);
   font-size: 0.75rem;
@@ -1052,6 +1054,59 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .review-verification { color: var(--muted); font-size: 0.76rem; margin: 0; }
 .review-verification[data-state="skipped"] { color: #8a5b00; }
 .review-run-hint { color: #8a5b00; font-size: 0.76rem; margin: 0 0 0.5rem; }
+
+/* ---- 資料の管理者 ---------------------------------------------------- */
+
+.brief-form {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.75rem;
+}
+.brief-field { display: grid; }
+.brief-field-label { font-size: 0.82rem; font-weight: 600; }
+.brief-field-hint {
+  color: var(--muted);
+  font-size: 0.72rem;
+  margin: 0.15rem 0 0.3rem;
+}
+.brief-field textarea {
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  font: inherit;
+  padding: 0.55rem;
+  resize: vertical;
+  width: 100%;
+}
+.brief-actions {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
+.brief-result { margin-top: 0.6rem; }
+.brief-result > .muted,
+.brief-result > .ai-loading,
+.brief-result > .ai-error { font-size: 0.78rem; margin: 0; }
+/* 管理者の問いは、この画面でいちばん先に読んでほしいものなので目立たせます。 */
+.brief-questions {
+  background: #fffaf0;
+  border-radius: 12px;
+  padding: 0.7rem 0.85rem;
+}
+.brief-questions h4 { font-size: 0.78rem; margin: 0 0 0.35rem; }
+.brief-questions ol { font-size: 0.8rem; margin: 0; padding-left: 1.2rem; }
+.brief-questions li + li { margin-top: 0.25rem; }
+.brief-questions-hint { color: var(--muted); font-size: 0.72rem; margin: 0.4rem 0 0; }
+.brief-assumptions {
+  border-top: 1px dashed var(--border);
+  margin-top: 0.6rem;
+  padding-top: 0.5rem;
+}
+.brief-assumptions h4 { font-size: 0.76rem; margin: 0 0 0.3rem; }
+.brief-assumptions ul { font-size: 0.78rem; margin: 0; padding-left: 1.1rem; }
+.brief-settled { color: #087443; font-size: 0.78rem; margin: 0; }
+/* 実行の手前で足りないものを言う行。押してから止められたと感じさせないための表示です。 */
+.review-brief-hint { color: #8a5b00; font-size: 0.76rem; margin: 0 0 0.5rem; }
+
 .reveal-flash {
   background: #eef6ff;
   outline-color: var(--primary);

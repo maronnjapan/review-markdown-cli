@@ -188,6 +188,95 @@ test('the reading context travels with the review, and a context only save keeps
   assert.match(exported, /## 読み取りコンテキスト\n\n第3章。読者は当番の担当者。/);
 });
 
+test('the manager endpoint streams a draft, and the three settled points save with the review', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-ai-brief-'));
+  await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\nRun the program.\n', 'utf8');
+  const calls = [];
+  const aiService = {
+    async status() { return { available: true, provider: 'codex' }; },
+    async composeDocumentBrief(documentPath, input, { onDelta }) {
+      calls.push(['brief', documentPath, input]);
+      onDelta('{"purpose":');
+      return {
+        brief: { purpose: '当番が一人で再起動できるようになる。', story: '', expectation: '' },
+        // 埋まらなかった項目は、埋めずに問いとして返します。
+        questions: ['止めてよい条件は誰が決めますか。', '読んだ人に何を判断してほしいですか。'],
+        assumptions: []
+      };
+    },
+    close() {}
+  };
+  const { app } = createServer(root, { aiService, aiToken: 'brief-token' });
+  const server = app.listen(0);
+  await new Promise((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const withToken = { 'Content-Type': 'application/json', 'X-Review-Markdown-Token': 'brief-token' };
+
+  const unauthorized = await fetch(`${baseUrl}/api/ai/brief`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: 'guide.md', input: 'x' })
+  });
+  assert.equal(unauthorized.status, 403);
+
+  const events = await fetch(`${baseUrl}/api/ai/brief`, {
+    method: 'POST',
+    headers: withToken,
+    body: JSON.stringify({ path: 'guide.md', input: '運用チームから当番向けの手順を頼まれた。' })
+  }).then(async (response) => (await response.text()).trim().split('\n').map(JSON.parse));
+  assert.deepEqual(events.map(({ type }) => type), ['started', 'delta', 'result']);
+  assert.equal(events.at(-1).brief.purpose, '当番が一人で再起動できるようになる。');
+  assert.deepEqual(events.at(-1).questions.length, 2);
+  assert.deepEqual(calls, [['brief', 'guide.md', '運用チームから当番向けの手順を頼まれた。']]);
+
+  // 組み立てただけでは何も残りません。保存の要求で初めてファイルへ入ります。
+  assert.equal((await fetch(`${baseUrl}/api/file?path=guide.md`).then((r) => r.json())).review.brief, null);
+
+  const brief = {
+    purpose: '当番が一人で再起動できるようになる。',
+    story: '止めてよい条件 → 止める手順 → 戻ったことの確かめ方。',
+    expectation: '再起動についての問い合わせが来なくなる。'
+  };
+  const saved = await fetch(`${baseUrl}/api/review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: 'guide.md', brief })
+  }).then((response) => response.json());
+  assert.equal(saved.review.brief.story, brief.story);
+
+  const opened = await fetch(`${baseUrl}/api/file?path=guide.md`).then((response) => response.json());
+  assert.equal(opened.review.brief.purpose, brief.purpose, '開き直しても3点は残る');
+
+  // null は「3つを消す」です。コメントだけを送る保存（undefined）と区別します。
+  await fetch(`${baseUrl}/api/review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: 'guide.md', comments: [] })
+  });
+  assert.equal((await fetch(`${baseUrl}/api/file?path=guide.md`).then((r) => r.json())).review.brief.purpose, brief.purpose);
+  const cleared = await fetch(`${baseUrl}/api/review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: 'guide.md', brief: null })
+  }).then((response) => response.json());
+  assert.equal(cleared.review.brief, undefined);
+
+  const outsideRoot = await fetch(`${baseUrl}/api/ai/brief`, {
+    method: 'POST',
+    headers: withToken,
+    body: JSON.stringify({ path: '../secret.md', input: 'x' })
+  });
+  assert.equal(outsideRoot.status, 400, 'レビュー対象ディレクトリの外は読ませない');
+});
+
 test('the review endpoints list skills, read one, rebuild a persona, and stream proposals', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-ai-review-'));
   await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\nRun the program.\n', 'utf8');
