@@ -2,9 +2,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { MAX_TRANSLATIONS } from './aiLimits.js';
+import { TRANSLATION_PROMPT_VERSION } from './prompts/translate.js';
 
 const STORE_VERSION = 1;
-const MAX_TRANSLATIONS = 500;
 
 export function defaultAiDataDir(env = process.env, platform = process.platform) {
   if (env.REVIEW_MARKDOWN_DATA_DIR) return path.resolve(env.REVIEW_MARKDOWN_DATA_DIR);
@@ -33,7 +34,9 @@ export function translationCacheKey(target, readingContext = '') {
     contextBefore: String(target?.contextBefore || ''),
     contextAfter: String(target?.contextAfter || ''),
     headingPath: Array.isArray(target?.headingPath) ? target.headingPath : [],
-    promptVersion: 1,
+    // 文面を書き換えたのに版が据え置きだと、古い文面で作った訳を返し続けます。
+    // 版はプロンプトの隣に置いてあるので、書き換えた側で上げてください。
+    promptVersion: TRANSLATION_PROMPT_VERSION,
     ...(readingContext ? { readingContext } : {})
   };
   return crypto.createHash('sha256').update(JSON.stringify(relevant)).digest('hex');
