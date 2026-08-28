@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { normalizeAiContext } from './aiContext.js';
+import { SEVERITY_LABELS } from './aiVocabulary.js';
 import { PERSONA_FIELD_LABELS, normalizePersona } from './persona.js';
 
 export const REVIEW_DIR = '.review';
@@ -121,25 +122,42 @@ function withCommentStatus(comment) {
   };
 }
 
+/**
+ * コメントの種類ごとの見出しと書き出し方。ここが並び順そのものです。
+ * 種類を足すときは、この表へ1行足すだけで済みます。
+ */
+const COMMENT_GROUPS = [
+  { type: 'document', title: '文書全体へのコメント', render: renderDocumentComment },
+  { type: 'text-selection', title: '範囲選択コメント', render: renderSelectionComment },
+  { type: 'paragraph', title: '段落コメント', render: renderParagraphComment },
+  { type: 'section', title: 'セクションコメント', render: renderSectionComment }
+];
+
+/** 表に無い種類のコメント。古いレビューファイルや、まだ知らない種類がここへ来ます。 */
+const OTHER_GROUP = { title: 'その他のコメント', render: renderGenericComment };
+
 export function buildReviewMarkdown(review) {
-  const comments = Array.isArray(review.comments) ? review.comments : [];
-  const documentComments = comments.filter((comment) => comment.type === 'document');
-  const selectionComments = comments.filter((comment) => comment.type === 'text-selection');
-  const paragraphComments = comments.filter((comment) => comment.type === 'paragraph');
-  const sectionComments = comments.filter((comment) => comment.type === 'section');
-  const otherComments = comments.filter(
-    (comment) => !['document', 'text-selection', 'paragraph', 'section'].includes(comment.type)
-  );
+  const grouped = groupByType(Array.isArray(review.comments) ? review.comments : []);
 
   const lines = [`# Review for ${review.targetFile}`, ''];
   if (review.aiContext) lines.push('## 読み取りコンテキスト', '', review.aiContext, '');
   appendPersona(lines, review.persona);
-  appendCommentGroup(lines, '文書全体へのコメント', documentComments, renderDocumentComment);
-  appendCommentGroup(lines, '範囲選択コメント', selectionComments, renderSelectionComment);
-  appendCommentGroup(lines, '段落コメント', paragraphComments, renderParagraphComment);
-  appendCommentGroup(lines, 'セクションコメント', sectionComments, renderSectionComment);
-  appendCommentGroup(lines, 'その他のコメント', otherComments, renderGenericComment);
+  for (const group of [...COMMENT_GROUPS, OTHER_GROUP]) {
+    appendCommentGroup(lines, group.title, grouped.get(group) || [], group.render);
+  }
   return `${lines.join('\n').trim()}\n`;
+}
+
+/** コメントを1度だけ走査して、種類ごとに振り分けます。 */
+function groupByType(comments) {
+  const byType = new Map(COMMENT_GROUPS.map((group) => [group.type, group]));
+  const grouped = new Map();
+  for (const comment of comments) {
+    const group = byType.get(comment.type) || OTHER_GROUP;
+    if (!grouped.has(group)) grouped.set(group, []);
+    grouped.get(group).push(comment);
+  }
+  return grouped;
 }
 
 /** レビュー結果を渡す相手にも、どの読み手を基準に読んだかが要ります。 */
@@ -174,8 +192,6 @@ function appendCommentGroup(lines, title, comments, renderer) {
     lines.push('');
   });
 }
-
-const SEVERITY_LABELS = { must: '要対応', should: '検討', idea: '提案' };
 
 /**
  * AIレビューから追加したコメントは、どのスキルがどの読み手として読んだ指摘かを添えます。
