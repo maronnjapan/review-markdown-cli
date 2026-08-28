@@ -12,6 +12,7 @@ import { CodexAppServer } from '../src/codexAppServer.js';
 import { aiContextBlock, resolveAiContext } from '../src/aiContext.js';
 import { collectCommentContext, commentContextBlock } from '../src/commentContext.js';
 import { contextNotesBlock, normalizeContextNotes } from '../src/contextNotes.js';
+import { documentBriefBlock, readDocumentBrief } from '../src/documentBrief.js';
 import { personaBlock } from '../src/persona.js';
 import { writeReview } from '../src/reviewStore.js';
 
@@ -52,6 +53,13 @@ const PERSONA = {
   summary: '製品は初めてだが、手順があれば作業できる運用担当。',
   assumptions: ['「新人」から経験1年未満と想定しました'],
   input: '運用当番の新人。製品は初めて。'
+};
+
+/** 資料の管理者が決めた3点。一部だけ決まっている場合の枠も、別に固定します。 */
+const BRIEF = {
+  purpose: '当番が手順書だけで再起動を完了できるようになる。',
+  story: '止めてよい条件 → 止める手順 → 戻ったことの確かめ方。',
+  expectation: '再起動についての問い合わせが来なくなる。'
 };
 
 const MANUAL_PERSONA = {
@@ -128,6 +136,9 @@ const EXPECTED = {
   'block:readingContext(none)': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
   'block:readingContext(notesOnly)': 'ec66165825c5638c0d8fb36800a95c3ec6de967840fc431e5707e003f53c87b7',
   'block:readingContext(document+notes+persona)': '66535d11fc88b6f66e0dbe25f21756c9937e12160bbbdef3a1705ddfe0f4b2f9',
+  'block:readingContext(brief+document)': '534f0c6951e2ad153a95e8fc09d2b3cb54dde88a7f8b64e678005dde31880006',
+  'block:documentBrief(settled)': '6e22b5ca4958a0ac40b126bc6373fe8c0364e6a0da69622646fbfa48505225ac',
+  'block:documentBrief(purposeOnly)': '72266f101ac329a0a7e330c531bbebb7348222c0e7b9bbdbc6dc00b6086fca6d',
   'block:contextNotes(kinds)': 'ec66165825c5638c0d8fb36800a95c3ec6de967840fc431e5707e003f53c87b7',
   'block:persona(ai)': '23fb353a8c9e17eb35bf275869a4acdfe1983a907b08c3d19fa97c9309513113',
   'block:persona(manual)': '91367577d26fcb16e2d1ed21d839e8b27d8ad5f4b51fb138c1499d2d84fa791b',
@@ -137,6 +148,7 @@ const EXPECTED = {
   'prompt:translate(term)': 'b04375003c0f8cd71bea48b3b28ff7d7947b96e549531caa74660081910ca6f3',
   'prompt:translate(passage)': '8fda0a37aa7b6e4d1059e1cacb05b5847d749359a1f12b54892969f57d008716',
   'prompt:placement': '12a4649889aa467e1d1d1c39f1a9eb416d36b5d93e01869c413ac166087ddd74',
+  'prompt:brief': '05d5c458ae68189881e4fa42532a548b9aeffe594e4c6e7f0a4cd328e0ab1e6b',
   'prompt:persona': '79d8352d6e49d101ade501f53ec6c7aab30dc2e0fa2abbf02b38fd59f0dc8618',
   'prompt:review(oneSkill)': 'b1713fdaceaf22569c590925adebc754ccb95e1ab13b6b8c2637aa4d09e19f93',
   'prompt:review(twoSkills,noPersona)': '4854674eaaea50e2dc4658668e2e0c4eb83910a8b6d8230910a09c4bc3b04d39',
@@ -192,6 +204,15 @@ test('AIへ渡す文面は、書き換えるまで一字も変わらない', asy
     notes: CONTEXT_NOTES,
     persona: PERSONA
   })));
+  // 決めた3点は書いた前提より先に並びます。1つも決めていない文書では枠ごと出ないので、
+  // この機能より前に書かれた文書の文面は一字も変わりません（= 翻訳キャッシュは生きたままです）。
+  record('block:readingContext(brief+document)', aiContextBlock(resolveAiContext({
+    document: 'この文書の前提。',
+    brief: BRIEF
+  })));
+  record('block:documentBrief(settled)', documentBriefBlock(readDocumentBrief(BRIEF)));
+  // 決めていない項目の説明は出しません。宛先のない指示が毎回混ざるだけだからです。
+  record('block:documentBrief(purposeOnly)', documentBriefBlock(readDocumentBrief({ purpose: BRIEF.purpose })));
   record('block:contextNotes(kinds)', contextNotesBlock(normalizeContextNotes(CONTEXT_NOTES)));
   record('block:persona(ai)', personaBlock(PERSONA));
   record('block:persona(manual)', personaBlock(MANUAL_PERSONA));
@@ -220,6 +241,9 @@ test('AIへ渡す文面は、書き換えるまで一字も変わらない', asy
 
   await service.placeComments('guide.md', '再起動の前に確認することが抜けています。');
   record('prompt:placement', prompts.at(-1));
+
+  await service.composeDocumentBrief('guide.md', '運用チームから当番向けの再起動手順を頼まれた。');
+  record('prompt:brief', prompts.at(-1));
 
   await service.composePersona('guide.md', '運用当番の新人。製品は初めて。');
   record('prompt:persona', prompts.at(-1));
@@ -372,6 +396,15 @@ const TRANSLATION_ANSWER = JSON.stringify({
 
 const PLACEMENT_ANSWER = JSON.stringify({ placements: [], unplaced: [] });
 
+/** 管理者の答え。埋まらなかった項目は空のまま、問いだけが返るのが普通の形です。 */
+const BRIEF_ANSWER = JSON.stringify({
+  purpose: '当番が手順書だけで再起動を完了できるようになる。',
+  story: '',
+  expectation: '',
+  questions: ['止めてよい条件は誰が決めますか。'],
+  assumptions: []
+});
+
 const PERSONA_ANSWER = JSON.stringify({
   label: '運用当番の新人',
   background: '他チームから異動したばかりの運用担当。',
@@ -410,6 +443,8 @@ function answerFor(outputSchema, reviewAnswer) {
   if (fields.includes('edits')) return REVISE_ANSWER;
   if (fields.includes('summary') && fields.includes('placements')) return reviewAnswer;
   if (fields.includes('placements')) return PLACEMENT_ANSWER;
+  // 管理者もペルソナも assumptions を返すので、先に問いの有無で見分けます。
+  if (fields.includes('questions')) return BRIEF_ANSWER;
   if (fields.includes('assumptions')) return PERSONA_ANSWER;
   if (fields.length) return TRANSLATION_ANSWER;
   return 'ここは自由文の回答です。';

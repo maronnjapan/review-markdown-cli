@@ -296,6 +296,8 @@ export function createAiController({
     const hasContext = Boolean((state.aiContext || '').trim() || (state.projectAiContext || '').trim());
     const shared = [
       count ? `この文書のコメント${count}件` : '',
+      // 管理者が決めた3点は、この資料が何のためにあるかそのものなので先に置きます。
+      state.brief ? '資料の管理者が決めた3点' : '',
       hasContext ? '読み取りコンテキスト' : '',
       // 残したメモも前提の一部です。件数まで出すのは、残したはずのメモが
       // 渡っていないことに、質問を投げる前に気づけるようにするためです。

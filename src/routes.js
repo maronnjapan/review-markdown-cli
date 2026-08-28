@@ -37,6 +37,7 @@ const ROUTES = [
   { methods: ['POST'], pathname: '/api/ai/place-comments', handle: placeAiComments },
   { methods: ['GET'], pathname: '/api/ai/review-skills', handle: listAiReviewSkills },
   { methods: ['GET'], pathname: '/api/ai/review-skill', handle: readAiReviewSkill },
+  { methods: ['POST'], pathname: '/api/ai/brief', handle: composeAiDocumentBrief },
   { methods: ['POST'], pathname: '/api/ai/persona', handle: composeAiPersona },
   { methods: ['POST'], pathname: '/api/ai/review', handle: reviewWithAi },
   { methods: ['POST'], pathname: '/api/ai/revise', handle: reviseWithAi }
@@ -96,7 +97,7 @@ async function aiConversation(context) {
 }
 
 /**
- * 生成しながら返すAIエンドポイント、5本ぶんの共通の手順です。
+ * 生成しながら返すAIエンドポイント、6本ぶんの共通の手順です。
  *
  * どれも同じことをします。トークンを確かめ、本文を読み、対象ファイルを解決し、
  * NDJSONを開いて `started` → `delta`（何度でも）→ `result` の順に流します。
@@ -146,6 +147,19 @@ function placeAiComments(context) {
       aiService.placeComments(documentPath, body.notes, { signal, onDelta })
     ),
     toEvent: (placement) => placement
+  });
+}
+
+/**
+ * レビュアーの走り書きから、資料の管理者に目的・ストーリー・期待値を組み立てさせます。
+ * 埋まらなかった項目への問いも一緒に返します。保存は /api/review です。
+ */
+function composeAiDocumentBrief(context) {
+  return streamAiRequest(context, {
+    run: ({ aiService, documentPath, body, signal, onDelta }) => (
+      aiService.composeDocumentBrief(documentPath, body.input, { signal, onDelta })
+    ),
+    toEvent: (draft) => draft
   });
 }
 
@@ -382,14 +396,16 @@ async function commentsFor(rootDir, relativeFile, body) {
 }
 
 /**
- * A request that says nothing about the reading context, the context notes or
- * the reader persona keeps the saved ones: the page beacon on the way out
- * carries comments only. `persona: null` is how the reviewer clears the persona,
- * and an empty `contextNotes` array is how they clear the last note.
+ * A request that says nothing about the reading context, the document brief, the
+ * context notes or the reader persona keeps the saved ones: the page beacon on
+ * the way out carries comments only. `persona: null` and `brief: null` are how
+ * the reviewer clears those, and an empty `contextNotes` array is how they clear
+ * the last note.
  */
 function reviewPremiseOf(body) {
   return {
     ...(typeof body.aiContext === 'string' ? { aiContext: body.aiContext } : {}),
+    ...(body.brief !== undefined ? { brief: body.brief } : {}),
     ...(Array.isArray(body.contextNotes) ? { contextNotes: body.contextNotes } : {}),
     ...(body.persona !== undefined ? { persona: body.persona } : {})
   };

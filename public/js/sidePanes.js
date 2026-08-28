@@ -1,5 +1,6 @@
 const PANES = {
   comments: { panel: 'commentsPanel', tab: 'commentsTabButton' },
+  manager: { panel: 'managerPanel', tab: 'managerTabButton' },
   ai: { panel: 'aiPanel', tab: 'aiTabButton' },
   placement: { panel: 'placementPanel', tab: 'placementTabButton' },
   review: { panel: 'reviewPanel', tab: 'reviewTabButton' },
