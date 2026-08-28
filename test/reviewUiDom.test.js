@@ -457,8 +457,9 @@ test('a note written while a save is in flight is still saved', async (t) => {
     '/api/review': async (_input, options) => {
       const body = JSON.parse(options.body);
       requests.push(body);
-      // 1回目の保存を握ったまま、その最中にもう1件残させます。
-      if (requests.length === 1) await firstSaveHeld;
+      // 1件目だけを載せた保存を握ったまま、その最中にもう1件残させます。
+      // 何件目かで見分けると、前のテストから漏れてきた保存を自分のものと取り違えます。
+      if (sentNote(body, '1件目のメモ') && !sentNote(body, '2件目のメモ')) await firstSaveHeld;
       return {
         review: { targetFile: 'guide.md', comments: body.comments || [], contextNotes: body.contextNotes },
         reviewFile: '.review/guide.md.review.json'
@@ -478,15 +479,16 @@ test('a note written while a save is in flight is still saved', async (t) => {
 
   keep('1件目のメモ');
   document.querySelector('#save-button').click();
-  await waitFor(() => requests.length === 1, 3000);
+  await waitFor(() => requests.some((body) => sentNote(body, '1件目のメモ')), 3000);
 
   // 保存の返事を待っている間に、もう1件残します。
   keep('2件目のメモ');
   releaseFirstSave();
 
   // 件数ではなく中身で待ちます。前のテストが残した自動保存が混ざることがあるためです。
-  await waitFor(() => requests.some((body) => (body.contextNotes || []).length === 2), 3000);
-  const saved = requests.find((body) => (body.contextNotes || []).length === 2).contextNotes;
+  const bothKept = (body) => sentNote(body, '1件目のメモ') && sentNote(body, '2件目のメモ');
+  await waitFor(() => requests.some(bothKept), 3000);
+  const saved = requests.find(bothKept).contextNotes;
   assert.deepEqual(
     saved.map(({ body }) => body),
     ['1件目のメモ', '2件目のメモ'],
@@ -1384,6 +1386,14 @@ function installDomGlobals(window) {
   globalThis.InputEvent = window.InputEvent;
   globalThis.Event = window.Event;
   globalThis.CSS = window.CSS;
+}
+
+/**
+ * 前のテストの自動保存（800ms）は、window.close のあとでもこのテストの fetch スタブへ届きます。
+ * 何件目かで見分けると、その1件を自分の保存と取り違えて待ち続けることになるので、中身で見ます。
+ */
+function sentNote(body, text) {
+  return (body.contextNotes || []).some((note) => note.body === text);
 }
 
 async function waitFor(predicate, timeout = 1000) {
