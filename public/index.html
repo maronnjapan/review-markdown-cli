@@ -109,10 +109,10 @@
                   コンテキストメモ
                   <span id="context-notes-state" class="ai-context-state">未設定</span>
                 </summary>
-                <p class="ai-context-hint">この資料について分かったことを1件ずつ残します。残したメモは前提として、翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。</p>
+                <p class="ai-context-hint">この文書について分かったことを1件ずつ残します。残したメモは前提として、翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。</p>
                 <form id="context-note-form" class="context-note-form">
-                  <select id="context-note-kind" aria-label="メモの種類"></select>
-                  <p id="context-note-kind-hint" class="context-note-kind-hint"></p>
+                  <select id="context-note-kind" aria-label="メモの種類" aria-describedby="context-note-kind-hint"></select>
+                  <p id="context-note-kind-hint" class="context-note-kind-hint" aria-live="polite"></p>
                   <textarea id="context-note-input" rows="3" placeholder="例：この節は前の版から移してきた。並び順は検討済みで、変えない。"></textarea>
                   <div class="context-note-actions">
                     <button id="context-note-cancel" type="button" class="hidden">編集をやめる</button>
@@ -178,7 +178,7 @@
                 </div>
               </div>
               <p class="placement-hint">レビューの観点（レビュースキル）と読み手を決めてから実行します。結果はコメント候補で、追加するまでレビューには保存しません。</p>
-              <p id="review-context-hint" class="placement-hint" hidden>AIパネルに残したコンテキストメモも前提として読ませます。「決定」と残した論点は蒸し返しません。</p>
+              <p id="review-context-hint" class="placement-hint" hidden></p>
 
               <section class="review-skill">
                 <div class="review-field-head">

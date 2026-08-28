@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { MAX_AI_CONTEXT_CHARS } from './aiLimits.js';
-import { contextNotesBlock, hasContextNotes, normalizeContextNotes } from './contextNotes.js';
+import { contextNotesBlock, hasContextNotes, readContextNotes } from './contextNotes.js';
 import { hasPersonaContent, normalizePersona, personaBlock } from './persona.js';
 import { readingContextBlock } from './prompts/readingContext.js';
 
@@ -40,7 +40,8 @@ export function resolveAiContext({ project, document, notes, persona } = {}) {
   const context = {
     project: normalizeAiContext(project, 'aiContext'),
     document: normalizeAiContext(document, '読み取りコンテキスト'),
-    notes: normalizeContextNotes(notes),
+    // ここへ来るのは保存済みのメモなので、上限では断りません（断るのは受け取る側）。
+    notes: readContextNotes(notes),
     persona: normalizePersona(persona)
   };
   return { ...context, revision: revisionOf(context) };

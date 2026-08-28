@@ -14,7 +14,7 @@ const MAX_CONTEXT_NOTE_CHARS = 600;
  * 指摘が減ったり増えたりする理由が分からなくなるからです。
  */
 const KINDS = [
-  { id: 'background', label: '背景', hint: 'なぜこの資料があるか。どこから来たか。指摘の対象にはしません。' },
+  { id: 'background', label: '背景', hint: 'なぜこの文書があるか。どこから来たか。指摘の対象にはしません。' },
   { id: 'decision', label: '決定', hint: 'もう決めたこと。AIレビューはこの論点を蒸し返しません。' },
   { id: 'constraint', label: '制約', hint: '守る条件。破っている箇所はAIレビューが指摘します。' },
   { id: 'question', label: '未決', hint: 'まだ決まっていないこと。決着済みとしては読ませません。' }
@@ -30,7 +30,7 @@ const STATUS_MESSAGES = {
 };
 
 /**
- * その資料について分かったことを1件ずつ残す欄。
+ * その文書について分かったことを1件ずつ残す欄。
  *
  * 読み取りコンテキストが「この文書はこう読む」を1枚に整えたものなのに対して、
  * こちらは「このとき、こう分かった」を足していくものです。相談していて気づいたことを
@@ -72,7 +72,8 @@ export function createContextNotesController({ refs, state, toaster, onChange })
    * 決められるのはレビュアーだけだからです。書き直してもらう前提で流し込みます。
    */
   function keepFromChat(text) {
-    const draft = String(text || '').trim().slice(0, MAX_CONTEXT_NOTE_CHARS);
+    const answer = String(text || '').trim();
+    const draft = answer.slice(0, MAX_CONTEXT_NOTE_CHARS);
     if (!draft) return;
     editingId = null;
     pendingSource = 'chat';
@@ -82,7 +83,10 @@ export function createContextNotesController({ refs, state, toaster, onChange })
     render();
     refs.contextNoteInput.focus();
     refs.contextNoteInput.scrollIntoView?.({ block: 'nearest' });
-    toaster.info('回答をメモの下書きにしました。前提として残す形へ直してから「残す」を押してください。');
+    toaster.info(answer.length > MAX_CONTEXT_NOTE_CHARS
+      // 黙って切ると、途中で終わった下書きを「AIがそう答えた」と読んでしまいます。
+      ? `回答をメモの下書きにしました（1件${MAX_CONTEXT_NOTE_CHARS}文字までのため、末尾を切りました）。前提として残す形へ直してから「残す」を押してください。`
+      : '回答をメモの下書きにしました。前提として残す形へ直してから「残す」を押してください。');
   }
 
   /* ---------------------------------------------------------------- *
@@ -98,6 +102,8 @@ export function createContextNotesController({ refs, state, toaster, onChange })
     }
     const kind = refs.contextNoteKind.value;
     const now = new Date().toISOString();
+    // resetForm() が editingId を消すので、何をしたのかはここで控えます。
+    const edited = Boolean(editingId);
 
     // 一覧はその場で書き換えず、必ず新しい配列へ差し替えます。
     // 保存中に足した1件が失われないための約束です（public/js/createApp.js の pushComments は
@@ -124,7 +130,7 @@ export function createContextNotesController({ refs, state, toaster, onChange })
     resetForm();
     render();
     onChange();
-    toaster.success(editingId ? 'メモを直しました。自動保存します。' : 'メモを残しました。自動保存します。');
+    toaster.success(edited ? 'メモを直しました。自動保存します。' : 'メモを残しました。自動保存します。');
   }
 
   function startEdit(id) {
@@ -176,11 +182,21 @@ export function createContextNotesController({ refs, state, toaster, onChange })
     // 種類ごとに何が変わるかは、選んでいる最中にだけ要ります。常時4行出すと欄が読めません。
     refs.contextNoteKindHint.textContent = KINDS.find((kind) => kind.id === refs.contextNoteKind.value)?.hint || '';
     refs.contextNoteSubmit.textContent = editingId ? 'このメモを直す' : '残す';
-    refs.contextNoteSubmit.disabled = refs.contextNoteInput.value.trim() === '';
+    // 上限は「これ以上増やせない」であって「直せない」ではありません。編集中は当たりません。
+    const full = !editingId && notes.length >= MAX_CONTEXT_NOTES;
+    refs.contextNoteSubmit.disabled = full || refs.contextNoteInput.value.trim() === '';
     refs.contextNoteCancel.classList.toggle('hidden', !editingId);
-    refs.contextNoteFull.hidden = notes.length < MAX_CONTEXT_NOTES;
-    // AIレビューのパネルは別のタブなので、メモが効いていることをそちらでも言います。
-    if (refs.reviewContextHint) refs.reviewContextHint.hidden = notes.length === 0;
+    refs.contextNoteFull.hidden = !full;
+    // AIレビューのパネルは別のタブなので、前提が届くことをそちらでも言います。
+    // 出す条件は「指摘の配置」と揃えます（前提が1つでもあれば出す）。
+    if (refs.reviewContextHint) {
+      const hasPremise = Boolean((state.aiContext || '').trim() || (state.projectAiContext || '').trim())
+        || notes.length > 0;
+      refs.reviewContextHint.hidden = !hasPremise;
+      refs.reviewContextHint.textContent = notes.length
+        ? 'AIパネルの読み取りコンテキストとコンテキストメモも前提として読ませます。「決定」と残した論点は蒸し返しません。'
+        : 'AIパネルの読み取りコンテキストも前提として読ませます。';
+    }
     refs.contextNotesList.innerHTML = notes.length
       ? notes.map(noteHtml).join('')
       : '<p class="muted">まだメモはありません。読みながら分かったことを残すと、次の相談とレビューがそれを前提に読みます。</p>';
@@ -199,9 +215,10 @@ export function createContextNotesController({ refs, state, toaster, onChange })
         <p class="context-note-body">${escapeHtml(note.body)}</p>
         <div class="context-note-item-actions">
           ${deleting
-            ? `<span class="context-note-confirm">削除しますか？</span>
+            // 取り消せない操作なので、確認の見え方と読み上げをコメントの削除確認と揃えます。
+            ? `<span class="context-note-confirm" role="group" aria-label="コンテキストメモの削除確認">このメモを削除しますか？</span>
                <button type="button" data-note-cancel-delete>やめる</button>
-               <button type="button" data-note-confirm-delete="${escapeHtml(note.id)}">削除する</button>`
+               <button type="button" class="danger" data-note-confirm-delete="${escapeHtml(note.id)}">削除する</button>`
             : `<button type="button" data-note-edit="${escapeHtml(note.id)}">編集</button>
                <button type="button" data-note-delete="${escapeHtml(note.id)}">削除</button>`}
         </div>

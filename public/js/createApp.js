@@ -151,8 +151,18 @@ export function createApp(document, { api = defaultApi } = {}) {
   /** Saves (or asks about) pending work before the current document goes away. */
   async function leaveDocument() {
     if (state.mode === 'edit') {
-      if (await editor.flush()) return true;
-      return window.confirm('本文を保存できていません。編集内容を破棄して移動しますか？');
+      if (!(await editor.flush())) {
+        return window.confirm('本文を保存できていません。編集内容を破棄して移動しますか？');
+      }
+      // 編集モードでも、AIパネルで書いた前提（読み取りコンテキスト・コンテキストメモ・
+      // 読み手ペルソナ）はコメントと同じ自動保存に乗っています。本文だけ流して戻ると、
+      // 直後の openFile が自動保存を取り消すので、書いた前提が黙って消えます。
+      if (await commentSaves.flush()) return true;
+      if (!window.confirm('AIパネルに書いた前提を保存できていません。破棄して移動しますか？')) return false;
+      state.aiContextDirty = false;
+      state.contextNotesDirty = false;
+      state.personaDirty = false;
+      return true;
     }
     if (state.commentsDirty || state.aiContextDirty || state.contextNotesDirty
       || state.personaDirty || commentSaves.isBusy()) {
@@ -516,12 +526,15 @@ export function createApp(document, { api = defaultApi } = {}) {
     const path = state.currentPath;
     const savedContext = state.aiContext;
     const savedNotes = state.contextNotes;
+    // メモは変わったときだけ送るので、状態表示もそのときだけ動かします。
+    // 触っていない保存で「保存しました」と出ると、送っていないものを送ったと言うことになります。
+    const savingNotes = state.contextNotesDirty;
     const savedPersona = state.persona;
     // Leaving the comments out keeps the ones on file, which is what edit mode wants.
     const savingComments = state.mode !== 'edit';
     setCommentStatus('saving', '保存中…');
     aiContext.setStatus('saving');
-    if (state.contextNotesDirty) contextNotes.setStatus('saving');
+    if (savingNotes) contextNotes.setStatus('saving');
 
     try {
       const result = await api.saveComments({
@@ -529,7 +542,7 @@ export function createApp(document, { api = defaultApi } = {}) {
         comments: savingComments ? state.comments : undefined,
         aiContext: savedContext,
         // 空の配列は「最後の1件を消した」なので、未変更の undefined と区別して送ります。
-        ...(state.contextNotesDirty ? { contextNotes: savedNotes } : {}),
+        ...(savingNotes ? { contextNotes: savedNotes } : {}),
         // null は「ペルソナを消す」なので、未変更の undefined と区別して送ります。
         ...(state.personaDirty ? { persona: savedPersona } : {})
       });
@@ -545,13 +558,13 @@ export function createApp(document, { api = defaultApi } = {}) {
         setCommentStatus('saved', `自動保存しました ${new Date().toLocaleTimeString()}: ${result.reviewFile}`);
       }
       aiContext.setStatus(state.aiContextDirty ? 'dirty' : 'saved');
-      contextNotes.setStatus(state.contextNotesDirty ? 'dirty' : 'saved');
+      if (savingNotes) contextNotes.setStatus(state.contextNotesDirty ? 'dirty' : 'saved');
       return true;
     } catch (error) {
       state.commentSaveFailed = true;
       setCommentStatus('error', `保存できませんでした: ${error.message}`);
       aiContext.setStatus('error', `保存できませんでした: ${error.message}`);
-      contextNotes.setStatus('error', `保存できませんでした: ${error.message}`);
+      if (savingNotes) contextNotes.setStatus('error', `保存できませんでした: ${error.message}`);
       return false;
     }
   }

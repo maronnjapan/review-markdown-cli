@@ -478,7 +478,7 @@ test('a note written while a save is in flight is still saved', async (t) => {
 
   keep('1件目のメモ');
   document.querySelector('#save-button').click();
-  await waitFor(() => requests.length === 1);
+  await waitFor(() => requests.length === 1, 3000);
 
   // 保存の返事を待っている間に、もう1件残します。
   keep('2件目のメモ');
@@ -492,6 +492,125 @@ test('a note written while a save is in flight is still saved', async (t) => {
     ['1件目のメモ', '2件目のメモ'],
     '保存中に残したメモも、続く保存で必ずサーバーへ届く'
   );
+});
+
+test('what the reviewer wrote in the AI pane is saved before leaving a document in edit mode', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const requests = [];
+  const { document, window } = await startApp(t, 'http://localhost/#/review/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'guide.md', comments: [] },
+      reviewFile: '.review/guide.md.review.json'
+    }),
+    '/api/files': () => ({ rootDir: '/tmp/book', files: ['guide.md'], filters: { include: [], exclude: [] } }),
+    '/api/review': (_input, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(body);
+      return {
+        review: { targetFile: 'guide.md', comments: body.comments || [], contextNotes: body.contextNotes },
+        reviewFile: '.review/guide.md.review.json'
+      };
+    },
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: false, error: 'Codexを利用できません' }),
+    '/api/ai/conversations': () => ({ conversations: [] })
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-comment-button'));
+
+  // 編集モードでも、AIパネルの欄は使えます。
+  document.querySelector('#edit-mode-button').click();
+  const input = document.querySelector('#context-note-input');
+  input.value = '本文を直しながら気づいたこと';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  document.querySelector('#context-note-form').requestSubmit();
+
+  // 自動保存(800ms)を待たずに一覧へ戻る。
+  document.querySelector('#back-button').click();
+  await waitFor(() => requests.some((body) => (body.contextNotes || []).length === 1), 3000);
+  assert.equal(requests.at(-1).contextNotes[0].body, '本文を直しながら気づいたこと');
+  // 一覧の描画まで待ってから終わります。待たずに窓を閉じると、描画の途中で落ちます。
+  await waitFor(() => document.querySelector('.file-tree'), 3000);
+});
+
+test('the notes pane stays quiet about a save it had nothing in, and says the right thing after an edit', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const { document, window } = await startApp(t, 'http://localhost/#/review/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: {
+        targetFile: 'guide.md',
+        comments: [],
+        contextNotes: [{ id: 'note-a', kind: 'decision', body: '決めたこと', createdAt: '2026-08-01T00:00:00.000Z' }]
+      },
+      reviewFile: '.review/guide.md.review.json'
+    }),
+    '/api/review': (_input, options) => {
+      const body = JSON.parse(options.body);
+      return {
+        review: { targetFile: 'guide.md', comments: body.comments || [], contextNotes: body.contextNotes },
+        reviewFile: '.review/guide.md.review.json'
+      };
+    },
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: false, error: 'Codexを利用できません' }),
+    '/api/ai/conversations': () => ({ conversations: [] })
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-comment-button'));
+
+  // メモには触らずコメントだけ保存する。メモ欄は何も言わない。
+  document.querySelector('#markdown-content p .inline-comment-button').click();
+  const commentInput = document.querySelector('#comment-input');
+  commentInput.value = '根拠を足してほしい';
+  commentInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+  document.querySelector('#comment-dialog form').requestSubmit();
+  document.querySelector('#save-button').click();
+  await waitFor(() => document.querySelector('#save-status').dataset.state === 'saved', 3000);
+  assert.equal(document.querySelector('#context-notes-status').textContent, '', 'メモを送っていない保存で「保存しました」と言わない');
+
+  // 既存のメモを直すと、増やしたのではなく直したと言う。
+  document.querySelector('[data-note-edit]').click();
+  assert.equal(document.querySelector('#context-note-submit').textContent, 'このメモを直す');
+  const noteInput = document.querySelector('#context-note-input');
+  noteInput.value = '決めたこと（言い直した）';
+  noteInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+  document.querySelector('#context-note-form').requestSubmit();
+
+  assert.match(document.querySelector('#toast-region').textContent, /メモを直しました/);
+  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), '1件', '直しても件数は増えない');
+});
+
+test('at the limit the notes pane stops before the reviewer writes, but still lets them fix a note', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const contextNotes = Array.from({ length: 20 }, (_, index) => ({
+    id: `note-${index}`, kind: 'background', body: `メモ${index}`, createdAt: '2026-08-01T00:00:00.000Z'
+  }));
+  const { document, window } = await startApp(t, 'http://localhost/#/review/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'guide.md', comments: [], contextNotes },
+      reviewFile: '.review/guide.md.review.json'
+    }),
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: false, error: 'Codexを利用できません' }),
+    '/api/ai/conversations': () => ({ conversations: [] })
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-comment-button'));
+
+  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), '20件');
+  assert.equal(document.querySelector('#context-note-full').hidden, false, '上限に達したと先に言う');
+  const input = document.querySelector('#context-note-input');
+  input.value = '21件目';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(document.querySelector('#context-note-submit').disabled, true, '書いてから断るのではなく、押せなくする');
+
+  // 上限は「増やせない」であって「直せない」ではない。
+  document.querySelector('[data-note-edit]').click();
+  assert.equal(document.querySelector('#context-note-full').hidden, true, '編集中に上限の注意は出さない');
+  assert.equal(document.querySelector('#context-note-submit').disabled, false);
 });
 
 test('a document with no context notes says so and still offers the form', async (t) => {

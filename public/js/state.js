@@ -26,7 +26,7 @@ export function createState() {
     aiContext: '',
     aiContextDirty: false,
     projectAiContext: '',
-    // その資料について残したメモ。読み取りコンテキストと同じく前提としてAIへ渡します。
+    // その文書について残したメモ。読み取りコンテキストと同じく前提としてAIへ渡します。
     contextNotes: [],
     contextNotesDirty: false,
     pendingTarget: null,

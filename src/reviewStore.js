@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { normalizeAiContext } from './aiContext.js';
 import { SEVERITY_LABELS } from './aiVocabulary.js';
-import { CONTEXT_NOTE_LABELS, normalizeContextNotes } from './contextNotes.js';
+import { CONTEXT_NOTE_LABELS, normalizeContextNotes, readContextNotes } from './contextNotes.js';
 import { PERSONA_FIELD_LABELS, normalizePersona } from './persona.js';
 
 export const REVIEW_DIR = '.review';
@@ -39,7 +39,8 @@ export async function readReview(rootDir, relativeFile) {
       comments: Array.isArray(parsed.comments) ? parsed.comments.map(withCommentStatus) : [],
       aiContext: typeof parsed.aiContext === 'string' ? parsed.aiContext : '',
       // メモを持たないレビューファイルは、この機能より前に書かれたものです。空の一覧として読みます。
-      contextNotes: normalizeContextNotes(parsed.contextNotes),
+      // 壊れた値でも投げません。ここで投げると、その文書は画面から開けなくなります。
+      contextNotes: readContextNotes(parsed.contextNotes),
       persona: normalizePersona(parsed.persona),
       updatedAt: parsed.updatedAt
     };
@@ -74,7 +75,7 @@ export async function writeReview(rootDir, relativeFile, comments, { aiContext, 
     targetFile,
     updatedAt: new Date().toISOString(),
     ...(nextAiContext ? { aiContext: nextAiContext } : {}),
-    ...(nextNotes.length ? { contextNotes: nextNotes } : {}),
+    ...(nextNotes.length ? { contextNotes: nextNotes.map(withNoteTimestamp) } : {}),
     ...(nextPersona ? { persona: nextPersona } : {}),
     comments: comments.map((comment) => ({
       ...withCommentStatus(comment),
@@ -120,6 +121,14 @@ async function fileExists(filePath) {
 
 export function createCommentId() {
   return `comment-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * 残した日時。読むときには補わないので、初めて保存するここで付けます。
+ * コメントの `createdAt` と同じ扱いです。
+ */
+function withNoteTimestamp(note) {
+  return { ...note, createdAt: note.createdAt || new Date().toISOString() };
 }
 
 function withCommentStatus(comment) {

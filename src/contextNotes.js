@@ -3,7 +3,7 @@ import { MAX_CONTEXT_NOTES, MAX_CONTEXT_NOTE_CHARS } from './aiLimits.js';
 import { recordedNotesBlock } from './prompts/readingContext.js';
 
 /**
- * コンテキストメモは、その資料について分かったことを1件ずつ残したものです。
+ * コンテキストメモは、その文書について分かったことを1件ずつ残したものです。
  *
  * 読み取りコンテキスト（`aiContext.js` の `document`）との違いは、書き換えるものか、
  * 積み上げるものかです。読み取りコンテキストは「この文書はこう読む」を1枚に整えたもので、
@@ -19,6 +19,13 @@ import { recordedNotesBlock } from './prompts/readingContext.js';
  * もう一度指摘してほしくないことで、「制約」は逆に、破っていたら指摘してほしいことです。
  * 種類のない自由文に混ぜると、モデルはどちらのつもりで書かれたのかを推測するしかありません。
  * 種類ごとに何が変わるかは `prompts/readingContext.js` の `recordedNotesBlock` にあります。
+ *
+ * ── 読むときは通し、書くときだけ断る ──────────────────────
+ * 関数が2つあるのは、壊れた値の扱いを読み書きで変えているからです。
+ * `readContextNotes` は保存済みの値を読むためのもので、何が入っていても投げません。
+ * ここで投げると、レビューファイルを手で直した1文字で、その文書が画面から開けなくなります
+ * （`readReview` は本文の表示にも通る道です）。`aiContext` を読むときに長さを見ていないのも
+ * 同じ理由です。上限を守らせるのは、レビュアーが送ってきた値を受け取る側だけにします。
  *
  * このモジュールが持つのは検証と正規化だけです。モデルが読む文面はプロンプト側にあります。
  */
@@ -51,45 +58,58 @@ const SOURCES = Object.freeze(['reviewer', 'chat']);
 const TIMESTAMP_CHARS = 40;
 
 /**
- * 保存・送信されたメモの配列を、こちらが扱う形へ揃えます。
+ * 保存済みのメモを読みます。何が入っていても投げません。
  *
- * 上限を超えた分を黙って捨てず、投げます。捨ててしまうと、レビュアーは残したはずの
- * 決定が渡っていないことに気づけないまま、その決定を無視したレビューを読むことになります。
+ * 読めなかったものは落とします。落としたことを数えて伝えないのは、ここへ来るのが
+ * 「この画面が書いたもの」か「人が手で直したもの」のどちらかで、後者はレビューファイルを
+ * 開けば見えるからです。
+ */
+export function readContextNotes(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map(readContextNote).filter(Boolean);
+}
+
+/**
+ * レビュアーが送ってきたメモを受け取ります。上限を超えていれば断ります。
+ *
+ * 超えた分を黙って捨てないのは、何件か落ちた状態でレビューを走らせると、レビュアーは
+ * 残したはずの決定が効いていないことに気づけないからです。数えるのは落とす前です。
+ * 本文の無いメモを先に落として数えると、その分だけ上限を超えた入力が通ってしまいます。
  */
 export function normalizeContextNotes(value, source = 'コンテキストメモ') {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) throw new Error(`${source} は配列で指定してください`);
-  const notes = value.map((entry) => normalizeContextNote(entry, source)).filter(Boolean);
-  if (notes.length > MAX_CONTEXT_NOTES) {
+  if (value.length > MAX_CONTEXT_NOTES) {
     throw new Error(`${source}は${MAX_CONTEXT_NOTES}件までです。古いものを消すか、まとめてください`);
   }
-  return notes;
+  for (const entry of value) assertBodyFits(entry?.body, source);
+  return readContextNotes(value);
 }
 
 /** 本文の無いメモは、残す意味がないので落とします（null を返します）。 */
-function normalizeContextNote(value, source) {
+function readContextNote(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const body = normalizeContextNoteBody(value.body, source);
+  const body = typeof value.body === 'string' ? value.body.trim() : '';
   if (!body) return null;
   return {
     id: typeof value.id === 'string' && value.id ? value.id.slice(0, 80) : createContextNoteId(),
     kind: CONTEXT_NOTE_LABELS[value.kind] ? value.kind : DEFAULT_KIND,
     body,
     source: SOURCES.includes(value.source) ? value.source : 'reviewer',
-    createdAt: timestamp(value.createdAt) || new Date().toISOString(),
+    // 日時は補いません。無いものを読むたびに「今」で埋めると、日付をまたぐたびに
+    // 前提が変わったことになり、翻訳と会話が理由もなくやり直しになります。
+    // 新しいメモへ日時を付けるのは、コメントと同じく `reviewStore.js` の保存時です。
+    ...(timestamp(value.createdAt) ? { createdAt: timestamp(value.createdAt) } : {}),
     ...(timestamp(value.updatedAt) ? { updatedAt: timestamp(value.updatedAt) } : {})
   };
 }
 
 /** メモ1件の本文。長すぎるものは、切り詰めずに断ります。 */
-export function normalizeContextNoteBody(value, source = 'コンテキストメモ') {
-  if (value === undefined || value === null) return '';
-  if (typeof value !== 'string') throw new Error(`${source} の本文は文字列で指定してください`);
-  const body = value.trim();
-  if (body.length > MAX_CONTEXT_NOTE_CHARS) {
+function assertBodyFits(value, source) {
+  if (typeof value !== 'string') return;
+  if (value.trim().length > MAX_CONTEXT_NOTE_CHARS) {
     throw new Error(`${source}が長すぎます（1件${MAX_CONTEXT_NOTE_CHARS}文字まで）`);
   }
-  return body;
 }
 
 export function hasContextNotes(notes) {
@@ -99,13 +119,16 @@ export function hasContextNotes(notes) {
 /** メモをモデルが読む形にしたもの。1件も無ければ '' を返します。 */
 export function contextNotesBlock(notes) {
   if (!hasContextNotes(notes)) return '';
-  return recordedNotesBlock(notes.map((note, index) => ({
-    n: index + 1,
-    kind: note.kind,
-    note: note.body,
+  return recordedNotesBlock(notes.map((note, index) => {
     // 日付だけにします。時刻まで渡しても読み方は変わらず、前提の文字数が増えるだけです。
-    recordedAt: String(note.updatedAt || note.createdAt).slice(0, 10)
-  })));
+    const recordedAt = String(note.updatedAt || note.createdAt || '').slice(0, 10);
+    return {
+      n: index + 1,
+      kind: note.kind,
+      note: note.body,
+      ...(recordedAt ? { recordedAt } : {})
+    };
+  }));
 }
 
 export function createContextNoteId() {

@@ -320,7 +320,7 @@ test('what the reviewer kept as a note reaches the review, the chat and the tran
   for (const prompt of prompts) {
     assert.match(prompt, /<recorded_context>/, '翻訳・配置・レビュー・チャットのどれも残したメモを読む');
     assert.match(prompt, /節の並び順は検討済み/);
-    assert.match(prompt, /Do not raise that point again/, '「決定」の読み方まで渡す');
+    assert.match(prompt, /Do not reopen it on your own/, '「決定」の読み方まで渡す');
   }
 });
 

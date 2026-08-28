@@ -627,6 +627,7 @@ button.danger:hover { background: #9b2116; border-color: #9b2116; color: #fff; }
 .context-note-item-actions {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 0.35rem;
   justify-content: flex-end;
   margin-top: 0.35rem;
