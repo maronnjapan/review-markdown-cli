@@ -85,11 +85,20 @@ export class AiService {
 
   /**
    * What the AI should assume while reading one document: the project wide
-   * context plus the one saved with that document's review.
+   * context, the one saved with that document's review, the notes the reviewer
+   * left on it, and the reader it is written for.
+   *
+   * 相談もレビューも翻訳も配置も、前提はこの1本から受け取ります。
+   * 「残したメモの上でレビューする」が別配線ではなく既定の動きなのは、そのためです。
    */
   async readingContext(documentPath) {
-    const { aiContext, persona } = await readReview(this.rootDir, documentPath);
-    return resolveAiContext({ project: this.projectContext, document: aiContext, persona });
+    const { aiContext, contextNotes, persona } = await readReview(this.rootDir, documentPath);
+    return resolveAiContext({
+      project: this.projectContext,
+      document: aiContext,
+      notes: contextNotes,
+      persona
+    });
   }
 
   async status() {
@@ -166,8 +175,13 @@ export class AiService {
     if (!notes) throw new Error('読み手ペルソナの説明を入力してください');
 
     // 組み直しの材料は走り書きだけです。保存済みのペルソナは前提に混ぜません。
-    const { aiContext } = await readReview(this.rootDir, documentPath);
-    const readingContext = resolveAiContext({ project: this.projectContext, document: aiContext });
+    // 読み取りコンテキストと残したメモは渡します。どんな原稿の読み手なのかが決まるからです。
+    const { aiContext, contextNotes } = await readReview(this.rootDir, documentPath);
+    const readingContext = resolveAiContext({
+      project: this.projectContext,
+      document: aiContext,
+      notes: contextNotes
+    });
     const { answer } = await this.askForJson({
       feature: 'persona',
       prompt: personaPrompt(notes, aiContextBlock(readingContext)),

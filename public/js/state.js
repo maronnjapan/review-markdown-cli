@@ -26,6 +26,9 @@ export function createState() {
     aiContext: '',
     aiContextDirty: false,
     projectAiContext: '',
+    // その資料について残したメモ。読み取りコンテキストと同じく前提としてAIへ渡します。
+    contextNotes: [],
+    contextNotesDirty: false,
     pendingTarget: null,
     currentSelectionTarget: null,
     commentsDirty: false,
@@ -79,6 +82,8 @@ export function resetDocumentState(state, filePath) {
   state.comments = [];
   state.aiContext = '';
   state.aiContextDirty = false;
+  state.contextNotes = [];
+  state.contextNotesDirty = false;
   state.pendingTarget = null;
   state.currentSelectionTarget = null;
   state.commentsDirty = false;

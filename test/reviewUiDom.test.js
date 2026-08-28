@@ -329,6 +329,193 @@ test('a document without a reading context says so and offers an empty box', asy
   assert.equal(document.querySelector('#placement-context-hint').hidden, true);
 });
 
+test('a note kept from a chat answer is saved with the review and travels with the next question', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const requests = [];
+  const conversation = {
+    id: 'conversation-context-note',
+    documentPath: 'guide.md',
+    title: 'Run the program.',
+    target: { type: 'paragraph', selectedText: 'Run the program.' },
+    messages: []
+  };
+  const { document, window } = await startApp(t, 'http://localhost/#/review/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: {
+        targetFile: 'guide.md',
+        comments: [],
+        contextNotes: [{
+          id: 'note-saved',
+          kind: 'constraint',
+          body: '用語は原著の訳語に合わせる',
+          source: 'reviewer',
+          createdAt: '2026-08-01T00:00:00.000Z'
+        }]
+      },
+      reviewFile: '.review/guide.md.review.json'
+    }),
+    '/api/review': (_input, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(body);
+      return {
+        review: { targetFile: 'guide.md', comments: body.comments || [], contextNotes: body.contextNotes },
+        reviewFile: '.review/guide.md.review.json'
+      };
+    },
+    '/api/ai/status': () => ({
+      token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model', effort: 'low'
+    }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/conversation': () => ({ conversation }),
+    '/api/ai/message': (_input, options) => {
+      const body = JSON.parse(options.body);
+      const answer = '節の並び順は前の版から引き継いだもので、意図があります。';
+      return ndjsonResponse([
+        { type: 'started' },
+        {
+          type: 'result',
+          conversation: {
+            ...conversation,
+            messages: [
+              { id: 'user-1', role: 'user', content: body.message },
+              { id: 'assistant-1', role: 'assistant', content: answer }
+            ]
+          },
+          message: { id: 'assistant-1', role: 'assistant', content: answer }
+        }
+      ]);
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-comment-button'));
+
+  // 保存済みのメモは、開いた時点で一覧と要約に出ます。
+  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), '1件');
+  assert.equal(document.querySelector('.context-note-kind').textContent, '制約');
+  assert.match(document.querySelector('.context-note-body').textContent, /原著の訳語/);
+  assert.equal(document.querySelector('#review-context-hint').hidden, false, 'AIレビューにも効くと言う');
+
+  // 相談し、返ってきた答えをメモの下書きにします。
+  const paragraph = document.querySelector('#markdown-content p');
+  paragraph.querySelector('.inline-ai-button').click();
+  assert.match(document.querySelector('#ai-target-comments').textContent, /コンテキストメモ1件も渡します/);
+
+  const input = document.querySelector('#ai-chat-input');
+  input.value = 'この節の並びは変では？';
+  document.querySelector('#ai-chat-form').requestSubmit();
+  await waitFor(() => document.querySelector('.ai-message[data-role="assistant"] .ai-message-keep'));
+
+  document.querySelector('.ai-message[data-role="assistant"] .ai-message-keep').click();
+  assert.equal(document.querySelector('#context-notes').open, true, 'メモの欄を開いて見せる');
+  assert.match(document.querySelector('#context-note-input').value, /前の版から引き継いだ/);
+
+  // 前提として残す形へ直し、種類を決めて残します。
+  const noteInput = document.querySelector('#context-note-input');
+  noteInput.value = '節の並び順は前の版から引き継いだもの。変えない。';
+  noteInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+  const kind = document.querySelector('#context-note-kind');
+  kind.value = 'decision';
+  kind.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.match(document.querySelector('#context-note-kind-hint').textContent, /蒸し返しません/);
+  document.querySelector('#context-note-form').requestSubmit();
+
+  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), '2件');
+  assert.equal(document.querySelectorAll('.context-note-source').length, 1, '相談から残したメモには出どころが付く');
+  assert.match(document.querySelector('#ai-target-comments').textContent, /コンテキストメモ2件も渡します/);
+
+  document.querySelector('#save-button').click();
+  await waitFor(() => requests.some((body) => Array.isArray(body.contextNotes)));
+  const saved = requests.at(-1).contextNotes;
+  assert.deepEqual(saved.map(({ kind: noteKind, body }) => [noteKind, body]), [
+    ['constraint', '用語は原著の訳語に合わせる'],
+    ['decision', '節の並び順は前の版から引き継いだもの。変えない。']
+  ], '残した順のまま保存する');
+  assert.equal(saved[1].source, 'chat');
+
+  // 消すのは2段階です。一覧から黙って消えないようにします。
+  document.querySelector('[data-note-delete]').click();
+  assert.match(document.querySelector('.context-note-confirm').textContent, /削除しますか/);
+  document.querySelector('[data-note-confirm-delete]').click();
+  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), '1件');
+});
+
+test('a note written while a save is in flight is still saved', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const requests = [];
+  let releaseFirstSave;
+  const firstSaveHeld = new Promise((resolve) => { releaseFirstSave = resolve; });
+  const { document, window } = await startApp(t, 'http://localhost/#/review/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'guide.md', comments: [] },
+      reviewFile: '.review/guide.md.review.json'
+    }),
+    '/api/review': async (_input, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(body);
+      // 1回目の保存を握ったまま、その最中にもう1件残させます。
+      if (requests.length === 1) await firstSaveHeld;
+      return {
+        review: { targetFile: 'guide.md', comments: body.comments || [], contextNotes: body.contextNotes },
+        reviewFile: '.review/guide.md.review.json'
+      };
+    },
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: false, error: 'Codexを利用できません' }),
+    '/api/ai/conversations': () => ({ conversations: [] })
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-comment-button'));
+
+  const keep = (text) => {
+    const input = document.querySelector('#context-note-input');
+    input.value = text;
+    input.dispatchEvent(new window.Event('input', { bubbles: true }));
+    document.querySelector('#context-note-form').requestSubmit();
+  };
+
+  keep('1件目のメモ');
+  document.querySelector('#save-button').click();
+  await waitFor(() => requests.length === 1);
+
+  // 保存の返事を待っている間に、もう1件残します。
+  keep('2件目のメモ');
+  releaseFirstSave();
+
+  // 件数ではなく中身で待ちます。前のテストが残した自動保存が混ざることがあるためです。
+  await waitFor(() => requests.some((body) => (body.contextNotes || []).length === 2), 3000);
+  const saved = requests.find((body) => (body.contextNotes || []).length === 2).contextNotes;
+  assert.deepEqual(
+    saved.map(({ body }) => body),
+    ['1件目のメモ', '2件目のメモ'],
+    '保存中に残したメモも、続く保存で必ずサーバーへ届く'
+  );
+});
+
+test('a document with no context notes says so and still offers the form', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const { document } = await startApp(t, 'http://localhost/#/review/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'guide.md', comments: [] },
+      reviewFile: '.review/guide.md.review.json'
+    }),
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: false, error: 'Codexへログインしてください' }),
+    '/api/ai/conversations': () => ({ conversations: [] })
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-comment-button'));
+
+  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), '未設定');
+  assert.equal(document.querySelector('#context-note-submit').disabled, true, '本文が空のうちは残せない');
+  assert.equal(document.querySelector('#review-context-hint').hidden, true);
+  assert.equal(document.querySelector('#placement-context-hint').hidden, true);
+  assert.match(document.querySelector('#context-notes-list').textContent, /まだメモはありません/);
+});
+
 test('finishing a text selection prefetches its translation and streams the contextual meaning first', async (t) => {
   const markdown = '# Guide\n\nClick to run the program.\n';
   const stream = controlledNdjsonResponse();

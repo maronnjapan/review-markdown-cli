@@ -276,6 +276,84 @@ test('a conversation catches up when the reading context changes, and stays quie
   assert.equal(prompts[3], '結論は？', '一度渡した前提は繰り返さない');
 });
 
+test('what the reviewer kept as a note reaches the review, the chat and the translation alike', async (t) => {
+  const { root, store } = await testStore(t);
+  await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\n## 再起動\n\nRun the program.\n', 'utf8');
+  await fs.mkdir(path.join(root, '.claude', 'skills', 'fixture-skill'), { recursive: true });
+  await fs.writeFile(
+    path.join(root, '.claude', 'skills', 'fixture-skill', 'SKILL.md'),
+    '---\nname: fixture-skill\n---\n\n読み手が手を止める箇所を挙げる。\n',
+    'utf8'
+  );
+  await writeReview(root, 'guide.md', [], {
+    contextNotes: [
+      { kind: 'decision', body: '節の並び順は検討済みで、変えない', createdAt: '2026-08-01T00:00:00.000Z' }
+    ]
+  });
+  const prompts = [];
+  const codex = fakeCodex({
+    async runTurn(input) {
+      prompts.push(input.prompt);
+      return {
+        text: JSON.stringify({
+          contextualMeaning: '実行する',
+          meanings: [],
+          explanation: '',
+          summary: '',
+          placements: [],
+          unplaced: [],
+          verdicts: [],
+          unplacedVerdicts: []
+        })
+      };
+    }
+  });
+  const service = new AiService(root, { store, codex });
+
+  await service.translate('guide.md', { type: 'text-selection', selectedText: 'run' });
+  await service.placeComments('guide.md', '導入が長い');
+  await service.reviewDocument('guide.md', { skillIds: ['fixture-skill'] });
+  const conversation = await service.createConversation({ documentPath: 'guide.md', target: { type: 'document' } });
+  await service.sendMessage(conversation.id, 'この節の並びはどう？');
+
+  assert.ok(prompts.length >= 4);
+  for (const prompt of prompts) {
+    assert.match(prompt, /<recorded_context>/, '翻訳・配置・レビュー・チャットのどれも残したメモを読む');
+    assert.match(prompt, /節の並び順は検討済み/);
+    assert.match(prompt, /Do not raise that point again/, '「決定」の読み方まで渡す');
+  }
+});
+
+test('a conversation catches up when a note is kept, and the note survives the reviewer clearing the context', async (t) => {
+  const { root, store } = await testStore(t);
+  await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\nRun the program.\n', 'utf8');
+  const prompts = [];
+  const codex = fakeCodex({
+    async runTurn(input) {
+      prompts.push(input.prompt);
+      return { text: 'はい。' };
+    }
+  });
+  const service = new AiService(root, { store, codex });
+  const conversation = await service.createConversation({ documentPath: 'guide.md', target: { type: 'document' } });
+
+  await service.sendMessage(conversation.id, '誰向けの文章？');
+  await writeReview(root, 'guide.md', [], {
+    contextNotes: [{ kind: 'decision', body: '導入の長さは意図したもの', createdAt: '2026-08-01T00:00:00.000Z' }]
+  });
+  await service.sendMessage(conversation.id, 'いま読むとどう？');
+  await service.sendMessage(conversation.id, '結論は？');
+
+  assert.doesNotMatch(prompts[0], /<recorded_context>/, 'メモが無いうちは渡すものがない');
+  assert.match(prompts[1], /導入の長さは意図したもの/, '残したメモは次の質問から効く');
+  assert.equal(prompts[2], '結論は？', '一度渡したメモは繰り返さない');
+
+  // 読み取りコンテキストを空にしても、メモは別の記録なので残ります。
+  await writeReview(root, 'guide.md', [], { aiContext: '' });
+  const context = await service.readingContext('guide.md');
+  assert.equal(context.notes.length, 1);
+});
+
 test('the translation cache separates the same word read under different contexts', async (t) => {
   const { root, store } = await testStore(t);
   let turns = 0;

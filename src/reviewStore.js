@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { normalizeAiContext } from './aiContext.js';
 import { SEVERITY_LABELS } from './aiVocabulary.js';
+import { CONTEXT_NOTE_LABELS, normalizeContextNotes } from './contextNotes.js';
 import { PERSONA_FIELD_LABELS, normalizePersona } from './persona.js';
 
 export const REVIEW_DIR = '.review';
@@ -37,36 +38,43 @@ export async function readReview(rootDir, relativeFile) {
       targetFile,
       comments: Array.isArray(parsed.comments) ? parsed.comments.map(withCommentStatus) : [],
       aiContext: typeof parsed.aiContext === 'string' ? parsed.aiContext : '',
+      // メモを持たないレビューファイルは、この機能より前に書かれたものです。空の一覧として読みます。
+      contextNotes: normalizeContextNotes(parsed.contextNotes),
       persona: normalizePersona(parsed.persona),
       updatedAt: parsed.updatedAt
     };
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
-    return { targetFile, comments: [], aiContext: '', persona: null };
+    return { targetFile, comments: [], aiContext: '', contextNotes: [], persona: null };
   }
 }
 
 /**
  * Replaces the comments of one review.
  *
- * `aiContext` is the reviewer's reading context for this document, and `persona`
- * the reader it is written for. Leaving either out keeps whatever the file
- * already holds, so a plain comment save (or the beacon on the way out of the
- * page) never drops them.
+ * 本文以外の3つ、読み取りコンテキスト（`aiContext`）・コンテキストメモ（`contextNotes`）・
+ * 読み手ペルソナ（`persona`）は、渡さなければファイルにあるものを据え置きます。
+ * コメントだけを保存するとき（画面を離れるときのビーコンもそうです）に、
+ * 書いた前提が黙って消えないようにするためです。
  */
-export async function writeReview(rootDir, relativeFile, comments, { aiContext, persona } = {}) {
+export async function writeReview(rootDir, relativeFile, comments, { aiContext, contextNotes, persona } = {}) {
   const requestedTargetFile = relativeFile.split(path.sep).join('/');
   const { filePath, targetFile } = await findExistingReviewLocation(rootDir, requestedTargetFile);
-  const saved = aiContext === undefined || persona === undefined
+  // 1つでも省かれていれば、据え置く値を知るために現在の中身を読みます。
+  // 条件を `a === undefined || b === undefined` と書き足していくと、項目が増えたときに
+  // 足し忘れて、保存のたびに前提が消えるようになります。
+  const saved = [aiContext, contextNotes, persona].some((value) => value === undefined)
     ? await readReview(rootDir, requestedTargetFile)
     : null;
   const nextAiContext = aiContext === undefined ? saved.aiContext : normalizeAiContext(aiContext);
+  const nextNotes = contextNotes === undefined ? saved.contextNotes : normalizeContextNotes(contextNotes);
   const nextPersona = persona === undefined ? saved.persona : normalizePersona(persona);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const payload = {
     targetFile,
     updatedAt: new Date().toISOString(),
     ...(nextAiContext ? { aiContext: nextAiContext } : {}),
+    ...(nextNotes.length ? { contextNotes: nextNotes } : {}),
     ...(nextPersona ? { persona: nextPersona } : {}),
     comments: comments.map((comment) => ({
       ...withCommentStatus(comment),
@@ -141,6 +149,7 @@ export function buildReviewMarkdown(review) {
 
   const lines = [`# Review for ${review.targetFile}`, ''];
   if (review.aiContext) lines.push('## 読み取りコンテキスト', '', review.aiContext, '');
+  appendContextNotes(lines, review.contextNotes);
   appendPersona(lines, review.persona);
   for (const group of [...COMMENT_GROUPS, OTHER_GROUP]) {
     appendCommentGroup(lines, group.title, grouped.get(group) || [], group.render);
@@ -158,6 +167,24 @@ function groupByType(comments) {
     grouped.get(group).push(comment);
   }
   return grouped;
+}
+
+/**
+ * 残したコンテキストメモ。レビュー結果を渡す相手には、指摘そのものと同じくらい
+ * 「何が決まっていて、何がまだ決まっていないか」が要ります。
+ * 種類と日付を添えるのは、画面で読むときと同じ手掛かりを紙の上でも残すためです。
+ */
+function appendContextNotes(lines, notes) {
+  if (!notes?.length) return;
+  lines.push('## コンテキストメモ', '');
+  for (const note of notes) {
+    const recordedAt = String(note.updatedAt || note.createdAt || '').slice(0, 10);
+    const head = `${CONTEXT_NOTE_LABELS[note.kind] || note.kind}${recordedAt ? `（${recordedAt}）` : ''}`;
+    // 改行を含むメモは、2文字下げて同じ箇条書きの中に収めます。
+    // そのまま繋ぐと、2行目以降が箇条書きから外れて別の段落として読まれます。
+    lines.push(...indentedListItem(`${head}: ${note.body}`));
+  }
+  lines.push('');
 }
 
 /** レビュー結果を渡す相手にも、どの読み手を基準に読んだかが要ります。 */
@@ -247,6 +274,12 @@ function renderSectionComment(comment) {
 
 function renderGenericComment(comment) {
   return ['```json', JSON.stringify(comment, null, 2), '```'];
+}
+
+/** 1件の箇条書き。2行目以降は2文字下げて、同じ項目の続きとして読ませます。 */
+function indentedListItem(text) {
+  const [first, ...rest] = String(text).split('\n');
+  return [`- ${first}`, ...rest.map((line) => `  ${line}`)];
 }
 
 function quoteBlock(text) {

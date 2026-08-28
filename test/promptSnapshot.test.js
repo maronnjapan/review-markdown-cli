@@ -11,6 +11,7 @@ import { AiStore } from '../src/aiStore.js';
 import { CodexAppServer } from '../src/codexAppServer.js';
 import { aiContextBlock, resolveAiContext } from '../src/aiContext.js';
 import { collectCommentContext, commentContextBlock } from '../src/commentContext.js';
+import { contextNotesBlock, normalizeContextNotes } from '../src/contextNotes.js';
 import { personaBlock } from '../src/persona.js';
 import { writeReview } from '../src/reviewStore.js';
 
@@ -57,6 +58,23 @@ const MANUAL_PERSONA = {
   source: 'manual',
   input: '運用当番の新人。\n製品は初めてで、手順書だけが頼り。'
 };
+
+/** 4種類のうち2つを使った固定のメモ。種類ごとの読み方の説明は枠の中に必ず全部出ます。 */
+const CONTEXT_NOTES = [
+  {
+    id: 'note-fixed-1',
+    kind: 'decision',
+    body: '節の並び順は検討済みで、変えない。',
+    createdAt: '2026-01-01T00:00:00.000Z'
+  },
+  {
+    id: 'note-fixed-2',
+    kind: 'constraint',
+    body: '用語は原著の訳語に合わせる。',
+    source: 'chat',
+    createdAt: '2026-01-02T00:00:00.000Z'
+  }
+];
 
 const COMMENT = {
   id: 'comment-fixed-1',
@@ -108,6 +126,9 @@ const EXPECTED = {
   'block:readingContext(documentOnly)': '57287b0d3fdf96e694a91d96fec58039f2eaa9571d95618f82c4633270835f4a',
   'block:readingContext(manualPersona)': 'd31794a0268a8ebf93e47aaf1839bb2000c7cd2e14dd14d1366a1002911d4ebd',
   'block:readingContext(none)': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+  'block:readingContext(notesOnly)': 'a725b94e96e11441b13eda174993386f6232941cbc5571db978c9d28cbfd9ad6',
+  'block:readingContext(document+notes+persona)': '00b50fc9be1e3483ab792fddbf6fb60c3fddd8fbc69783224d32069705e094ed',
+  'block:contextNotes(kinds)': 'a725b94e96e11441b13eda174993386f6232941cbc5571db978c9d28cbfd9ad6',
   'block:persona(ai)': '23fb353a8c9e17eb35bf275869a4acdfe1983a907b08c3d19fa97c9309513113',
   'block:persona(manual)': '91367577d26fcb16e2d1ed21d839e8b27d8ad5f4b51fb138c1499d2d84fa791b',
   'block:commentContext(some)': 'bd8844700f7878e71d277d2903d9f6dda7b142d9ab6511ac4d77b0cc4d4cb1ff',
@@ -162,6 +183,14 @@ test('AIへ渡す文面は、書き換えるまで一字も変わらない', asy
   })));
   // 前提を何も設定していない文書では、枠ごと出しません。ここが空文字であることも約束です。
   record('block:readingContext(none)', aiContextBlock(resolveAiContext({})));
+  // 残したメモは、書いた前提とペルソナの間の別の枠で渡します。1件も無ければ枠ごと出しません。
+  record('block:readingContext(notesOnly)', aiContextBlock(resolveAiContext({ notes: CONTEXT_NOTES })));
+  record('block:readingContext(document+notes+persona)', aiContextBlock(resolveAiContext({
+    document: 'この文書の前提。',
+    notes: CONTEXT_NOTES,
+    persona: PERSONA
+  })));
+  record('block:contextNotes(kinds)', contextNotesBlock(normalizeContextNotes(CONTEXT_NOTES)));
   record('block:persona(ai)', personaBlock(PERSONA));
   record('block:persona(manual)', personaBlock(MANUAL_PERSONA));
 
