@@ -80,7 +80,11 @@ test('AI routes require a per-launch token and stream read-only results', async 
     method: 'POST',
     headers: { 'X-Review-Markdown-Token': 'test-launch-token' }
   });
-  assert.equal(applyAttempt.status, 404, 'there is no endpoint that applies AI output to the document');
+  assert.equal(
+    applyAttempt.status,
+    404,
+    'no AI endpoint writes to the document: an approved revision goes through /api/file like any other save'
+  );
 });
 
 test('comment placement streams proposals and never writes them itself', async (t) => {

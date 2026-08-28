@@ -2,7 +2,9 @@
 
 export async function fetchJson(url, options) {
   const response = await fetch(url, options);
-  if (!response.ok) throw new Error(await errorMessage(response));
+  // 状態コードを添えるのは、呼ぶ側が文面ではなく種類で分けられるようにするためです。
+  // 本文の修正案は 409（作ったときから本文が変わった）だけを別の扱いにします。
+  if (!response.ok) throw Object.assign(new Error(await errorMessage(response)), { status: response.status });
   return response.json();
 }
 
@@ -96,6 +98,12 @@ export const api = {
   async reviewWithAi(payload, options = {}) {
     await ensureAiToken();
     return streamNdjson('/api/ai/review', payload, { ...options, headers: aiHeaders() });
+  },
+
+  /** 本文の修正案。作るだけで、書き込みは承認後の `saveFile` が行います。 */
+  async reviseWithAi(payload, options = {}) {
+    await ensureAiToken();
+    return streamNdjson('/api/ai/revise', payload, { ...options, headers: aiHeaders() });
   }
 };
 

@@ -154,6 +154,8 @@ const EXPECTED = {
   'prompt:review(twoSkills,noPersona)': '4854674eaaea50e2dc4658668e2e0c4eb83910a8b6d8230910a09c4bc3b04d39',
   'prompt:verification': '92aee8dde5f7995a1f09d36ef462a3b4b7502a0128a9cb745394745d45d47310',
   'prompt:verification(noUnplaced)': '335c145ccc4a6d3e65200bcfe9e7c6b92fa632453071f7b558989ea94b2c0e82',
+  'prompt:revise(comments+instruction)': 'ac2101a054acf608fa7e1a85c4687c147ae2771ef2d67e12535330fdf67657b2',
+  'prompt:revise(instructionOnly)': '12ef15b2376365bf02deb839eb0933154e210738ee48a72886c0eb166072f7fa',
   'prompt:chat(first)': 'eca6465f453c6d1cd1845608167f881f915bdd589c8057ce9d2b63e63f1a9ef5',
   'prompt:chat(firstWithTranscript)': 'ac2b844af404254f9372d41794a5b7d60b1f07f1010a9f32f5aa7dc896a68ca1',
   'prompt:chat(followUpUnchanged)': 'a2847a54fee98149f0221be22f89814e6e08aac58d56453beec780756bcbed5f',
@@ -245,6 +247,13 @@ test('AIへ渡す文面は、書き換えるまで一字も変わらない', asy
 
   await service.composePersona('guide.md', '運用当番の新人。製品は初めて。');
   record('prompt:persona', prompts.at(-1));
+
+  // 本文の修正案。残っている未解決のコメントが、そのまま修正の依頼として付きます。
+  await service.proposeEdits('guide.md', '止める前の確認を足してください。');
+  record('prompt:revise(comments+instruction)', prompts.at(-1));
+  // コメントの無い文書では、依頼はレビュアーが書いた指示だけです。
+  await service.proposeEdits('no-persona.md', '見出しの言い回しを揃えてください。');
+  record('prompt:revise(instructionOnly)', prompts.at(-1));
 
   await service.reviewDocument('guide.md', { skillIds: ['fixture-skill'] });
   record('prompt:review(oneSkill)', prompts.at(-2));
@@ -373,6 +382,9 @@ const PLACED_ONLY_ANSWER = JSON.stringify({
 
 const VERIFICATION_ANSWER = JSON.stringify({ summary: '1件残しました。', verdicts: [], unplacedVerdicts: [] });
 
+/** 修正案の固定の答え。ここで固定しているのは送る文面なので、答えは形だけ合わせます。 */
+const REVISE_ANSWER = JSON.stringify({ summary: '書き換えはありません。', edits: [], skipped: [] });
+
 const TRANSLATION_ANSWER = JSON.stringify({
   contextualMeaning: '再起動する',
   meanings: [{ translation: '再起動する', nuance: 'サービスを止めて起動し直す' }],
@@ -428,6 +440,7 @@ function fakeCodex(prompts, reviewAnswer = REVIEW_ANSWER) {
 function answerFor(outputSchema, reviewAnswer) {
   const fields = Object.keys(outputSchema?.properties || {});
   if (fields.includes('verdicts')) return VERIFICATION_ANSWER;
+  if (fields.includes('edits')) return REVISE_ANSWER;
   if (fields.includes('summary') && fields.includes('placements')) return reviewAnswer;
   if (fields.includes('placements')) return PLACEMENT_ANSWER;
   // 管理者もペルソナも assumptions を返すので、先に問いの有無で見分けます。

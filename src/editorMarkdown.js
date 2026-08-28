@@ -64,14 +64,14 @@ export function applyBlockEdits(markdown, edits) {
     if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || end > source.length) {
       throw Object.assign(new Error(`Invalid source range for edit ${index + 1}`), { statusCode: 400 });
     }
-    if (typeof edit.html !== 'string') {
-      throw Object.assign(new Error(`html is required for edit ${index + 1}`), { statusCode: 400 });
+    if (typeof edit.html !== 'string' && typeof edit.markdown !== 'string') {
+      throw Object.assign(new Error(`html or markdown is required for edit ${index + 1}`), { statusCode: 400 });
     }
     return {
       blockId: String(edit.blockId || `edit-${index}`),
       start,
       end,
-      markdown: edit.delete === true ? '' : htmlBlockToMarkdown(edit.html),
+      markdown: edit.delete === true ? '' : replacementFor(edit),
       ...(edit.delete === true ? { delete: true } : {})
     };
   });
@@ -96,6 +96,17 @@ export function applyBlockEdits(markdown, edits) {
   }
 
   return { markdown: updated, appliedEdits: ascending };
+}
+
+/**
+ * その範囲を置き換える原文。
+ *
+ * 編集モードは画面のHTMLを送ってくるのでMarkdownへ戻します。AIの修正案（`documentEdits.js`）は
+ * もともとMarkdownなので、そのまま使います。HTMLへ通して戻すと、頼んでいない書き換え
+ * （引用符の種類、改行の畳み方、コードの言語指定）が本文に混ざるからです。
+ */
+function replacementFor(edit) {
+  return typeof edit.markdown === 'string' ? edit.markdown : htmlBlockToMarkdown(edit.html);
 }
 
 function expandDeletionRanges(source, edits) {

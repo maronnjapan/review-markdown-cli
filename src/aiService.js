@@ -4,6 +4,7 @@ import path from 'node:path';
 import { aiContextBlock, hasAiContext, normalizeAiContext, resolveAiContext } from './aiContext.js';
 import {
   CONVERSATION_TITLE_CHARS,
+  MAX_EDIT_INSTRUCTION_CHARS,
   MAX_HEADING_DEPTH,
   MAX_MESSAGE_CHARS,
   MAX_NOTES_CHARS,
@@ -17,6 +18,13 @@ import { CodexAppServer } from './codexAppServer.js';
 import { purposeFor } from './codexProfiles.js';
 import { collectCommentContext, commentContextBlock } from './commentContext.js';
 import { buildBriefDraft, normalizeBriefInput } from './documentBrief.js';
+import {
+  REVISE_SCHEMA,
+  buildEditProposals,
+  documentRevision,
+  extractEditableBlocks,
+  revisePrompt
+} from './documentEdits.js';
 import {
   applyVerification,
   buildReviewFindings,
@@ -55,7 +63,8 @@ const ANSWER_SUBJECTS = {
   place: 'Codexの配置結果',
   brief: '管理者が組み立てた目的・ストーリー・期待値',
   persona: 'Codexが組み直した読み手ペルソナ',
-  review: 'Codexのレビュー結果'
+  review: 'Codexのレビュー結果',
+  revise: 'Codexの修正案'
 };
 
 /**
@@ -290,6 +299,53 @@ export class AiService {
       if (error?.name === 'AbortError') throw error;
       return { verdicts: null, verified: false };
     }
+  }
+
+  /**
+   * 本文の修正案を作ります。書き込みはしません。返すのは候補で、レビュアーが承認した
+   * ぶんだけが `/api/file` を通ってファイルへ入ります。
+   *
+   * 材料は2つです。レビュアーがその場で書いた指示と、その文書に残っている未解決の
+   * レビューコメント。どちらも無いときは頼みません。何を直すかが決まっていない状態で
+   * 走らせると、頼んでいない書き換えが並ぶだけだからです。
+   *
+   * 一緒に返す `documentRevision` は、候補を作ったときの本文のハッシュです。
+   * 適用のとき、そこから本文が変わっていないことを確かめるのに使います。
+   */
+  async proposeEdits(documentPath, instruction, { onDelta, signal } = {}) {
+    const request = String(instruction || '').trim();
+    if (request.length > MAX_EDIT_INSTRUCTION_CHARS) {
+      throw new Error(`修正の指示が長すぎます（${MAX_EDIT_INSTRUCTION_CHARS}文字まで）`);
+    }
+
+    const markdown = await this.readDocument(documentPath);
+    const { blocks, dropped } = extractEditableBlocks(markdown);
+    if (blocks.length === 0) throw new Error('修正できる本文が見つかりません');
+
+    // 依頼として渡すのは未解決のコメントだけです。解決済みは手当て済みだからです。
+    const comments = await collectCommentContext(this.rootDir, documentPath, { type: 'document' }, { openOnly: true });
+    if (!request && comments.entries.length === 0) {
+      throw new Error('修正の指示を書くか、未解決のレビューコメントを残してから実行してください');
+    }
+
+    const readingContext = await this.readingContext(documentPath);
+    const { answer } = await this.askForJson({
+      feature: 'revise',
+      prompt: revisePrompt(blocks, { instruction: request, comments, readingContext }),
+      outputSchema: REVISE_SCHEMA,
+      onDelta,
+      signal
+    });
+
+    return {
+      documentRevision: documentRevision(markdown),
+      // 何を材料に作った候補かは、画面に出します。コメントを直すつもりで走らせて
+      // 1件も渡っていなかった、が黙って起きないようにするためです。
+      requestedComments: comments.entries.length,
+      droppedComments: comments.dropped,
+      droppedBlocks: dropped,
+      ...await buildEditProposals(blocks, answer)
+    };
   }
 
   async listConversations(documentPath) {

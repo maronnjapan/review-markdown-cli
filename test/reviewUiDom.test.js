@@ -4,8 +4,10 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
+import { documentRevision } from '../src/documentEdits.js';
+import { applyBlockEdits } from '../src/editorMarkdown.js';
 import { resolveDocumentLink } from '../src/links.js';
-import { renderMarkdown } from '../src/markdown.js';
+import { parseMarkdownBlocks, renderMarkdown } from '../src/markdown.js';
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -1243,6 +1245,288 @@ test('an AI review runs with the chosen skills and the reader the AI rebuilt fro
   assert.match(document.querySelector('.comment-reviewed-reason').textContent, /製品を知らない/);
 });
 
+test('an AI body revision is shown next to the current text and only written once the reviewer allows it', async (t) => {
+  const markdown = [
+    '# 設計メモ',
+    '',
+    '## 背景',
+    '',
+    'この段落は冗長な説明を含みます。',
+    '',
+    '古い注記です。',
+    '',
+    'まとめの段落です。'
+  ].join('\n');
+  const blocks = parseMarkdownBlocks(markdown);
+  const comments = [{
+    id: 'comment-1',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    type: 'paragraph',
+    status: 'open',
+    targetText: 'この段落は冗長な説明を含みます。',
+    selectedText: 'この段落は冗長な説明を含みます。',
+    headingPath: ['設計メモ', '背景'],
+    comment: '冗長な説明を削ってほしい'
+  }];
+
+  let currentMarkdown = markdown;
+  let refuseNextSave = false;
+  const reviseRequests = [];
+  const saveRequests = [];
+  const reviewFile = '.review/docs/note.md.review.json';
+
+  const { document, window } = await startApp(t, 'http://localhost/#/review/docs%2Fnote.md', {
+    '/api/file': async (_input, options = {}) => {
+      if (options.method !== 'POST') {
+        return {
+          path: 'docs/note.md',
+          markdown: currentMarkdown,
+          ...await renderViews(currentMarkdown),
+          review: { targetFile: 'docs/note.md', comments },
+          reviewFile
+        };
+      }
+      const body = JSON.parse(options.body);
+      saveRequests.push(body);
+      if (refuseNextSave) {
+        return new Response(JSON.stringify({ error: '本文がこの修正案を作ったときから変わっています' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      // 本物の適用器へ通します。画面が送った範囲と原文が、そのまま本文になるかを見るためです。
+      const applied = applyBlockEdits(currentMarkdown, body.edits);
+      currentMarkdown = applied.markdown;
+      return {
+        path: 'docs/note.md',
+        markdown: currentMarkdown,
+        revision: documentRevision(currentMarkdown),
+        appliedEdits: applied.appliedEdits,
+        ...await renderViews(currentMarkdown),
+        review: { targetFile: 'docs/note.md', comments },
+        reviewFile
+      };
+    },
+    '/api/review': (_input, options) => ({
+      review: { targetFile: 'docs/note.md', comments: JSON.parse(options.body).comments || comments },
+      reviewFile
+    }),
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model' }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/revise': (_input, options) => {
+      reviseRequests.push([JSON.parse(options.body), options.headers]);
+      return ndjsonResponse([
+        { type: 'started' },
+        {
+          type: 'result',
+          documentRevision: documentRevision(markdown),
+          summary: '冗長な説明を削り、古い注記を消しました。',
+          requestedComments: 1,
+          droppedComments: 0,
+          droppedBlocks: 0,
+          droppedEdits: 0,
+          edits: [
+            {
+              blockId: blocks[2].id,
+              blockIndex: 2,
+              kind: 'paragraph',
+              headingPath: ['設計メモ', '背景'],
+              start: blocks[2].start,
+              end: blocks[2].end,
+              before: blocks[2].source,
+              after: 'この段落は説明を含みます。',
+              delete: false,
+              reason: '冗長な説明を削りました。',
+              confidence: 'high',
+              target: {
+                type: 'paragraph',
+                selectedText: 'この段落は冗長な説明を含みます。',
+                targetText: 'この段落は冗長な説明を含みます。',
+                headingPath: ['設計メモ', '背景']
+              }
+            },
+            {
+              blockId: blocks[3].id,
+              blockIndex: 3,
+              kind: 'paragraph',
+              headingPath: ['設計メモ', '背景'],
+              start: blocks[3].start,
+              end: blocks[3].end,
+              before: blocks[3].source,
+              after: '',
+              delete: true,
+              reason: '古い注記なので消します。',
+              confidence: 'medium',
+              target: {
+                type: 'paragraph',
+                selectedText: '古い注記です。',
+                targetText: '古い注記です。',
+                headingPath: ['設計メモ', '背景']
+              }
+            }
+          ],
+          skipped: [{ request: '図を足す', reason: '図の内容が分かりません' }]
+        }
+      ]);
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content h1'));
+
+  document.querySelector('#revise-tab-button').click();
+  assert.equal(document.querySelector('#revise-panel').classList.contains('hidden'), false);
+  assert.equal(document.querySelector('#comments-panel').classList.contains('hidden'), true);
+  // 未解決のコメントが依頼になるので、指示を書かなくても実行できます。
+  assert.match(document.querySelector('#revise-context-hint').textContent, /未解決のレビューコメント1件/);
+  assert.equal(document.querySelector('#revise-submit-button').disabled, false);
+
+  const instruction = document.querySelector('#revise-input');
+  instruction.value = '冗長な説明を削ってください。';
+  instruction.dispatchEvent(new window.Event('input', { bubbles: true }));
+  document.querySelector('#revise-form').requestSubmit();
+  await waitFor(() => document.querySelector('.revise-card'));
+
+  assert.deepEqual(reviseRequests[0][0], { path: 'docs/note.md', instruction: '冗長な説明を削ってください。' });
+  assert.equal(reviseRequests[0][1]['X-Review-Markdown-Token'], 'ui-ai-token');
+  assert.equal(document.querySelectorAll('.revise-card').length, 2);
+  assert.match(document.querySelector('.placement-note').textContent, /未解決のコメント1件を読ませました/);
+  assert.match(document.querySelector('.placement-unplaced').textContent, /図を足す/);
+
+  // 修正前と修正後を必ず並べます。どちらか片方では、何が変わるかを判断できません。
+  const [firstCard, secondCard] = document.querySelectorAll('.revise-card');
+  assert.equal(firstCard.querySelector('[data-side="before"] .revise-text').textContent, 'この段落は冗長な説明を含みます。');
+  assert.equal(firstCard.querySelector('[data-side="after"] textarea').value, 'この段落は説明を含みます。');
+  assert.equal(firstCard.querySelector('.placement-path').textContent, '設計メモ › 背景');
+  assert.equal(secondCard.dataset.delete, 'true');
+  assert.match(secondCard.querySelector('.revise-removed').textContent, /まるごと削除/);
+
+  // 許可する前に、本文のどこが変わるのかを確かめられます。
+  firstCard.querySelector('[data-revise-action="reveal"]').click();
+  assert.match(document.querySelector('#markdown-content .reveal-flash').textContent, /この段落は冗長な説明を含みます。/);
+
+  // 修正案はその場で直せます。適用されるのはAIの下書きではなく、ここにある文面です。
+  const draft = firstCard.querySelector('[data-side="after"] textarea');
+  draft.value = 'この段落は説明だけを含みます。';
+  draft.dispatchEvent(new window.Event('input', { bubbles: true }));
+
+  // 「適用」の1回目は書き換えません。許可を求める行に変わるだけです。
+  firstCard.querySelector('[data-revise-action="requestApply"]').click();
+  assert.equal(saveRequests.length, 0, '許可する前は本文へ書き込まない');
+  assert.match(document.querySelector('.revise-confirm').textContent, /この箇所を書き換えますか/);
+
+  // やめれば元の行へ戻り、本文はそのままです。
+  document.querySelector('[data-revise-action="cancelApply"]').click();
+  assert.equal(document.querySelector('.revise-confirm'), null);
+  assert.equal(saveRequests.length, 0);
+
+  document.querySelectorAll('.revise-card')[0].querySelector('[data-revise-action="requestApply"]').click();
+  document.querySelector('[data-revise-action="applyOne"]').click();
+  await waitFor(() => saveRequests.length === 1);
+  await waitFor(() => document.querySelectorAll('.revise-card').length === 1);
+
+  assert.equal(saveRequests[0].baseRevision, documentRevision(markdown), '作ったときの本文かを申告する');
+  assert.deepEqual(saveRequests[0].edits, [{
+    blockId: blocks[2].id,
+    start: blocks[2].start,
+    end: blocks[2].end,
+    markdown: 'この段落は説明だけを含みます。'
+  }]);
+  assert.equal(saveRequests[0].comments, undefined, 'コメントは送らないので、保存済みのものが残る');
+  assert.equal(currentMarkdown.includes('この段落は説明だけを含みます。'), true);
+  assert.match(document.querySelector('#markdown-content').textContent, /この段落は説明だけを含みます。/);
+  assert.equal(document.querySelector('#comment-count').textContent, '1', '本文を書き換えてもコメントは残る');
+
+  // 残った候補の位置は、書き換えで前が伸び縮みしたぶんずれています。
+  const remaining = document.querySelector('.revise-card');
+  assert.match(remaining.querySelector('[data-side="before"] .revise-text').textContent, /古い注記です。/);
+  remaining.querySelector('[data-revise-action="requestApply"]').click();
+  document.querySelector('[data-revise-action="applyOne"]').click();
+  await waitFor(() => saveRequests.length === 2);
+  await waitFor(() => document.querySelector('.revise-card') === null);
+  assert.equal(currentMarkdown.includes('古い注記です。'), false, 'ずらした範囲でも狙った段落が消える');
+  assert.match(currentMarkdown, /まとめの段落です。/);
+});
+
+test('a revision proposal made against older text is refused rather than written to the wrong place', async (t) => {
+  const markdown = '# 手順\n\n古い段落です。\n\nもう一つの段落です。\n';
+  const blocks = parseMarkdownBlocks(markdown);
+  const saveRequests = [];
+  const reviewFile = '.review/docs/note.md.review.json';
+
+  const { document, window } = await startApp(t, 'http://localhost/#/review/docs%2Fnote.md', {
+    '/api/file': async (_input, options = {}) => {
+      if (options.method !== 'POST') {
+        return {
+          path: 'docs/note.md',
+          markdown,
+          ...await renderViews(markdown),
+          review: { targetFile: 'docs/note.md', comments: [] },
+          reviewFile
+        };
+      }
+      saveRequests.push(JSON.parse(options.body));
+      return new Response(JSON.stringify({ error: '本文がこの修正案を作ったときから変わっています。修正案を作り直してください' }), {
+        status: 409,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    },
+    '/api/review': (_input, options) => ({
+      review: { targetFile: 'docs/note.md', comments: JSON.parse(options.body).comments || [] },
+      reviewFile
+    }),
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model' }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/revise': () => ndjsonResponse([
+      { type: 'started' },
+      {
+        type: 'result',
+        documentRevision: 'stale-revision',
+        summary: '言い回しを整えました。',
+        requestedComments: 0,
+        droppedComments: 0,
+        droppedBlocks: 0,
+        droppedEdits: 0,
+        edits: [{
+          blockId: blocks[1].id,
+          blockIndex: 1,
+          kind: 'paragraph',
+          headingPath: ['手順'],
+          start: blocks[1].start,
+          end: blocks[1].end,
+          before: blocks[1].source,
+          after: '新しい段落です。',
+          delete: false,
+          reason: '言い回しを整えました。',
+          confidence: 'medium',
+          target: { type: 'paragraph', selectedText: '古い段落です。', targetText: '古い段落です。', headingPath: ['手順'] }
+        }],
+        skipped: []
+      }
+    ])
+  });
+  await waitFor(() => document.querySelector('#markdown-content h1'));
+
+  document.querySelector('#revise-tab-button').click();
+  const instruction = document.querySelector('#revise-input');
+  instruction.value = '言い回しを整えてください。';
+  instruction.dispatchEvent(new window.Event('input', { bubbles: true }));
+  document.querySelector('#revise-form').requestSubmit();
+  await waitFor(() => document.querySelector('.revise-card'));
+
+  const card = document.querySelector('.revise-card');
+  card.querySelector('[data-revise-action="requestApply"]').click();
+  document.querySelector('[data-revise-action="applyOne"]').click();
+  await waitFor(() => saveRequests.length === 1);
+  await waitFor(() => document.querySelector('#revise-results .ai-error'));
+
+  assert.match(document.querySelector('#revise-results .ai-error').textContent, /作り直してください/);
+  // 位置がもう当たらないので、残った候補も適用させません。
+  assert.equal(
+    document.querySelector('.revise-card [data-revise-action="requestApply"]').disabled,
+    true
+  );
+  assert.match(document.querySelector('#markdown-content').textContent, /古い段落です。/, '本文は変わっていない');
+});
+
 test('a Markdown body gets a copy button, and a file we cannot read as text does not', async (t) => {
   const markdown = '# 手順書\n\n最初に環境を用意します。\n';
   const { document, window } = await startApp(t, 'http://localhost/#/review/guide.md', {
@@ -1486,7 +1770,8 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
     '#brief-form', '#brief-compose',
     '#ai-context', '#ai-target', '#translation-result', '#ai-messages',
     '#placement-form', '#placement-results',
-    '#review-skill-list', '#review-persona', '#review-results'
+    '#review-skill-list', '#review-persona', '#review-results',
+    '#revise-form', '#revise-results'
   ]) {
     assert.ok(
       document.querySelector(selector)?.closest('.pane-scroll'),
@@ -1497,7 +1782,10 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
   assert.equal(document.querySelector('#ai-chat-form').closest('.pane-scroll'), null);
   assert.equal(document.querySelector('#save-button').closest('.pane-scroll'), null);
 
-  for (const panel of ['#comments-panel', '#manager-panel', '#ai-panel', '#placement-panel', '#review-panel']) {
+  for (const panel of [
+    '#comments-panel', '#manager-panel', '#ai-panel',
+    '#placement-panel', '#review-panel', '#revise-panel'
+  ]) {
     assert.equal(document.querySelectorAll(`${panel} .pane-scroll`).length, 1, `${panel} のスクロール領域は1つ`);
   }
   assert.match(styles, /\.pane-scroll \{[^}]*overflow-y: auto;/, '.pane-scroll が実際にスクロールする');

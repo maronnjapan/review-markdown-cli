@@ -3,7 +3,8 @@ const PANES = {
   manager: { panel: 'managerPanel', tab: 'managerTabButton' },
   ai: { panel: 'aiPanel', tab: 'aiTabButton' },
   placement: { panel: 'placementPanel', tab: 'placementTabButton' },
-  review: { panel: 'reviewPanel', tab: 'reviewTabButton' }
+  review: { panel: 'reviewPanel', tab: 'reviewTabButton' },
+  revise: { panel: 'revisePanel', tab: 'reviseTabButton' }
 };
 
 /**

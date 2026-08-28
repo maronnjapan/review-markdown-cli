@@ -100,6 +100,15 @@ const SELECTORS = {
   reviewStopButton: '#review-stop-button',
   reviewResults: '#review-results',
 
+  reviseTabButton: '#revise-tab-button',
+  revisePanel: '#revise-panel',
+  reviseContextHint: '#revise-context-hint',
+  reviseForm: '#revise-form',
+  reviseInput: '#revise-input',
+  reviseSubmitButton: '#revise-submit-button',
+  reviseStopButton: '#revise-stop-button',
+  reviseResults: '#revise-results',
+
   selectionToolbar: '#selection-toolbar',
   selectionToolbarButton: '#selection-comment-button',
   selectionTranslateButton: '#selection-translate-button',

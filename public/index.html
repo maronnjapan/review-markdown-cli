@@ -67,6 +67,7 @@
             <button id="ai-tab-button" type="button" role="tab" aria-selected="false">AI</button>
             <button id="placement-tab-button" type="button" role="tab" aria-selected="false">指摘の配置</button>
             <button id="review-tab-button" type="button" role="tab" aria-selected="false">AIレビュー</button>
+            <button id="revise-tab-button" type="button" role="tab" aria-selected="false">本文の修正</button>
           </div>
           <section id="comments-panel">
             <div class="comments-header">
@@ -263,6 +264,26 @@
                 </div>
               </form>
               <div id="review-results" class="placement-results"></div>
+            </div>
+          </section>
+          <section id="revise-panel" class="revise-panel hidden" aria-live="polite">
+            <div class="pane-scroll">
+              <div class="ai-header">
+                <div>
+                  <p class="eyebrow">Document revision</p>
+                  <h2>本文の修正</h2>
+                </div>
+              </div>
+              <p class="placement-hint">未解決のレビューコメントと、ここに書いた指示から、AIが本文の修正案を作ります。修正案は本文と並べて確認でき、許可するまでファイルは書き換えません。</p>
+              <p id="revise-context-hint" class="placement-hint" hidden></p>
+              <form id="revise-form" class="placement-form">
+                <textarea id="revise-input" rows="4" placeholder="例：&#10;- 導入の重複を削る&#10;- 見出しの言い回しを「〜する」に揃える"></textarea>
+                <div class="placement-actions">
+                  <button id="revise-stop-button" class="hidden" type="button">停止</button>
+                  <button id="revise-submit-button" type="submit">修正案を作る</button>
+                </div>
+              </form>
+              <div id="revise-results" class="placement-results"></div>
             </div>
           </section>
         </aside>

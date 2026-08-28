@@ -23,7 +23,9 @@ const FEATURE_PURPOSE = {
   place: 'assistant',
   brief: 'review',
   persona: 'review',
-  review: 'review'
+  review: 'review',
+  // 本文の修正案。書いた文がそのまま原稿になる候補なので、深く読む側で書かせます。
+  revise: 'review'
 };
 
 /**
