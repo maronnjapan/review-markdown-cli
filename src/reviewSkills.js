@@ -1,6 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  MAX_SELECTED_SKILLS,
+  MAX_SKILL_INSTRUCTION_CHARS,
+  MAX_SKILL_REFERENCE_CHARS,
+  MAX_SKILL_REFERENCE_FILES
+} from './aiLimits.js';
 
 /**
  * レビュースキルは「この原稿を何の観点で読むか」を書いた Markdown です。
@@ -19,20 +25,13 @@ import { fileURLToPath } from 'node:url';
  * 本文は「references/failure-patterns.md を全文読む」のように参照側を指すので、
  * こちらが渡さなければ手順の半分が欠けたままレビューが走ります。そのため
  * `SKILL.md` と同じディレクトリの `references/*.md` も一緒に読み込みます。
+ *
+ * 何文字まで・何件まで渡すかは `aiLimits.js` にまとめてあります。
  */
 
 export const SKILL_FILE_NAME = 'SKILL.md';
-/** プロンプトへ載せる本文の上限。これを超えたスキルは末尾を落とします。 */
-export const MAX_SKILL_INSTRUCTION_CHARS = 12_000;
-/** 参照ファイルの上限。1スキルの参照全体でこの長さまでを渡します。 */
-export const MAX_SKILL_REFERENCE_CHARS = 12_000;
-/** 参照として読むファイル数。これ以上置いてあるスキルは、名前の順に先頭から読みます。 */
-export const MAX_SKILL_REFERENCE_FILES = 10;
-/**
- * 一度に使えるスキルの数。観点を増やすほど1件あたりの読みは浅くなるので、
- * 「同時に持てる観点」として現実的なところで止めます。
- */
-export const MAX_SELECTED_SKILLS = 5;
+
+export { MAX_SELECTED_SKILLS, MAX_SKILL_REFERENCE_CHARS };
 
 const SKILL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i;
 const REFERENCE_DIR = 'references';

@@ -18,6 +18,33 @@ export async function renderMarkdown(markdown, options = {}) {
   return renderMarkdownFragment(markdown, options);
 }
 
+/**
+ * ブロックの種類と、その終わりの見つけ方の表です。上から順に当てて、最初に一致した
+ * ものをそのブロックの種類にします。どれにも当たらなければ段落です。
+ *
+ * 1つの表にしてあるのは、以前は「ブロックの始まりを見分ける判定」が2か所にあり、
+ * 片方だけ直すと段落が次のブロックを飲み込んだからです。いまは `startsNewBlock` も
+ * この表を読むので、ずれようがありません。
+ */
+const BLOCK_KINDS = [
+  {
+    match: matchFence,
+    // Mermaidは描画のしかたが違うので、コードブロックと分けて数えます。
+    kindOf: (fence) => (fence.language === 'mermaid' ? 'mermaid' : 'code'),
+    scan: (lines, index, fence) => scanUntil(lines, index, (line) => matchesClosingFence(line, fence))
+  },
+  {
+    match: isZennContainerStart,
+    kindOf: () => 'container',
+    scan: (lines, index) => scanUntil(lines, index, isZennContainerEnd)
+  },
+  { match: isHeading, kindOf: () => 'heading', scan: scanOneLine },
+  { match: isTableRow, kindOf: () => 'table', scan: scanWhile(isTableRow) },
+  { match: isBlockquote, kindOf: () => 'blockquote', scan: scanWhile(isBlockquote) },
+  { match: isListItem, kindOf: () => 'list', scan: scanWhile(isListItem) },
+  { match: isThematicBreak, kindOf: () => 'thematic-break', scan: scanOneLine }
+];
+
 export function parseMarkdownBlocks(markdown) {
   const source = String(markdown);
   const lines = splitSourceLines(source);
@@ -32,47 +59,13 @@ export function parseMarkdownBlocks(markdown) {
 
     const startIndex = index;
     const firstLine = lines[index].text;
-    const fence = matchFence(firstLine);
-    let kind = 'paragraph';
-
-    if (fence) {
-      kind = fence.language === 'mermaid' ? 'mermaid' : 'code';
-      index += 1;
-      while (index < lines.length) {
-        const isClosingFence = matchesClosingFence(lines[index].text, fence);
-        index += 1;
-        if (isClosingFence) break;
-      }
-    } else if (isZennContainerStart(firstLine)) {
-      kind = 'container';
-      index += 1;
-      while (index < lines.length) {
-        const isClosingContainer = /^:::\s*$/.test(lines[index].text);
-        index += 1;
-        if (isClosingContainer) break;
-      }
-    } else if (/^#{1,6}\s+/.test(firstLine)) {
-      kind = 'heading';
-      index += 1;
-    } else if (/^\|.+\|\s*$/.test(firstLine)) {
-      kind = 'table';
-      index += 1;
-      while (index < lines.length && /^\|.+\|\s*$/.test(lines[index].text)) index += 1;
-    } else if (/^>\s?/.test(firstLine)) {
-      kind = 'blockquote';
-      index += 1;
-      while (index < lines.length && /^>\s?/.test(lines[index].text)) index += 1;
-    } else if (listMatch(firstLine)) {
-      kind = 'list';
-      index += 1;
-      while (index < lines.length && listMatch(lines[index].text)) index += 1;
-    } else if (isThematicBreak(firstLine)) {
-      kind = 'thematic-break';
-      index += 1;
-    } else {
-      index += 1;
-      while (index < lines.length && !startsNewBlock(lines[index].text)) index += 1;
-    }
+    const entry = BLOCK_KINDS.map((kind) => ({ kind, matched: kind.match(firstLine) }))
+      .find(({ matched }) => matched);
+    // 表のどれにも当たらない行は段落です。次のブロックが始まるところまでが本文になります。
+    const [kind, end] = entry
+      ? [entry.kind.kindOf(entry.matched), entry.kind.scan(lines, index, entry.matched)]
+      : ['paragraph', scanUntilNewBlock(lines, index)];
+    index = end;
 
     const first = lines[startIndex];
     const last = lines[index - 1];
@@ -86,6 +79,37 @@ export function parseMarkdownBlocks(markdown) {
   }
 
   return blocks;
+}
+
+/** 閉じる行までを含めます。閉じないまま終わっても、そこまでを1つのブロックにします。 */
+function scanUntil(lines, index, isClosing) {
+  let next = index + 1;
+  while (next < lines.length) {
+    const closing = isClosing(lines[next].text);
+    next += 1;
+    if (closing) break;
+  }
+  return next;
+}
+
+/** 同じ形の行が続くかぎり伸ばします。表・引用・箇条書きはこれです。 */
+function scanWhile(isSameKind) {
+  return (lines, index) => {
+    let next = index + 1;
+    while (next < lines.length && isSameKind(lines[next].text)) next += 1;
+    return next;
+  };
+}
+
+function scanOneLine(lines, index) {
+  return index + 1;
+}
+
+/** 段落。空行か、別のブロックの始まりに出会うまでが本文です。 */
+function scanUntilNewBlock(lines, index) {
+  let next = index + 1;
+  while (next < lines.length && !startsNewBlock(lines[next].text)) next += 1;
+  return next;
 }
 
 async function renderMarkdownFragment(markdown, options) {
@@ -183,7 +207,23 @@ function isZennContainerStart(line) {
   return /^:::(?:message(?:\s+alert)?|details(?:\s+.+)?)\s*$/.test(line);
 }
 
-function listMatch(line) {
+function isZennContainerEnd(line) {
+  return /^:::\s*$/.test(line);
+}
+
+function isHeading(line) {
+  return /^#{1,6}\s+/.test(line);
+}
+
+function isTableRow(line) {
+  return /^\|.+\|\s*$/.test(line);
+}
+
+function isBlockquote(line) {
+  return /^>\s?/.test(line);
+}
+
+function isListItem(line) {
   return /^\s*(?:[-*+]|\d+\.)\s+/.test(line);
 }
 
@@ -191,15 +231,9 @@ function isThematicBreak(line) {
   return /^\s{0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/.test(line);
 }
 
+/** 段落を切る行かどうか。判定は BLOCK_KINDS の表そのものを使います。 */
 function startsNewBlock(line) {
-  if (line.trim() === '') return true;
-  return Boolean(matchFence(line))
-    || isZennContainerStart(line)
-    || /^#{1,6}\s+/.test(line)
-    || /^\|.+\|\s*$/.test(line)
-    || /^>\s?/.test(line)
-    || listMatch(line)
-    || isThematicBreak(line);
+  return line.trim() === '' || BLOCK_KINDS.some(({ match }) => Boolean(match(line)));
 }
 
 function escapeHtml(value) {

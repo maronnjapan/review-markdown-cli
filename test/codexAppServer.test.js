@@ -101,6 +101,86 @@ test('a review thread reads deeper than a translation thread, and its turns stay
   await client.close();
 });
 
+test('設定ファイルで名指ししたモデルと推論強度を、その用途に使う', async (t) => {
+  const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'review-codex-runtime-'));
+  t.after(() => fs.rm(runtimeDir, { recursive: true, force: true }));
+  const protocol = createFakeProtocol({ models: [FAST_MODEL, DEEP_MODEL] });
+  const client = new CodexAppServer({
+    runtimeDir,
+    spawnProcess: () => protocol.child,
+    models: {
+      assistant: { model: 'gpt-5.6-luna', effort: 'low' },
+      review: { model: 'gpt-5.6-codex', effort: 'medium' }
+    }
+  });
+
+  const threadId = await client.createThread({ ephemeral: true, purpose: 'review' });
+  await client.runTurn({ threadId, prompt: 'Review this document.' });
+
+  assert.equal(client.model, 'gpt-5.6-luna');
+  assert.equal(client.effort, 'low');
+  assert.equal(client.reviewModel, 'gpt-5.6-codex');
+  // 自動選択なら 'high' を選ぶところを、設定した 'medium' が勝ちます。
+  assert.equal(client.reviewEffort, 'medium');
+  assert.equal(protocol.messages.find(({ method }) => method === 'turn/start').params.effort, 'medium');
+
+  await client.close();
+});
+
+test('Codexが持っていないモデルを設定したら、黙って別のモデルへ落とさずに止まる', async (t) => {
+  const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'review-codex-runtime-'));
+  t.after(() => fs.rm(runtimeDir, { recursive: true, force: true }));
+  const protocol = createFakeProtocol({ models: [FAST_MODEL, DEEP_MODEL] });
+  const client = new CodexAppServer({
+    runtimeDir,
+    spawnProcess: () => protocol.child,
+    models: { review: { model: 'gpt-9-imaginary' } }
+  });
+
+  await assert.rejects(
+    client.createThread({ ephemeral: true, purpose: 'review' }),
+    /aiReviewModel がCodexにありません: gpt-9-imaginary.*gpt-5\.6-luna, gpt-5\.6-codex/s,
+    '設定したつもりの人が気づけるように、使えるモデルまで出す'
+  );
+
+  await client.close();
+});
+
+test('モデルが受け付けない推論強度を設定したら、そのまま送らずに止まる', async (t) => {
+  const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'review-codex-runtime-'));
+  t.after(() => fs.rm(runtimeDir, { recursive: true, force: true }));
+  const protocol = createFakeProtocol({ models: [FAST_MODEL, DEEP_MODEL] });
+  const client = new CodexAppServer({
+    runtimeDir,
+    spawnProcess: () => protocol.child,
+    // gpt-5.6-luna は none と low しか持っていません。
+    models: { assistant: { model: 'gpt-5.6-luna', effort: 'high' } }
+  });
+
+  await assert.rejects(
+    client.createThread({ ephemeral: true }),
+    /aiEffort を gpt-5\.6-luna は受け付けません: high（使える強度: none, low）/,
+    'モデル名と同じく、設定した強度も黙って落とさない'
+  );
+
+  await client.close();
+});
+
+const FAST_MODEL = {
+  id: 'gpt-5.6-luna',
+  supportedReasoningEfforts: [{ reasoningEffort: 'none' }, { reasoningEffort: 'low' }],
+  defaultReasoningEffort: 'low'
+};
+
+const DEEP_MODEL = {
+  id: 'gpt-5.6-codex',
+  isDefault: true,
+  supportedReasoningEfforts: [
+    { reasoningEffort: 'low' }, { reasoningEffort: 'medium' }, { reasoningEffort: 'high' }
+  ],
+  defaultReasoningEffort: 'medium'
+};
+
 function createFakeProtocol({ models = [DEFAULT_MODEL] } = {}) {
   const child = new EventEmitter();
   const stdout = new PassThrough();

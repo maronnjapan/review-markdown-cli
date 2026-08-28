@@ -396,6 +396,37 @@ review-markdown . --ai-context '社内の運用手順書。読者は当番の担
 会話の途中で書き換えた前提は、次の質問から渡します。
 翻訳キャッシュは前提ごとに分けるため、前提を変えると訳し直します。
 
+## AIの調整
+
+AIの振る舞いを変えたいとき、開く場所は「何を変えたいか」で1つに決まります。
+
+| 変えたいこと | 開く場所 |
+| --- | --- |
+| レビューの厳しさ、must と should の境目、指摘に書かせる内容 | `src/prompts/review.js` の1周目の指示 |
+| 根拠の弱い指摘をどれくらい取り下げるか | `src/prompts/review.js` の2周目（反証）の取り下げ条件 |
+| 翻訳・AIチャット・指摘の配置の言い回し | `src/prompts/` の該当ファイル |
+| 指摘の件数、渡す本文の量、見取り図に載せる見出し数 | `src/aiLimits.js` |
+| どの機能をどのモデル・推論強度で走らせるか | 設定ファイルの `aiModel` / `aiReviewModel` ほか（下記）、既定の選び方は `src/codexProfiles.js` |
+| レビューの観点そのもの | `skills/<名前>/SKILL.md`（コードではありません） |
+
+`src/prompts/` にはロジックを置いていません。開くと英語の指示文とJSONスキーマだけが並んでいるので、文面の編集にコードを読む必要はありません。
+
+たとえば「1回のレビューで出させる指摘を20件から12件に減らす」なら、`src/aiLimits.js` の次の1行です。
+
+```js
+/**
+ * 1周目に出させる指摘の上限。プロンプトの「Report at most …」へそのまま入ります。
+ * 増やすほどレビュアーが読む量が増え、減らすほど見落とします。
+ */
+export const MAX_FINDINGS = 20;
+```
+
+### 文面を変えたらテストが落ちます
+
+`test/promptSnapshot.test.js` が、AIへ渡す文面すべての描画を sha256 で固定しています。文面を変えると落ちるので、**意図した変更なら、テストが表示するハッシュを書き写してください**。
+
+固定しているのは、うっかりの変更を防ぐためです。読み取りコンテキストの描画結果は翻訳キャッシュの鍵の一部になっているので、空白1つの違いでも利用者の手元のキャッシュが全件無効になります。整理のつもりで文面を崩したのか、本当に変えたのかを、この1本で分けています。
+
 ## ファイル一覧
 
 ディレクトリは既定ですべて閉じた状態で表示します。大きなリポジトリでも、まずプロジェクトの構成が一覧できます。
@@ -442,7 +473,7 @@ review-markdown . --exclude 'tmp,archive,**/node_modules'
 
 ## 設定ファイル
 
-毎回オプションを打ち込まなくてよいように、`include` / `exclude` / `port` / `open` / `aiContext` を設定ファイルに保存できます。設定は `review-markdown config` コマンドで読み書きします（エディタで直接編集しても構いません）。
+毎回オプションを打ち込まなくてよいように、レビュー対象の絞り込みやAIの設定を設定ファイルに保存できます。設定は `review-markdown config` コマンドで読み書きします（エディタで直接編集しても構いません）。
 
 ```bash
 # 除外パターンを追加する（複数指定・カンマ区切り可）
@@ -463,6 +494,10 @@ review-markdown config set open false
 
 # AIがこのディレクトリの原稿を読むときの前提を決める
 review-markdown config set aiContext '入門者向けの技術書。読者はJavaScriptの基礎を知っている。'
+
+# AIレビューに使うモデルと推論強度を固定する（未設定ならCodexが持つものから自動で選ぶ）
+review-markdown config set aiReviewModel gpt-5.6-codex --global
+review-markdown config set aiReviewEffort high --global
 ```
 
 設定後は、オプションなしで実行するだけで同じ絞り込みが適用されます。
@@ -493,7 +528,9 @@ review-markdown .
   "exclude": ["drafts/**", "**/*.wip.md", "node_modules"],
   "port": 4000,
   "open": true,
-  "aiContext": "入門者向けの技術書。読者はJavaScriptの基礎を知っている。"
+  "aiContext": "入門者向けの技術書。読者はJavaScriptの基礎を知っている。",
+  "aiReviewModel": "gpt-5.6-codex",
+  "aiReviewEffort": "high"
 }
 ```
 
@@ -504,6 +541,20 @@ review-markdown .
 | `port` | 数値 | ローカルサーバーのポート番号 |
 | `open` | 真偽値 | 起動時にブラウザを開くかどうか |
 | `aiContext` | 文字列 | AIがこのディレクトリの原稿を読むときの前提（4000文字まで） |
+| `aiModel` | 文字列 | 翻訳・AIチャット・指摘の配置に使うCodexのモデル |
+| `aiEffort` | 文字列 | 同上の推論強度（`none` / `low` / `medium` / `high` など） |
+| `aiReviewModel` | 文字列 | AIレビューと読み手ペルソナに使うCodexのモデル |
+| `aiReviewEffort` | 文字列 | 同上の推論強度 |
+
+`aiModel` / `aiReviewModel` を書かなければ、Codexが持っているモデルから自動で選びます（速いモデルを翻訳とチャットへ、深く読むモデルをレビューへ）。名指ししたモデルがCodexに無いときは、黙って別のモデルへ落とさずに、使えるモデルを並べて起動を止めます。設定が効いていることは起動時のログで確認できます。
+
+```
+review-markdown .
+# Markdown Review is serving /path/to/markdown-project
+#   ai review model: gpt-5.6-codex / high
+```
+
+なお、Codexの実行コマンド自体は設定キーにしていません。レビュー対象のリポジトリが自前の `.review-markdown.json` を同梱していることがあり、そこから起動する実行ファイルを選ばせると、原稿を開いただけで任意のコマンドが走ることになるためです。
 
 ### 優先順位
 
@@ -602,6 +653,8 @@ npm install
 npm test    # node --test（サーバー、Markdown変換、jsdomによる画面テスト）
 ```
 
+AIへ渡す文面を変えると `test/promptSnapshot.test.js` が落ちます。意図した変更なら、テストが表示するハッシュを `EXPECTED` へ書き写してください（「[AIの調整](#aiの調整)」を参照）。
+
 ## CLIオプション
 
 ```bash
@@ -639,27 +692,53 @@ src/links.js             Markdown内リンクの解決（アプリ内遷移／�
 src/markdown.js          MarkdownのHTMLレンダリングとブロック分割
 src/editorMarkdown.js    編集結果のHTML→Markdown変換と差分適用
 src/reviewStore.js       .review 配下のレビューJSON・Markdownの読み書き
-src/aiContext.js         読み取りコンテキストの検証と、AIへ渡すブロックの組み立て
+src/argv.js              コマンドライン引数の共通処理（本体とconfigサブコマンドで共有）
+
+AI（効き方を変えたいときに開くのは、はじめの2つです）
+src/prompts/             AIへ渡す文面と出力スキーマだけを置く棚。ロジックは入れない
+src/aiLimits.js          モデルが読む量・返す量の上限。1行ごとに何との取引かを注記
+src/aiVocabulary.js      重大度（must/should/idea）と確信度の語彙・順序・日本語ラベル
+src/codexProfiles.js     機能→用途→モデル・推論強度の表
+src/aiContext.js         読み取りコンテキストの検証と合成
 src/aiStore.js           AI会話と翻訳キャッシュの端末保存
-src/aiService.js         翻訳・会話セッション・指摘コメント配置・AIレビューの制御
-src/commentPlacement.js  本文のブロック分割と、指摘コメントの配置結果の組み立て
-src/documentReview.js    AIレビューのプロンプトと、レビュー結果の組み立て
+src/aiService.js         各AI機能の配線（材料集め → プロンプト → 1ターン → 整形）
+src/commentPlacement.js  本文のブロック分割と、指摘コメントの配置結果の検証
+src/documentReview.js    AIレビューの材料の組み立てと、2周分の答えの重ね合わせ
 src/reviewSkills.js      レビュースキル（SKILL.md）の探索と読み込み
-src/persona.js           読み手ペルソナの検証と、AIへ渡すブロックの組み立て
-src/commentContext.js    AIチャットへ渡すレビューコメントの収集
-src/codexAppServer.js    Codex App Serverとの読み取り専用通信
+src/persona.js           読み手ペルソナの検証と正規化
+src/commentContext.js    AIチャットへ渡すレビューコメントの選別
+src/codexAppServer.js    Codexのスレッドとターン（読み取り専用に閉じ込める）
+src/codexRpc.js          Codex App Serverとの JSON-RPC 通信
+
 public/app.js            画面のエントリポイント
 public/js/               画面のモジュール（下記）
+```
+
+`src/prompts/` は文面だけの置き場です。AIの効き方を変えたいときはここを開きます。
+
+```
+prompts/readingContext.js  読み取りコンテキスト・読み手ペルソナ・レビューコメントの枠
+prompts/review.js          AIレビュー1周目の指示と2周目の反証条件、出力スキーマ
+prompts/placement.js       指摘コメントの配置の指示と出力スキーマ
+prompts/persona.js         走り書きを読み手ペルソナへ組み直させる指示
+prompts/translate.js       翻訳（単語／文章）の指示と出力スキーマ
+prompts/chat.js            AIチャット（初回と2回目以降）の指示
+prompts/codexRole.js       スレッドを開くときにモデルへ渡す立場
 ```
 
 `public/js/` は責務ごとに分かれています。DOMやアプリの状態はすべて `createApp()` が生成するため、モジュール側は状態を持ちません。
 
 ```
 createApp.js        画面全体の配線とルーティング
+documentTargets.js  「本文のどこを指しているか」の組み立て（コメント用・読ませる用・選択範囲）
+bodyCopy.js         本文のクリップボードへのコピー
 state.js            画面の状態
 dom.js              DOM要素の参照解決
 api.js              サーバーAPIの呼び出し
-ai.js               翻訳とAIチャットの表示、先読み、会話操作、コメントの受け渡し
+ai.js               翻訳とAIチャットの表示、会話操作、コメントの受け渡し
+aiRequest.js        AIへ1回頼むときの共通の段取り（二重実行の抑止・中断・文書の取り違え防止）
+partialJson.js      届いた途中までのJSONから、書き終わったフィールドを取り出す
+translationPrefetch.js 選択し終えた時点で翻訳を先に頼んでおく仕組み
 aiContext.js        読み取りコンテキストの入力欄と保存状態の表示
 sidePanes.js        サイドパネルのタブ切り替え
 fileListView.js     ファイル一覧の表示と開閉状態の記憶

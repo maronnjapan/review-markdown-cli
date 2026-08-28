@@ -24,6 +24,8 @@ if (options.configSources?.length) console.log(`  config: ${options.configSource
 if (filter.include.length) console.log(`  include: ${filter.include.join(', ')}`);
 if (filter.exclude.length) console.log(`  exclude: ${filter.exclude.join(', ')}`);
 if (options.aiContext) console.log(`  ai context: ${summarize(options.aiContext)}`);
+// モデルを名指ししたときだけ出します。自動で選んだモデルは /api/ai/status が画面へ出します。
+for (const [label, value] of aiModelLines(options)) console.log(`  ${label}: ${value}`);
 if (port !== options.port) {
   console.log(`Port ${options.port} is already in use; using ${port} instead.`);
 }
@@ -96,6 +98,28 @@ function shutdown() {
     process.exit(0);
   });
   server.closeAllConnections();
+}
+
+/**
+ * 設定ファイルでモデルや推論強度を固定したとき、それが効いていることを起動時に見せます。
+ * 設定していないものは自動で選ぶので、何も出しません（画面のAIパネルが実際の値を出します）。
+ */
+function aiModelLines({ aiModels = {} }) {
+  return [
+    ...profileLines('ai model', aiModels.assistant),
+    ...profileLines('ai review model', aiModels.review)
+  ];
+}
+
+/**
+ * モデルと推論強度は別々に設定できるので、別々の行にします。
+ * 1行にまとめると、推論強度だけを設定したときにモデル名の場所へ強度が出てしまいます。
+ */
+function profileLines(label, { model, effort } = {}) {
+  return [
+    ...(model ? [[label, model]] : []),
+    ...(effort ? [[`${label.replace(' model', '')} effort`, effort]] : [])
+  ];
 }
 
 /** One line for the startup banner; the whole text still goes to the AI. */

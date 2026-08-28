@@ -1,3 +1,5 @@
+import { completeJsonField } from './partialJson.js';
+import { createTranslationPrefetch } from './translationPrefetch.js';
 import { escapeHtml, truncate } from './util.js';
 
 const TRANSLATION_PREFETCH_DELAY_MS = 0;
@@ -106,52 +108,14 @@ export function createAiController({ refs, state, api, toaster, panes, flushComm
     if (state.translationPrefetch?.key === key) return;
     state.translationPrefetch?.cancel();
 
-    const controller = new AbortController();
-    const progress = createTranslationProgress(key);
-    let resolvePromise;
-    let rejectPromise;
-    const promise = new Promise((resolve, reject) => {
-      resolvePromise = resolve;
-      rejectPromise = reject;
-    });
-    const prefetch = {
+    const prefetch = createTranslationPrefetch({
       key,
-      promise,
-      controller,
-      progress,
-      started: false,
-      settled: false,
-      timer: null,
-      start() {
-        if (prefetch.started || prefetch.settled || controller.signal.aborted) return;
-        prefetch.started = true;
-        clearTimeout(prefetch.timer);
-        requestTranslation(target, controller.signal, progress.onEvent).then(
-          (event) => settle(resolvePromise, event),
-          (error) => settle(rejectPromise, error)
-        );
-      },
-      cancel() {
-        if (prefetch.started || prefetch.settled) return false;
-        controller.abort();
-        return true;
-      }
-    };
-
-    function settle(callback, value) {
-      if (prefetch.settled) return;
-      prefetch.settled = true;
-      clearTimeout(prefetch.timer);
-      callback(value);
-    }
-
-    controller.signal.addEventListener('abort', () => {
-      if (!prefetch.started) {
-        settle(rejectPromise, Object.assign(new Error('翻訳を中止しました'), { name: 'AbortError' }));
-      }
-    }, { once: true });
-    prefetch.timer = setTimeout(prefetch.start, TRANSLATION_PREFETCH_DELAY_MS);
-    promise.catch(() => {
+      progress: createTranslationProgress(key),
+      delayMs: TRANSLATION_PREFETCH_DELAY_MS,
+      request: (signal, onEvent) => requestTranslation(target, signal, onEvent)
+    });
+    // 先読みが失敗しても画面には出しません。押されたときに、もう一度ふつうに頼みます。
+    prefetch.promise.catch(() => {
       if (state.translationPrefetch === prefetch) state.translationPrefetch = null;
     });
     state.translationPrefetch = prefetch;
@@ -416,64 +380,6 @@ function targetKey(target) {
     target.contextAfter || '',
     target.headingPath || []
   ]);
-}
-
-function completeJsonField(text, field) {
-  const marker = `"${field}"`;
-  const markerIndex = text.indexOf(marker);
-  if (markerIndex < 0) return undefined;
-  const colonIndex = text.indexOf(':', markerIndex + marker.length);
-  if (colonIndex < 0) return undefined;
-  let start = colonIndex + 1;
-  while (/\s/.test(text[start] || '')) start += 1;
-  const end = completeJsonValueEnd(text, start);
-  if (end === null) return undefined;
-  try {
-    return JSON.parse(text.slice(start, end));
-  } catch {
-    return undefined;
-  }
-}
-
-function completeJsonValueEnd(text, start) {
-  const opening = text[start];
-  if (opening === '"') {
-    for (let index = start + 1, escaped = false; index < text.length; index += 1) {
-      const character = text[index];
-      if (escaped) {
-        escaped = false;
-      } else if (character === '\\') {
-        escaped = true;
-      } else if (character === '"') {
-        return index + 1;
-      }
-    }
-    return null;
-  }
-  if (opening !== '[' && opening !== '{') return null;
-
-  const closing = opening === '[' ? ']' : '}';
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let index = start; index < text.length; index += 1) {
-    const character = text[index];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (character === '\\') escaped = true;
-      else if (character === '"') inString = false;
-      continue;
-    }
-    if (character === '"') {
-      inString = true;
-    } else if (character === opening) {
-      depth += 1;
-    } else if (character === closing) {
-      depth -= 1;
-      if (depth === 0) return index + 1;
-    }
-  }
-  return null;
 }
 
 function translationHtml(translation) {

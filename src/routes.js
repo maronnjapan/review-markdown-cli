@@ -93,34 +93,92 @@ async function aiConversation(context) {
   });
 }
 
-async function translateWithAi(context) {
+/**
+ * 生成しながら返すAIエンドポイント、5本ぶんの共通の手順です。
+ *
+ * どれも同じことをします。トークンを確かめ、本文を読み、対象ファイルを解決し、
+ * NDJSONを開いて `started` → `delta`（何度でも）→ `result` の順に流します。
+ * 違うのは「どのサービス呼び出しか」と「結果をどう包むか」の2つだけなので、
+ * 各エンドポイントはその2つだけを書きます。
+ *
+ * @param {Function} options.run ({ aiService, documentPath, body, signal, onDelta, send }) を
+ *   受け取り、結果を返します。`send` は途中経過を足したいときだけ使います（AIレビューの phase）。
+ * @param {Function} options.toEvent 結果を `result` イベントの中身へ包みます。
+ * @param {boolean} [options.needsDocument] 対象ファイルを要求するか。チャットだけが false です
+ *   （どの文書の話かは会話idで決まるので、リクエストは path を持ちません）。
+ */
+async function streamAiRequest(context, { run, toEvent, needsDocument = true }) {
   const { rootDir, filter, aiService, request, response } = context;
   authorizeAiRequest(context);
   const body = await readJsonBody(request);
-  const relativeFile = reviewTarget(rootDir, filter, body.path);
+  // ここで弾けば、NDJSONを開く前に 400 を返せます。開いてしまうと 200 のまま
+  // 中身がエラーになり、呼ぶ側は「使い方の誤り」と「AIの失敗」を区別できません。
+  const documentPath = needsDocument ? reviewTarget(rootDir, filter, body.path) : null;
   return streamAiResponse(request, response, async ({ send, signal }) => {
     send({ type: 'started' });
-    const translation = await aiService.translate(relativeFile, body.target, {
+    const result = await run({
+      aiService,
+      documentPath,
+      body,
       signal,
+      send,
       onDelta: (delta) => send({ type: 'delta', delta })
     });
-    send({ type: 'result', translation });
+    send({ type: 'result', ...toEvent(result) });
+  });
+}
+
+function translateWithAi(context) {
+  return streamAiRequest(context, {
+    run: ({ aiService, documentPath, body, signal, onDelta }) => (
+      aiService.translate(documentPath, body.target, { signal, onDelta })
+    ),
+    toEvent: (translation) => ({ translation })
   });
 }
 
 /** Proposes where the reviewer's notes belong. Saving stays with /api/review. */
-async function placeAiComments(context) {
-  const { rootDir, filter, aiService, request, response } = context;
-  authorizeAiRequest(context);
-  const body = await readJsonBody(request);
-  const relativeFile = reviewTarget(rootDir, filter, body.path);
-  return streamAiResponse(request, response, async ({ send, signal }) => {
-    send({ type: 'started' });
-    const placement = await aiService.placeComments(relativeFile, body.notes, {
-      signal,
-      onDelta: (delta) => send({ type: 'delta', delta })
-    });
-    send({ type: 'result', ...placement });
+function placeAiComments(context) {
+  return streamAiRequest(context, {
+    run: ({ aiService, documentPath, body, signal, onDelta }) => (
+      aiService.placeComments(documentPath, body.notes, { signal, onDelta })
+    ),
+    toEvent: (placement) => placement
+  });
+}
+
+/** レビュアーの走り書きを読み手ペルソナへ組み直します。保存は /api/review です。 */
+function composeAiPersona(context) {
+  return streamAiRequest(context, {
+    run: ({ aiService, documentPath, body, signal, onDelta }) => (
+      aiService.composePersona(documentPath, body.input, { signal, onDelta })
+    ),
+    toEvent: (persona) => ({ persona })
+  });
+}
+
+/** Reviews one document with the chosen skills. Saving stays with /api/review. */
+function reviewWithAi(context) {
+  return streamAiRequest(context, {
+    run: ({ aiService, documentPath, body, signal, onDelta, send }) => (
+      aiService.reviewDocument(documentPath, { skillIds: body.skillIds ?? body.skillId }, {
+        signal,
+        onDelta,
+        // レビューは2周するので、いまどちらを読んでいるかを待っている画面へ流します。
+        onPhase: (phase) => send({ type: 'phase', phase })
+      })
+    ),
+    toEvent: (review) => review
+  });
+}
+
+function sendAiMessage(context) {
+  return streamAiRequest(context, {
+    needsDocument: false,
+    run: ({ aiService, body, signal, onDelta }) => (
+      aiService.sendMessage(body.conversationId, body.message, { signal, onDelta })
+    ),
+    toEvent: (result) => result
   });
 }
 
@@ -136,54 +194,6 @@ async function readAiReviewSkill(context) {
   const { aiService, response, url } = context;
   authorizeAiRequest(context);
   return sendJson(response, { skill: await aiService.readReviewSkill(url.searchParams.get('id')) });
-}
-
-/** レビュアーの走り書きを読み手ペルソナへ組み直します。保存は /api/review です。 */
-async function composeAiPersona(context) {
-  const { rootDir, filter, aiService, request, response } = context;
-  authorizeAiRequest(context);
-  const body = await readJsonBody(request);
-  const relativeFile = reviewTarget(rootDir, filter, body.path);
-  return streamAiResponse(request, response, async ({ send, signal }) => {
-    send({ type: 'started' });
-    const persona = await aiService.composePersona(relativeFile, body.input, {
-      signal,
-      onDelta: (delta) => send({ type: 'delta', delta })
-    });
-    send({ type: 'result', persona });
-  });
-}
-
-/** Reviews one document with the chosen skills. Saving stays with /api/review. */
-async function reviewWithAi(context) {
-  const { rootDir, filter, aiService, request, response } = context;
-  authorizeAiRequest(context);
-  const body = await readJsonBody(request);
-  const relativeFile = reviewTarget(rootDir, filter, body.path);
-  return streamAiResponse(request, response, async ({ send, signal }) => {
-    send({ type: 'started' });
-    const review = await aiService.reviewDocument(relativeFile, { skillIds: body.skillIds ?? body.skillId }, {
-      signal,
-      onDelta: (delta) => send({ type: 'delta', delta }),
-      // レビューは2周するので、いまどちらを読んでいるかを待っている画面へ流します。
-      onPhase: (phase) => send({ type: 'phase', phase })
-    });
-    send({ type: 'result', ...review });
-  });
-}
-
-async function sendAiMessage(context) {
-  const { aiService, request, response } = context;
-  authorizeAiRequest(context);
-  const body = await readJsonBody(request);
-  return streamAiResponse(request, response, async ({ send, signal }) => {
-    send({ type: 'started' });
-    const result = await aiService.sendMessage(body.conversationId, body.message, {
-      signal,
-      onDelta: (delta) => send({ type: 'delta', delta })
-    });
-    send({ type: 'result', ...result });
-  });
 }
 
 async function streamAiResponse(request, response, run) {

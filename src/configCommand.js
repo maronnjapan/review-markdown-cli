@@ -5,9 +5,11 @@
  * ファイル操作以外は副作用を持たないので、そのままテストできる。
  */
 
+import { splitFlag, takeValue } from './argv.js';
 import {
   CONFIG_FILE_NAME,
   CONFIG_KEYS,
+  CONFIG_KEY_HELP,
   LIST_KEYS,
   TEXT_KEYS,
   defaultProjectConfigPath,
@@ -34,11 +36,7 @@ Commands:
   unset <key>              設定値を削除する
 
 Keys:
-  exclude   レビュー対象から外すパスのパターン（一覧）
-  include   レビュー対象に含めるパスのパターン（一覧）
-  port      ローカルサーバーのポート番号
-  open      起動時にブラウザを開くかどうか（true / false）
-  aiContext AIがこのディレクトリの原稿を読むときの前提（文章）
+${CONFIG_KEY_HELP}
 
 Options:
   -C, --dir <path>  対象ディレクトリ（既定: カレントディレクトリ）
@@ -60,7 +58,14 @@ Examples:
 
 aiContext は翻訳・AIチャット・指摘の配置で AI に渡す読み取りコンテキストです。
 ここに書いた前提はディレクトリ配下のすべての文書に効きます。
-文書ごとの前提はブラウザのAIパネルから書けて、両方まとめて AI へ渡します。`;
+文書ごとの前提はブラウザのAIパネルから書けて、両方まとめて AI へ渡します。
+
+aiModel / aiReviewModel を書かなければ、Codexが持っているモデルから自動で選びます
+（速いモデルを翻訳とチャットへ、深く読むモデルをレビューへ）。名指ししたモデルが
+Codexに無いときは、黙って別のモデルへ落とさずに起動を止めます。
+
+  review-markdown config set aiReviewModel gpt-5.6-codex --global
+  review-markdown config set aiReviewEffort high --global`;
 
 const COMMANDS = new Set(['init', 'path', 'list', 'get', 'set', 'add', 'remove', 'unset']);
 
@@ -81,11 +86,8 @@ export function parseConfigArgs(argv) {
     } else if (flag === '--json') {
       parsed.json = true;
     } else if (flag === '--dir' || flag === '-C') {
-      const value = inlineValue ?? argv[index + 1];
-      if (inlineValue === undefined) index += 1;
-      if (value === undefined || (inlineValue === undefined && value.startsWith('-'))) {
-        throw new Error(`${flag} requires a value`);
-      }
+      const { value, nextIndex } = takeValue(argv, index, flag, inlineValue);
+      index = nextIndex;
       parsed.dir = value;
     } else if (flag.startsWith('-') && flag !== '-') {
       throw new Error(`unknown option: ${flag}`);
@@ -232,10 +234,4 @@ function assertKnownKey(key) {
 
 function output(stdout, warnings = []) {
   return { exitCode: 0, stdout, stderr: warnings };
-}
-
-function splitFlag(arg) {
-  if (!arg.startsWith('--') || !arg.includes('=')) return [arg, undefined];
-  const separator = arg.indexOf('=');
-  return [arg.slice(0, separator), arg.slice(separator + 1)];
 }
