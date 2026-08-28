@@ -15,6 +15,7 @@ import { createCommentPlacementController } from './commentPlacement.js';
 import { createContextNotesController } from './contextNotes.js';
 import { renderDiagrams } from './diagrams.js';
 import { createDocumentReviewController } from './documentReview.js';
+import { createDocumentReviseController } from './documentRevise.js';
 import { createDocumentTargets } from './documentTargets.js';
 import { queryRefs } from './dom.js';
 import { createEditor } from './editor.js';
@@ -103,6 +104,18 @@ export function createApp(document, { api = defaultApi } = {}) {
     flushComments: () => commentSaves.flush(),
     onPersonaChanged: markPersonaDirty,
     onAddComments: addComments,
+    onRevealTarget: revealTarget
+  });
+  const revise = createDocumentReviseController({
+    refs,
+    state,
+    api,
+    toaster,
+    prepareAi: () => ai.prepare(),
+    // 修正案はファイル内の位置を持つので、AIにはいま保存されている本文を読ませます。
+    // 編集モードで打ちかけのブロックが残っていると、その位置がもう当たりません。
+    flushComments: async () => (await editor.flush()) && (await commentSaves.flush()),
+    onApplyEdits: applyDocumentEdits,
     onRevealTarget: revealTarget
   });
 
@@ -205,6 +218,7 @@ export function createApp(document, { api = defaultApi } = {}) {
     placement.reset();
     contextNotes.load();
     documentReview.load();
+    revise.reset();
     renderComments();
 
     try {
@@ -366,6 +380,45 @@ export function createApp(document, { api = defaultApi } = {}) {
     return true;
   }
 
+  /**
+   * 許可された修正案を本文へ書き込みます。
+   *
+   * 通る道は編集モードと同じ `/api/file` です。AIがファイルへ触ることはなく、書くのは
+   * レビュアーが1件ずつ本文と見比べて許可した、この1回だけです。`baseRevision` は
+   * 「その修正案を作ったときの本文か」の申告で、違っていればサーバーが断ります。
+   */
+  async function applyDocumentEdits(chosen, baseRevision) {
+    if (state.mode !== 'comment') {
+      throw new Error('編集モードでは適用できません。コメントモードへ切り替えてください');
+    }
+    // 版の申告できない修正案は当てません。どの本文の上で作られたか分からない書き換えは、
+    // 当たっているかどうかを誰も確かめられないからです。
+    if (!baseRevision) throw new Error('修正案を作り直してください');
+    // 書きかけのコメントを先に保存します。この保存の応答は保存済みのコメントを返すので、
+    // 先に流しておかないと、書きかけが画面から消えます。
+    const documentPath = state.currentPath;
+    if (!(await commentSaves.flush())) throw new Error('コメントを保存できませんでした');
+    // 保存を待っている間に別の文書へ移っていたら、この修正案の宛先はもうありません。
+    if (state.currentPath !== documentPath) throw new Error('別の文書へ移動したため、適用を取りやめました');
+
+    const result = await api.saveFile({
+      path: documentPath,
+      baseRevision,
+      edits: chosen.map(({ blockId, start, end, after, delete: remove }) => {
+        // 修正案を空にして適用したときは、削除として扱います。空の原文を書き戻すと、
+        // 前後の空行だけが残った段落が本文に増えるためです。
+        const removing = remove || String(after).trim() === '';
+        return { blockId, start, end, markdown: removing ? '' : after, ...(removing ? { delete: true } : {}) };
+      })
+    });
+    // 書き込みは済んでいるので、結果は返します。映すのは、まだその文書を開いているときだけです。
+    if (state.currentPath === documentPath) {
+      adoptSavedDocument(result);
+      renderCommentMode();
+    }
+    return result;
+  }
+
   /** Puts the caret on the located text so the exact target is visible, not just its block. */
   function selectRange(match) {
     const selection = window.getSelection();
@@ -376,6 +429,8 @@ export function createApp(document, { api = defaultApi } = {}) {
 
   function renderComments() {
     ai.refreshTarget();
+    // 本文の修正は未解決のコメントを依頼として渡すので、件数が変わったら言い直させます。
+    revise.refresh();
     renderCommentList(refs.commentsList, {
       comments: state.comments,
       mode: state.mode,

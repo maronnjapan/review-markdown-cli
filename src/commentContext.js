@@ -15,10 +15,16 @@ import { readReview } from './reviewStore.js';
  * `prompts/readingContext.js` にあります。ここが持つのは「どれを選ぶか」だけです。
  */
 
-export async function collectCommentContext(rootDir, documentPath, target) {
+/**
+ * @param {boolean} [options.openOnly] 未解決のコメントだけを集めます。本文の修正案が
+ *   使います。解決済みのコメントはレビュアーが手当て済みと決めたものなので、
+ *   それを依頼として渡すと、直したものをもう一度直させることになります。
+ */
+export async function collectCommentContext(rootDir, documentPath, target, { openOnly = false } = {}) {
   const { comments = [] } = await readReview(rootDir, documentPath);
   const marked = comments
     .filter((comment) => String(comment?.comment || '').trim())
+    .filter((comment) => !openOnly || comment.status !== 'resolved')
     .map((comment) => ({ comment, attached: attachedToTarget(comment, target) }));
   // Dropping the comments about other places first keeps the discussed ones.
   const kept = marked.length > MAX_CHAT_COMMENTS

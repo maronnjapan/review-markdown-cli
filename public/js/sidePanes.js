@@ -2,7 +2,8 @@ const PANES = {
   comments: { panel: 'commentsPanel', tab: 'commentsTabButton' },
   ai: { panel: 'aiPanel', tab: 'aiTabButton' },
   placement: { panel: 'placementPanel', tab: 'placementTabButton' },
-  review: { panel: 'reviewPanel', tab: 'reviewTabButton' }
+  review: { panel: 'reviewPanel', tab: 'reviewTabButton' },
+  revise: { panel: 'revisePanel', tab: 'reviseTabButton' }
 };
 
 /**

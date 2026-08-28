@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { serveAsset } from './assets.js';
+import { documentRevision } from './documentEdits.js';
 import { applyBlockEdits } from './editorMarkdown.js';
 import { httpError, readJsonBody, sendBuffer, sendJson, startNdjson } from './http.js';
 import { assetUrlFor, isMarkdownPath, isTextDocumentPath, resolveDocumentLink } from './links.js';
@@ -37,7 +38,8 @@ const ROUTES = [
   { methods: ['GET'], pathname: '/api/ai/review-skills', handle: listAiReviewSkills },
   { methods: ['GET'], pathname: '/api/ai/review-skill', handle: readAiReviewSkill },
   { methods: ['POST'], pathname: '/api/ai/persona', handle: composeAiPersona },
-  { methods: ['POST'], pathname: '/api/ai/review', handle: reviewWithAi }
+  { methods: ['POST'], pathname: '/api/ai/review', handle: reviewWithAi },
+  { methods: ['POST'], pathname: '/api/ai/revise', handle: reviseWithAi }
 ];
 
 export function createRequestHandler({ rootDir, filter, aiService, aiToken, projectAiContext = '' }) {
@@ -172,6 +174,19 @@ function reviewWithAi(context) {
   });
 }
 
+/**
+ * 本文の修正案。ここでも本文は1文字も変わりません。返すのは候補で、レビュアーが
+ * 承認したものだけが、編集モードと同じ `/api/file` を通ってファイルへ入ります。
+ */
+function reviseWithAi(context) {
+  return streamAiRequest(context, {
+    run: ({ aiService, documentPath, body, signal, onDelta }) => (
+      aiService.proposeEdits(documentPath, body.instruction, { signal, onDelta })
+    ),
+    toEvent: (proposal) => proposal
+  });
+}
+
 function sendAiMessage(context) {
   return streamAiRequest(context, {
     needsDocument: false,
@@ -268,6 +283,11 @@ async function openFile({ rootDir, filter, projectAiContext, url, response }) {
   });
 }
 
+/**
+ * The one place a document's text is written. Edit mode sends the blocks the
+ * reviewer typed in; an approved AI proposal sends the Markdown it proposed
+ * (`src/documentEdits.js`). Either way the write is the reviewer's own.
+ */
 async function saveFile({ rootDir, filter, projectAiContext, request, response }) {
   const body = await readJsonBody(request);
   const relativeFile = reviewTarget(rootDir, filter, body.path);
@@ -275,13 +295,21 @@ async function saveFile({ rootDir, filter, projectAiContext, request, response }
 
   const filePath = path.join(rootDir, relativeFile);
   const currentMarkdown = await fs.readFile(filePath, 'utf8');
+  assertBaseRevision(body.baseRevision, currentMarkdown);
   const { markdown, appliedEdits } = applyBlockEdits(currentMarkdown, body.edits);
-  const review = await writeReview(rootDir, relativeFile, commentsOf(body), reviewPremiseOf(body));
+  const review = await writeReview(
+    rootDir,
+    relativeFile,
+    await commentsFor(rootDir, relativeFile, body),
+    reviewPremiseOf(body)
+  );
   await fs.writeFile(filePath, markdown, 'utf8');
 
   return sendJson(response, {
     path: relativeFile,
     markdown,
+    // 書き込んだあとの版。次の修正案を、この本文の上で適用してよいかの判断に使います。
+    revision: documentRevision(markdown),
     textBody: isTextDocumentPath(relativeFile),
     ...await renderBothViews(markdown, relativeFile, filter),
     appliedEdits,
@@ -289,6 +317,20 @@ async function saveFile({ rootDir, filter, projectAiContext, request, response }
     projectAiContext,
     reviewFile: await relativeReviewPath(rootDir, relativeFile)
   });
+}
+
+/**
+ * 「この本文の上で作った編集です」という申告を確かめます。
+ *
+ * 要るのはAIの修正案です。候補が持つのはファイル内の位置なので、候補を作ってから
+ * 承認するまでの間に本文が変わっていると、同じ位置がもう別の場所を指します。
+ * 黙って当てると、レビュアーが見比べたのとは違う箇所が書き換わります。
+ * 申告のない保存（編集モード）は、いま画面にあるブロックを送っているので素通しです。
+ */
+function assertBaseRevision(baseRevision, markdown) {
+  if (typeof baseRevision !== 'string' || !baseRevision) return;
+  if (documentRevision(markdown) === baseRevision) return;
+  throw httpError('本文がこの修正案を作ったときから変わっています。修正案を作り直してください', 409);
 }
 
 function openAsset({ rootDir, filter, url, response, headOnly }) {
@@ -299,12 +341,13 @@ function openAsset({ rootDir, filter, url, response, headOnly }) {
 async function saveReview({ rootDir, filter, request, response }) {
   const body = await readJsonBody(request);
   const relativeFile = reviewTarget(rootDir, filter, body.path);
-  // A request carrying only the reading context or the persona keeps the comments already on file.
-  const comments = Array.isArray(body.comments)
-    ? body.comments
-    : (await readReview(rootDir, relativeFile)).comments;
   return sendJson(response, {
-    review: await writeReview(rootDir, relativeFile, comments, reviewPremiseOf(body)),
+    review: await writeReview(
+      rootDir,
+      relativeFile,
+      await commentsFor(rootDir, relativeFile, body),
+      reviewPremiseOf(body)
+    ),
     reviewFile: await relativeReviewPath(rootDir, relativeFile)
   });
 }
@@ -328,8 +371,14 @@ function reviewTarget(rootDir, filter, requestedPath) {
   return relativeFile;
 }
 
-function commentsOf(body) {
-  return Array.isArray(body.comments) ? body.comments : [];
+/**
+ * A request that carries no comments keeps the ones already on file. The page
+ * beacon on the way out sends the reading context alone, and an approved AI
+ * proposal sends only the edit it was approved for; neither is a request to
+ * clear the review.
+ */
+async function commentsFor(rootDir, relativeFile, body) {
+  return Array.isArray(body.comments) ? body.comments : (await readReview(rootDir, relativeFile)).comments;
 }
 
 /**

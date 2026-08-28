@@ -64,6 +64,10 @@ export function createState() {
     review: null,
     reviewAbortController: null,
 
+    // 本文の修正案。適用を許可するまで、ここに載っているだけでファイルは変わりません。
+    revise: null,
+    reviseAbortController: null,
+
     // Edit mode bookkeeping
     dirtyBlocks: new Set(),
     blockVersions: new Map(),
@@ -109,6 +113,10 @@ export function resetDocumentState(state, filePath) {
   state.review = null;
   state.reviewAbortController?.abort();
   state.reviewAbortController = null;
+  // 修正案が指すのはこの文書のファイル内の位置なので、別の文書へは持ち越せません。
+  state.revise = null;
+  state.reviseAbortController?.abort();
+  state.reviseAbortController = null;
   state.commentsVersion += 1;
   state.dirtyBlocks.clear();
   state.blockVersions.clear();
