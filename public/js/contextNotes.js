@@ -1,4 +1,4 @@
-import { escapeHtml } from './util.js';
+import { createId, escapeHtml } from './util.js';
 
 /** サーバー側の上限と同じです（src/aiLimits.js）。超えて送ると保存時に断られます。 */
 const MAX_CONTEXT_NOTES = 20;
@@ -120,7 +120,7 @@ export function createContextNotesController({ refs, state, toaster, onChange })
       // 並びは残した順のままにします。プロンプトへも同じ順で載り、
       // 食い違うメモは後のほうを採る、とモデルへ伝えてあります。
       state.contextNotes = [...state.contextNotes, {
-        id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: createId('note'),
         kind,
         body,
         source: pendingSource,

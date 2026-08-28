@@ -318,7 +318,7 @@ test('what the reviewer kept as a note reaches the review, the chat and the tran
 
   assert.ok(prompts.length >= 4);
   for (const prompt of prompts) {
-    assert.match(prompt, /<recorded_context>/, '翻訳・配置・レビュー・チャットのどれも残したメモを読む');
+    assert.match(prompt, /<context_notes>/, '翻訳・配置・レビュー・チャットのどれも残したメモを読む');
     assert.match(prompt, /節の並び順は検討済み/);
     assert.match(prompt, /Do not reopen it on your own/, '「決定」の読み方まで渡す');
   }
@@ -344,7 +344,7 @@ test('a conversation catches up when a note is kept, and the note survives the r
   await service.sendMessage(conversation.id, 'いま読むとどう？');
   await service.sendMessage(conversation.id, '結論は？');
 
-  assert.doesNotMatch(prompts[0], /<recorded_context>/, 'メモが無いうちは渡すものがない');
+  assert.doesNotMatch(prompts[0], /<context_notes>/, 'メモが無いうちは渡すものがない');
   assert.match(prompts[1], /導入の長さは意図したもの/, '残したメモは次の質問から効く');
   assert.equal(prompts[2], '結論は？', '一度渡したメモは繰り返さない');
 

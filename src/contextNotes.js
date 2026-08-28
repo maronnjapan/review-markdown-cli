@@ -58,6 +58,12 @@ const SOURCES = Object.freeze(['reviewer', 'chat']);
 const TIMESTAMP_CHARS = 40;
 
 /**
+ * idの長さ。こちらが振るidは30文字ほどで、これは手で書かれた長いidを切るためだけの上限です。
+ * idはモデルへ渡さないので、短くしても前提の量は変わりません。
+ */
+const ID_CHARS = 80;
+
+/**
  * 保存済みのメモを読みます。何が入っていても投げません。
  *
  * 読めなかったものは落とします。落としたことを数えて伝えないのは、ここへ来るのが
@@ -92,7 +98,7 @@ function readContextNote(value) {
   const body = typeof value.body === 'string' ? value.body.trim() : '';
   if (!body) return null;
   return {
-    id: typeof value.id === 'string' && value.id ? value.id.slice(0, 80) : createContextNoteId(),
+    id: typeof value.id === 'string' && value.id ? value.id.slice(0, ID_CHARS) : createContextNoteId(),
     kind: CONTEXT_NOTE_LABELS[value.kind] ? value.kind : DEFAULT_KIND,
     body,
     source: SOURCES.includes(value.source) ? value.source : 'reviewer',

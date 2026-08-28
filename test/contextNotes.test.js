@@ -88,7 +88,7 @@ test('the notes block tells the model what each kind changes about its reading',
   assert.match(onlyBackground, /"background" is why the document exists/);
   assert.doesNotMatch(onlyBackground, /"decision"/);
 
-  const entries = JSON.parse(block.match(/<recorded_context>(.*)<\/recorded_context>/)[1]);
+  const entries = JSON.parse(block.match(/<context_notes>(.*)<\/context_notes>/)[1]);
   assert.deepEqual(entries, [
     { n: 1, kind: 'decision', note: '並び順は変えない', recordedAt: '2026-08-01' },
     { n: 2, kind: 'constraint', note: '用語は原著の訳語に合わせる', recordedAt: '2026-08-02' }
@@ -97,7 +97,7 @@ test('the notes block tells the model what each kind changes about its reading',
 
   // 日時を持たないメモには recordedAt を出しません。無い日付を作らないためです。
   const undated = JSON.parse(contextNotesBlock(normalizeContextNotes([{ kind: 'decision', body: '日付の無いメモ' }]))
-    .match(/<recorded_context>(.*)<\/recorded_context>/)[1]);
+    .match(/<context_notes>(.*)<\/context_notes>/)[1]);
   assert.deepEqual(undated, [{ n: 1, kind: 'decision', note: '日付の無いメモ' }]);
 
   assert.equal(contextNotesBlock([]), '', 'メモが無ければ枠ごと出さない');
