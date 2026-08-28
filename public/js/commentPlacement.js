@@ -1,3 +1,4 @@
+import { runAiRequest } from './aiRequest.js';
 import { createProposalList } from './proposalList.js';
 
 const EMPTY_HTML = '<p class="muted">指摘コメントを貼り付けて「対象箇所を探す」を押すと、AIが対象箇所ごとのコメント候補を作ります。</p>';
@@ -34,42 +35,42 @@ export function createCommentPlacementController({
 
   async function findTargets() {
     const notes = refs.placementInput.value.trim();
-    if (!notes || state.placementAbortController) return;
-    if (!state.currentPath) return;
-
-    state.placement = { status: 'loading' };
-    proposals.render();
-    if (!(await prepareAi())) {
-      state.placement = { status: 'error', error: state.aiStatus?.error || 'Codexを利用できません' };
-      proposals.render();
-      return;
-    }
-
-    const documentPath = state.currentPath;
-    const controller = new AbortController();
-    state.placementAbortController = controller;
-    setSearching(true);
-    try {
-      // The AI reads the saved reading context, so save what is on screen first.
-      await flushComments();
-      const result = await api.placeAiComments({ path: documentPath, notes }, { signal: controller.signal });
-      if (state.currentPath !== documentPath) return;
-      state.placement = {
-        status: 'ready',
-        placements: result.placements || [],
-        unplaced: result.unplaced || [],
-        droppedPlacements: result.droppedPlacements || 0
-      };
-    } catch (error) {
-      if (state.currentPath !== documentPath) return;
-      state.placement = error.name === 'AbortError'
-        ? null
-        : { status: 'error', error: error.message };
-    } finally {
-      if (state.placementAbortController === controller) state.placementAbortController = null;
-      setSearching(false);
-      proposals.render();
-    }
+    if (!notes) return;
+    await runAiRequest({
+      state,
+      prepareAi,
+      flushComments,
+      controllerKey: 'placementAbortController',
+      onStart() {
+        state.placement = { status: 'loading' };
+        proposals.render();
+      },
+      // 入力欄を止めるのはCodexが起動できてからです。起動できなかったときに
+      // 止めたままにすると、やり直す手立てが画面から消えます。
+      onPrepared: () => setSearching(true),
+      run: ({ documentPath, signal }) => (
+        api.placeAiComments({ path: documentPath, notes }, { signal })
+      ),
+      onResult(result) {
+        state.placement = {
+          status: 'ready',
+          placements: result.placements || [],
+          unplaced: result.unplaced || [],
+          droppedPlacements: result.droppedPlacements || 0
+        };
+      },
+      onUnavailable(error) {
+        state.placement = { status: 'error', error };
+        proposals.render();
+      },
+      // 中断は失敗ではないので、何も残さず元の空の状態へ戻します。
+      onAbort: () => { state.placement = null; },
+      onError: (error) => { state.placement = { status: 'error', error: error.message }; },
+      onSettled() {
+        setSearching(false);
+        proposals.render();
+      }
+    });
   }
 
   function setSearching(searching) {

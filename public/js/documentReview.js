@@ -1,3 +1,4 @@
+import { runAiRequest } from './aiRequest.js';
 import { createProposalList } from './proposalList.js';
 import { escapeHtml } from './util.js';
 
@@ -213,40 +214,43 @@ export function createDocumentReviewController({
 
   async function composePersona() {
     const input = refs.personaInput.value.trim();
-    if (!input || state.personaAbortController) return;
+    if (!input) return;
     if (input.length > MAX_PERSONA_INPUT_CHARS) {
       toaster.error(`読み手の説明は${MAX_PERSONA_INPUT_CHARS}文字までです。`);
       return;
     }
-    if (!(await prepareAi())) {
-      toaster.error(state.aiStatus?.error || 'Codexを利用できません');
-      return;
-    }
-
-    const documentPath = state.currentPath;
-    const controller = new AbortController();
-    state.personaAbortController = controller;
-    state.personaStatus = 'composing';
-    renderPersona();
-    try {
-      // AIは保存済みの読み取りコンテキストを読むので、先に画面の内容を保存します。
-      await flushComments();
-      const result = await api.composeAiPersona({ path: documentPath, input }, { signal: controller.signal });
-      if (state.currentPath !== documentPath) return;
-      state.persona = result.persona;
-      state.personaStatus = 'ready';
-      personaInputTouched = false;
-      // 組み直した結果はコメントと同じ自動保存でレビューファイルへ入ります。
-      onPersonaChanged();
-    } catch (error) {
-      if (state.currentPath !== documentPath) return;
-      state.personaStatus = 'idle';
-      if (error.name !== 'AbortError') toaster.error(`読み手ペルソナを組み立てられませんでした: ${error.message}`);
-    } finally {
-      if (state.personaAbortController === controller) state.personaAbortController = null;
-      renderPersona();
-      syncRunState();
-    }
+    await runAiRequest({
+      state,
+      prepareAi,
+      flushComments,
+      controllerKey: 'personaAbortController',
+      // 「組み立て中」はCodexが起動できてから出します。起動できなかったときに
+      // 出してしまうと、動いていないものを待っているように見えます。
+      onPrepared() {
+        state.personaStatus = 'composing';
+        renderPersona();
+      },
+      run: ({ documentPath, signal }) => (
+        api.composeAiPersona({ path: documentPath, input }, { signal })
+      ),
+      onResult(result) {
+        state.persona = result.persona;
+        state.personaStatus = 'ready';
+        personaInputTouched = false;
+        // 組み直した結果はコメントと同じ自動保存でレビューファイルへ入ります。
+        onPersonaChanged();
+      },
+      onUnavailable: (error) => toaster.error(error),
+      onAbort: () => { state.personaStatus = 'idle'; },
+      onError(error) {
+        state.personaStatus = 'idle';
+        toaster.error(`読み手ペルソナを組み立てられませんでした: ${error.message}`);
+      },
+      onSettled() {
+        renderPersona();
+        syncRunState();
+      }
+    });
   }
 
   function clearPersona() {
@@ -283,65 +287,66 @@ export function createDocumentReviewController({
    * ---------------------------------------------------------------- */
 
   async function runReview() {
-    if (!state.currentPath || state.reviewAbortController) return;
     const skillIds = [...state.reviewSkillIds];
     if (skillIds.length === 0) return;
-
-    state.review = { status: 'loading', phase: 'reading' };
-    proposals.render();
-    if (!(await prepareAi())) {
-      state.review = { status: 'error', error: state.aiStatus?.error || 'Codexを利用できません' };
-      proposals.render();
-      return;
-    }
-
-    const documentPath = state.currentPath;
-    const controller = new AbortController();
-    state.reviewAbortController = controller;
-    setReviewing(true);
-    try {
-      // ペルソナと読み取りコンテキストは保存済みのものを読むので、先に保存します。
-      await flushComments();
-      const result = await api.reviewWithAi({ path: documentPath, skillIds }, {
-        signal: controller.signal,
+    await runAiRequest({
+      state,
+      prepareAi,
+      flushComments,
+      controllerKey: 'reviewAbortController',
+      onStart() {
+        state.review = { status: 'loading', phase: 'reading' };
+        proposals.render();
+      },
+      onPrepared: () => setReviewing(true),
+      run: ({ documentPath, signal }) => api.reviewWithAi({ path: documentPath, skillIds }, {
+        signal,
         onEvent: (event) => {
           if (event.type !== 'phase' || state.currentPath !== documentPath) return;
           state.review = { status: 'loading', phase: event.phase };
           proposals.render();
         }
-      });
-      if (state.currentPath !== documentPath) return;
-      const skills = result.skills || [];
-      state.review = {
-        status: 'ready',
-        summary: result.summary || '',
-        // 2周目まで通ったか、そこで何件落ちたか。残った指摘の重みが変わります。
-        verified: result.verified,
-        refuted: result.refuted || 0,
-        // 採用したコメントには、どのスキルがどう判断した指摘かを残します。
-        placements: (result.placements || []).map((placement) => ({
-          ...placement,
-          source: 'ai-review',
-          review: {
-            skillId: placement.skill?.id || skills[0]?.id || '',
-            skillName: placement.skill?.name || skills[0]?.name || '',
-            persona: result.persona?.label || '',
-            severity: placement.severity || '',
-            reason: placement.reason || ''
-          }
-        })),
-        unplaced: result.unplaced || [],
-        unplacedTitle: '箇所に結び付かない指摘',
-        droppedPlacements: result.droppedPlacements || 0
-      };
-    } catch (error) {
-      if (state.currentPath !== documentPath) return;
-      state.review = error.name === 'AbortError' ? null : { status: 'error', error: error.message };
-    } finally {
-      if (state.reviewAbortController === controller) state.reviewAbortController = null;
-      setReviewing(false);
-      proposals.render();
-    }
+      }),
+      onResult: (result) => { state.review = reviewResult(result); },
+      onUnavailable(error) {
+        state.review = { status: 'error', error };
+        proposals.render();
+      },
+      // 中断は失敗ではないので、何も残さず元の空の状態へ戻します。
+      onAbort: () => { state.review = null; },
+      onError: (error) => { state.review = { status: 'error', error: error.message }; },
+      onSettled() {
+        setReviewing(false);
+        proposals.render();
+      }
+    });
+  }
+
+  /** レビュー結果を、コメント候補の一覧が読める形へ整えます。 */
+  function reviewResult(result) {
+    const skills = result.skills || [];
+    return {
+      status: 'ready',
+      summary: result.summary || '',
+      // 2周目まで通ったか、そこで何件落ちたか。残った指摘の重みが変わります。
+      verified: result.verified,
+      refuted: result.refuted || 0,
+      // 採用したコメントには、どのスキルがどう判断した指摘かを残します。
+      placements: (result.placements || []).map((placement) => ({
+        ...placement,
+        source: 'ai-review',
+        review: {
+          skillId: placement.skill?.id || skills[0]?.id || '',
+          skillName: placement.skill?.name || skills[0]?.name || '',
+          persona: result.persona?.label || '',
+          severity: placement.severity || '',
+          reason: placement.reason || ''
+        }
+      })),
+      unplaced: result.unplaced || [],
+      unplacedTitle: '箇所に結び付かない指摘',
+      droppedPlacements: result.droppedPlacements || 0
+    };
   }
 
   function setReviewing(reviewing) {

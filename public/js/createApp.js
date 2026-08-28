@@ -2,6 +2,7 @@ import { api as defaultApi } from './api.js';
 import { createAiController } from './ai.js';
 import { createAiContextController } from './aiContext.js';
 import { createAutosave } from './autosave.js';
+import { createBodyCopier } from './bodyCopy.js';
 import { commentIndexesAt, renderCommentHighlights } from './commentAnchors.js';
 import {
   copyCommentTarget,
@@ -13,17 +14,17 @@ import {
 import { createCommentPlacementController } from './commentPlacement.js';
 import { renderDiagrams } from './diagrams.js';
 import { createDocumentReviewController } from './documentReview.js';
+import { createDocumentTargets } from './documentTargets.js';
 import { queryRefs } from './dom.js';
 import { createEditor } from './editor.js';
 import { createFileListView } from './fileListView.js';
 import { createLinkNavigator } from './links.js';
 import { createSidePanes } from './sidePanes.js';
-import { collectHeadingPath, createRangeFor, findTextRange, targetTextOf } from './textAnchor.js';
+import { createRangeFor, findTextRange } from './textAnchor.js';
 import { createToaster } from './toast.js';
 import { createState, resetDocumentState } from './state.js';
 
 const ROUTE_PATTERN = /^#\/review\/([^#]+)(#.*)?$/;
-const SELECTION_CONTEXT_LENGTH = 120;
 const REVEAL_FLASH_MS = 1600;
 
 /**
@@ -61,6 +62,8 @@ export function createApp(document, { api = defaultApi } = {}) {
     onError: (message) => toaster.error(message)
   });
   const panes = createSidePanes({ refs, state });
+  const targets = createDocumentTargets(document, content);
+  const bodyCopy = createBodyCopier({ document, window, refs, state, editor, toaster });
   const ai = createAiController({
     refs,
     state,
@@ -173,7 +176,7 @@ export function createApp(document, { api = defaultApi } = {}) {
     refs.reviewView.classList.remove('hidden');
     refs.exportOutput.hidden = true;
     refs.documentTitle.textContent = filePath;
-    updateCopyBodyControl();
+    bodyCopy.syncControl();
     setCommentStatus('idle', 'コメントは自動保存されます。');
     content.innerHTML = '<p class="muted">Markdownをレンダリング中...</p>';
     panes.show('comments');
@@ -207,57 +210,7 @@ export function createApp(document, { api = defaultApi } = {}) {
     state.commentsDirty = false;
     aiContext.load();
     documentReview.refresh();
-    updateCopyBodyControl();
-  }
-
-  /* ---------------------------------------------------------------- *
-   * Copying the body
-   * ---------------------------------------------------------------- */
-
-  /**
-   * Only a text body can be handed to the clipboard. A PDF or an image has no
-   * body we could paste anywhere, so the button stays out of the toolbar
-   * instead of sitting there doing nothing.
-   */
-  function updateCopyBodyControl() {
-    refs.copyBodyButton?.classList.toggle('hidden', !state.textBody);
-  }
-
-  async function copyDocumentBody() {
-    if (!state.textBody || !state.currentPath) return;
-    // Edit mode may still hold changes, and what we copy should match the file.
-    if (state.mode === 'edit' && !(await editor.flush())) {
-      toaster.error('本文を保存できていないため、コピーを中止しました。');
-      return;
-    }
-    try {
-      await writeToClipboard(state.markdown);
-      toaster.success('本文をコピーしました。');
-    } catch (error) {
-      toaster.error(`本文をコピーできませんでした: ${error.message}`);
-    }
-  }
-
-  function writeToClipboard(text) {
-    const clipboard = window.navigator?.clipboard;
-    if (clipboard?.writeText) return clipboard.writeText(text);
-    return copyThroughHiddenField(text);
-  }
-
-  /** Fallback for browsers that withhold the async clipboard API on http://. */
-  async function copyThroughHiddenField(text) {
-    const carrier = document.createElement('textarea');
-    carrier.value = text;
-    carrier.setAttribute('readonly', '');
-    carrier.style.position = 'fixed';
-    carrier.style.top = '-1000px';
-    document.body.append(carrier);
-    try {
-      carrier.select();
-      if (!document.execCommand?.('copy')) throw new Error('クリップボードへ書き込めませんでした');
-    } finally {
-      carrier.remove();
-    }
+    bodyCopy.syncControl();
   }
 
   /* ---------------------------------------------------------------- *
@@ -294,11 +247,11 @@ export function createApp(document, { api = defaultApi } = {}) {
         'inline-comment-button',
         label,
         (target) => dialog.open(target),
-        () => buildCommentElementTarget(element, type)
+        () => targets.forComment(element, type)
       )
     );
 
-    function createTargetAction(className, text, action, buildTarget = () => buildElementTarget(element, type)) {
+    function createTargetAction(className, text, action, buildTarget = () => targets.forReading(element, type)) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = `${className} inline-target-action`;
@@ -312,65 +265,6 @@ export function createApp(document, { api = defaultApi } = {}) {
     }
   }
 
-  function buildCommentElementTarget(element, type) {
-    const text = targetTextOf(element).trim();
-    return {
-      type,
-      selectedText: text,
-      targetText: text,
-      heading: type === 'section' ? text : undefined,
-      headingPath: collectHeadingPath(content, element)
-    };
-  }
-
-  function buildElementTarget(element, type) {
-    const nodes = type === 'section' ? sectionNodes(element) : [element];
-    const selectedText = nodes.map((node) => targetTextOf(node).trim()).filter(Boolean).join('\n\n');
-    const context = contextAroundNodes(nodes);
-    return {
-      type,
-      selectedText,
-      targetText: selectedText,
-      heading: type === 'section' ? targetTextOf(element).trim() : undefined,
-      headingPath: collectHeadingPath(content, element),
-      contextBefore: context.before,
-      contextAfter: context.after
-    };
-  }
-
-  function sectionNodes(heading) {
-    const nodes = [heading];
-    const level = Number(heading.tagName.slice(1));
-    let next = heading.nextElementSibling;
-    while (next) {
-      if (/^H[1-6]$/.test(next.tagName) && Number(next.tagName.slice(1)) <= level) break;
-      nodes.push(next);
-      next = next.nextElementSibling;
-    }
-    return nodes;
-  }
-
-  function contextAroundNodes(nodes) {
-    const beforeRange = document.createRange();
-    beforeRange.selectNodeContents(content);
-    beforeRange.setEndBefore(nodes[0]);
-    const afterRange = document.createRange();
-    afterRange.selectNodeContents(content);
-    afterRange.setStartAfter(nodes.at(-1));
-    return {
-      before: cleanRangeText(beforeRange).slice(-SELECTION_CONTEXT_LENGTH).trim(),
-      after: cleanRangeText(afterRange).slice(0, SELECTION_CONTEXT_LENGTH).trim()
-    };
-  }
-
-  function cleanRangeText(range) {
-    const fragment = range.cloneContents();
-    fragment.querySelectorAll?.('.inline-target-action').forEach((button) => button.remove());
-    const wrapper = document.createElement('div');
-    wrapper.append(fragment);
-    return wrapper.innerText || wrapper.textContent || '';
-  }
-
   function handleSelectionChange() {
     const selection = window.getSelection();
     const range = selection && !selection.isCollapsed && selection.rangeCount > 0
@@ -381,7 +275,7 @@ export function createApp(document, { api = defaultApi } = {}) {
       && content.contains(selection.focusNode)
       && content.contains(range.commonAncestorContainer);
     state.currentSelectionTarget = state.mode === 'comment' && insideDocument
-      ? buildSelectionTarget(selection, range)
+      ? targets.forSelection(range, selection.toString().trim())
       : null;
 
     if (!state.currentSelectionTarget) {
@@ -401,29 +295,6 @@ export function createApp(document, { api = defaultApi } = {}) {
       handleSelectionChange();
       if (state.currentSelectionTarget) ai.prefetchTranslation(state.currentSelectionTarget);
     }, 0);
-  }
-
-  function buildSelectionTarget(selection, range) {
-    return buildTextSelectionTarget(range, selection.toString().trim());
-  }
-
-  function buildTextSelectionTarget(range, selectedText) {
-    if (!selectedText) return null;
-    const containerNode = range.commonAncestorContainer;
-    const containerElement = containerNode.nodeType === 3 ? containerNode.parentElement : containerNode;
-    const beforeRange = document.createRange();
-    beforeRange.selectNodeContents(content);
-    beforeRange.setEnd(range.startContainer, range.startOffset);
-    const afterRange = document.createRange();
-    afterRange.selectNodeContents(content);
-    afterRange.setStart(range.endContainer, range.endOffset);
-    return {
-      type: 'text-selection',
-      selectedText,
-      contextBefore: cleanRangeText(beforeRange).slice(-SELECTION_CONTEXT_LENGTH).trim(),
-      contextAfter: cleanRangeText(afterRange).slice(0, SELECTION_CONTEXT_LENGTH).trim(),
-      headingPath: collectHeadingPath(content, containerElement)
-    };
   }
 
   /* ---------------------------------------------------------------- *
@@ -776,7 +647,7 @@ export function createApp(document, { api = defaultApi } = {}) {
     refs.documentCommentButton.addEventListener('click', () => dialog.open({ type: 'document' }));
     refs.documentTranslateButton.addEventListener('click', () => ai.translate({ type: 'document' }));
     refs.documentAiButton.addEventListener('click', () => ai.ask({ type: 'document' }));
-    refs.copyBodyButton?.addEventListener('click', copyDocumentBody);
+    refs.copyBodyButton?.addEventListener('click', bodyCopy.copy);
     refs.saveButton.addEventListener('click', () => commentSaves.run());
     refs.exportButton.addEventListener('click', exportReviewMarkdown);
     refs.commentModeButton.addEventListener('click', () => setMode('comment'));
