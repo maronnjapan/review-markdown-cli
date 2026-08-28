@@ -208,11 +208,14 @@ export class AiService {
     if (!notes) throw new Error('読み手ペルソナの説明を入力してください');
 
     // 組み直しの材料は走り書きだけです。保存済みのペルソナは前提に混ぜません。
-    // 読み取りコンテキストと残したメモは渡します。どんな原稿の読み手なのかが決まるからです。
-    const { aiContext, contextNotes } = await readReview(this.rootDir, documentPath);
+    // 読み取りコンテキストと残したメモ、そして管理者が決めた3点は渡します。
+    // どんな原稿の読み手なのかが決まるからで、なかでも期待値は「読んだあと何ができれば
+    // よいか」なので、読み手そのものの説明に一番近い前提です。
+    const { aiContext, brief, contextNotes } = await readReview(this.rootDir, documentPath);
     const readingContext = resolveAiContext({
       project: this.projectContext,
       document: aiContext,
+      brief,
       notes: contextNotes
     });
     const { answer } = await this.askForJson({

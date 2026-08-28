@@ -181,8 +181,13 @@ export function createDocumentBriefController({ refs, state, api, toaster, prepa
   function render() {
     const composing = state.briefStatus === 'composing';
     const filled = FIELDS.filter(({ ref }) => refs[ref].value.trim()).length;
-    refs.briefState.textContent = filled === FIELDS.length ? '揃いました' : `${filled} / ${FIELDS.length}`;
-    refs.briefState.dataset.state = filled === FIELDS.length ? 'set' : (filled === 0 ? 'unset' : 'partial');
+    const settled = filled === FIELDS.length;
+    refs.briefState.textContent = settled ? '揃いました' : `${filled} / ${FIELDS.length}`;
+    refs.briefState.dataset.state = settled ? 'set' : (filled === 0 ? 'unset' : 'partial');
+    // タブは既定でコメントを開くので、押されるまで管理者は画面に出ません。
+    // 決まっていない数をラベルへ出して、押される前から求めていることを見せます。
+    refs.managerTabCount.hidden = settled;
+    refs.managerTabCount.textContent = settled ? '' : `${filled} / ${FIELDS.length}`;
     refs.briefComposeButton.disabled = composing || refs.briefInput.value.trim() === '';
     refs.briefStopButton.classList.toggle('hidden', !composing);
     refs.briefClearButton.disabled = composing || filled === 0;
@@ -204,6 +209,22 @@ export function createDocumentBriefController({ refs, state, api, toaster, prepa
   }
 
   return { load, refresh, render, setStatus };
+}
+
+/**
+ * その資料が、もう書かれているかどうか。見出しと前書き（front matter）だけの骨組みは
+ * 「まだ書かれていない」とみなします。
+ *
+ * 管理者が書き始める手前で止めるのは、これから作る資料だけです。すでに書かれたものを
+ * 直しに来た人や、読みに来ただけの人まで編集の手前で止めると、この道具はレビューの
+ * 道具でなくなります。
+ */
+export function hasWrittenBody(markdown) {
+  const body = String(markdown || '').replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, '');
+  return body.split(/\r?\n/).some((line) => {
+    const text = line.trim();
+    return text !== '' && !/^#{1,6}\s/.test(text);
+  });
 }
 
 /** まだ決まっていない項目。関門（documentReview.js）と表示の両方がここを見ます。 */

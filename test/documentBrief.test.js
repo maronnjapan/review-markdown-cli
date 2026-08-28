@@ -3,15 +3,17 @@ import test from 'node:test';
 import { aiContextBlock, resolveAiContext } from '../src/aiContext.js';
 import { MAX_BRIEF_FIELD_CHARS, MAX_BRIEF_INPUT_CHARS } from '../src/aiLimits.js';
 import {
+  BRIEF_FIELDS,
   buildBriefDraft,
   documentBriefBlock,
   hasDocumentBrief,
-  isBriefSettled,
-  missingBriefFields,
   normalizeBriefInput,
   normalizeDocumentBrief,
   readDocumentBrief
 } from '../src/documentBrief.js';
+// 関門の判定は画面側の1か所にしかありません。そこを直接読んで確かめます
+// （サーバ側にも同じ判定を置くと、使われていないほうだけがテストされます）。
+import { hasWrittenBody, missingBriefFields } from '../public/js/documentBrief.js';
 import { briefPrompt } from '../src/prompts/manager.js';
 
 const SETTLED = {
@@ -23,12 +25,28 @@ const SETTLED = {
 test('the fields still to settle come back by name, and the gate opens only when none are left', () => {
   assert.deepEqual(missingBriefFields(null).map(({ id }) => id), ['purpose', 'story', 'expectation']);
   assert.deepEqual(missingBriefFields({ purpose: '目的' }).map(({ label }) => label), ['ストーリー', '期待値']);
-  assert.deepEqual(missingBriefFields(SETTLED), []);
 
   // 関門を開けるのは3つとも埋まったときだけです。良い目的かどうかは見ません。
-  assert.equal(isBriefSettled(SETTLED), true);
-  assert.equal(isBriefSettled({ ...SETTLED, story: '' }), false);
-  assert.equal(isBriefSettled({ purpose: 'あ', story: 'い', expectation: 'う' }), true);
+  assert.deepEqual(missingBriefFields(SETTLED), []);
+  assert.deepEqual(missingBriefFields({ ...SETTLED, story: '' }).map(({ id }) => id), ['story']);
+  assert.deepEqual(missingBriefFields({ purpose: 'あ', story: 'い', expectation: 'う' }), []);
+
+  // 画面とサーバに同じ表が2組あります。片方だけ直すと、画面で決めた欄が保存で
+  // 落ちる（またはその逆）という形でずれるので、id と並びの一致を固定します。
+  assert.deepEqual(
+    missingBriefFields(null).map(({ id, label }) => [id, label]),
+    BRIEF_FIELDS.map(({ id, label }) => [id, label])
+  );
+});
+
+test('a document with only headings and front matter counts as not written yet', () => {
+  // 書き始める手前で止めるのは、これから作る資料だけです。骨組みだけの状態を
+  // 「書かれている」と読むと、いちばん止めたい場面で止まらなくなります。
+  assert.equal(hasWrittenBody(''), false);
+  assert.equal(hasWrittenBody('# 再起動手順\n\n## 前提\n'), false);
+  assert.equal(hasWrittenBody('---\ntitle: "再起動手順"\n---\n\n# 再起動手順\n'), false, 'Zennの前書きは本文ではない');
+  assert.equal(hasWrittenBody('# 再起動手順\n\nまず deploy.sh を実行します。\n'), true);
+  assert.equal(hasWrittenBody('---\ntitle: "x"\n---\n\n本文だけの資料。\n'), true);
 });
 
 test('readDocumentBrief never throws, so a hand edited review file still opens', () => {
@@ -38,8 +56,10 @@ test('readDocumentBrief never throws, so a hand edited review file still opens',
   assert.equal(readDocumentBrief({ purpose: 123, story: null }), null, '1つも文字列でなければ未設定');
   assert.equal(readDocumentBrief({ purpose: '   ' }), null, '空白だけは書かれていないのと同じ');
 
+  // 読むときは長さでも落としません。切ると、画面が読み込んで送り返す往復1回で、
+  // 手で書いた長い目的の末尾が黙って永久に消えます。断るのは保存のときだけです。
   const long = readDocumentBrief({ purpose: 'あ'.repeat(MAX_BRIEF_FIELD_CHARS + 10) });
-  assert.equal(long.purpose.length, MAX_BRIEF_FIELD_CHARS, '読むときは切り詰めて通す');
+  assert.equal(long.purpose.length, MAX_BRIEF_FIELD_CHARS + 10, '読むときは長さで落とさない');
 });
 
 test('normalizeDocumentBrief refuses a field it cannot carry instead of trimming it silently', () => {
@@ -80,6 +100,11 @@ test('what the manager could not settle comes back empty, as a question', () => 
   const empty = buildBriefDraft({ purpose: '', story: '', expectation: '', questions: ['何のための資料ですか。'] });
   assert.equal(empty.brief, null);
   assert.equal(empty.questions.length, 1);
+
+  // モデルの答えだけは切り詰めて受け取ります。頼んだ長さをわずかに超えたからといって
+  // 断ると、管理者に聞くこと自体ができなくなります。
+  const verbose = buildBriefDraft({ purpose: 'あ'.repeat(MAX_BRIEF_FIELD_CHARS + 50), questions: [] });
+  assert.equal(verbose.brief.purpose.length, MAX_BRIEF_FIELD_CHARS);
 });
 
 test('the composing prompt asks the manager to question a gap, never to fill it', () => {

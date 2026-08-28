@@ -342,13 +342,26 @@ button:hover { border-color: var(--primary); color: var(--primary); }
   padding: 0.45rem 0.2rem;
   white-space: nowrap;
 }
+/*
+ * タブは既定でコメントを開くので、管理者は押されるまで画面に出ません。求める役が
+ * 黙っていては求めたことにならないので、決まっていない数だけをラベルへ出します。
+ */
+.tab-count {
+  background: #fff3d6;
+  border-radius: 999px;
+  color: #8a5b00;
+  font-size: 0.66rem;
+  font-weight: 600;
+  margin-left: 0.3rem;
+  padding: 0.05rem 0.35rem;
+}
 .side-pane-tabs button.active {
   background: #fff;
   border-color: var(--border);
   color: var(--primary);
   font-weight: 700;
 }
-#comments-panel, .ai-panel, .placement-panel, .review-panel {
+#comments-panel, .manager-panel, .ai-panel, .placement-panel, .review-panel {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;

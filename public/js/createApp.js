@@ -13,7 +13,7 @@ import {
 } from './comments.js';
 import { createCommentPlacementController } from './commentPlacement.js';
 import { createContextNotesController } from './contextNotes.js';
-import { createDocumentBriefController, missingBriefFields } from './documentBrief.js';
+import { createDocumentBriefController, hasWrittenBody, missingBriefFields } from './documentBrief.js';
 import { renderDiagrams } from './diagrams.js';
 import { createDocumentReviewController } from './documentReview.js';
 import { createDocumentTargets } from './documentTargets.js';
@@ -643,8 +643,8 @@ export function createApp(document, { api = defaultApi } = {}) {
       renderCommentMode();
     } else {
       if (!(await commentSaves.flush())) return;
+      if (!allowedToWrite()) return;
       state.mode = 'edit';
-      noticeMissingBrief();
       editor.render();
       renderComments();
     }
@@ -652,19 +652,34 @@ export function createApp(document, { api = defaultApi } = {}) {
   }
 
   /**
-   * 書き始めるとき、管理者がまだ3点を求めていたら1度だけ言います。
+   * 書き始める手前の、資料の管理者の関門です。
    *
-   * ここでは止めません。このアプリは書くためだけのものではなく、既にある資料を読みに
-   * 来た人まで編集の手前で締め出すことになるからです。止めるのはAIレビューのほうで、
-   * あちらは3点が無いと「良い資料か」を判定する基準そのものが無くなります。
+   * まだ本文の無い資料は、これから作るものです。3点が決まっていなければ編集モードへ
+   * 入れず、管理者のパネルを開いて求めます。「資料そのものを作るより先に求める」を
+   * 一番そのままに置ける場所がここだからです。
+   *
+   * すでに書かれている資料では止めず、1度だけ言うに留めます。このアプリは書くための
+   * ものだけではなく、直しに来た人や読みに来ただけの人まで編集の手前で締め出すと、
+   * レビューの道具でなくなります。
+   *
+   * どちらも1度きりです。押し直せば、決めないままでも書き始められます。関門は
+   * 決めないまま進んでいることに気づかせるためのもので、書き手の判断より上に
+   * 置くものではありません。
    */
-  function noticeMissingBrief() {
-    if (briefNoticeShown) return;
+  function allowedToWrite() {
     const missing = missingBriefFields(state.brief);
-    if (missing.length === 0) return;
+    if (missing.length === 0 || briefNoticeShown) return true;
     briefNoticeShown = true;
-    toaster.info(`資料の管理者が${missing.map(({ label }) => label).join('・')}を求めています。`
-      + '書き始める前に「管理者」タブで決めておくと、AIレビューもその3点を基準に読みます。');
+    const names = missing.map(({ label }) => label).join('・');
+    if (hasWrittenBody(state.markdown)) {
+      toaster.info(`資料の管理者が${names}を求めています。`
+        + '「管理者」タブで決めておくと、AIレビューもその3点を基準に読みます。');
+      return true;
+    }
+    panes.show('manager');
+    toaster.info(`まだ本文の無い資料です。資料の管理者が${names}を求めています。`
+      + '「管理者」タブで決めてから書き始めるか、もう一度「編集」を押してください。');
+    return false;
   }
 
   function updateModeControls() {

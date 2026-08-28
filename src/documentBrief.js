@@ -40,6 +40,12 @@ import { plannedDocumentBlock } from './prompts/readingContext.js';
  * 画面側（public/js/documentBrief.js）にも同じ表がもう一組あります。ビルドを持たない
  * 構成では `src/` を `public/` から import できないためで、`contextNotes.js` と
  * 同じ事情です。片方を変えたらもう片方も、という関係だけを覚えておいてください。
+ *
+ * 「どの項目がまだ決まっていないか」の判定は、こちらには置いていません。止めるかどうかは
+ * 画面の中だけの話で、サーバは3点が揃っていようといまいと同じ扱いにするからです
+ * （サーバで止めると、CLIやテストからの経路まで一緒に塞ぐことになります）。判定を
+ * 両側に置くと、使われていないほうだけがテストされる状態になるので、
+ * public/js/documentBrief.js の `missingBriefFields` 1か所だけにしてあります。
  */
 export const BRIEF_FIELDS = Object.freeze([
   Object.freeze({ id: 'purpose', label: '目的' }),
@@ -63,8 +69,14 @@ const MAX_ANSWER_ITEMS = 6;
 const MAX_ANSWER_ITEM_CHARS = 300;
 
 /**
- * 保存済みのブリーフを読みます。何が入っていても投げません。
+ * 保存済みのブリーフを読みます。何が入っていても投げず、長すぎても切りません。
  * 3つとも空なら null を返し、「管理者は未設定」として扱います。
+ *
+ * 読むときに切り詰めないのは、切ると往復1回で末尾が永久に消えるからです。画面は
+ * `/api/file` で受け取った値をそのまま送り返すので、ここで600文字に切ると、レビュー
+ * ファイルへ手で書いた長い目的が、次の自動保存で黙って短くなります。長すぎる値は
+ * `normalizeDocumentBrief` が保存のときに断り、画面はその手前で「600文字までです」と
+ * 出します。断るのも知らせるのも書くときだけ、というのがこのモジュールの決まりです。
  */
 export function readDocumentBrief(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -107,19 +119,6 @@ export function hasDocumentBrief(brief) {
   return BRIEF_FIELDS.some(({ id }) => Boolean(brief?.[id]));
 }
 
-/**
- * まだ埋まっていない項目。管理者が止めるかどうかは、これが空かどうかだけで決まります。
- * 画面はここで返った項目名をそのまま「まだ決まっていないもの」として出します。
- */
-export function missingBriefFields(brief) {
-  return BRIEF_FIELDS.filter(({ id }) => !brief?.[id]);
-}
-
-/** 3つとも埋まったか。資料を作る手前の関門は、この1つの判定だけで開きます。 */
-export function isBriefSettled(brief) {
-  return missingBriefFields(brief).length === 0;
-}
-
 /** ブリーフをモデルが読む形にしたもの。1つも決まっていなければ '' を返します。 */
 export function documentBriefBlock(brief) {
   if (!hasDocumentBrief(brief)) return '';
@@ -135,7 +134,12 @@ export function documentBriefBlock(brief) {
  * いない」と管理者が言ったことになります。
  */
 export function buildBriefDraft(answer, now = new Date()) {
-  const brief = readDocumentBrief(answer);
+  // モデルの答えは切り詰めて受け取ります。断ると、頼んだ長さをわずかに超えただけで
+  // 管理者に聞けなくなります。レビュアーが書いた値を断るのとは別の話です。
+  const brief = readDocumentBrief(Object.fromEntries(BRIEF_FIELDS.map(({ id }) => [
+    id,
+    typeof answer?.[id] === 'string' ? answer[id].slice(0, MAX_BRIEF_FIELD_CHARS) : ''
+  ])));
   return {
     brief: brief ? { ...brief, updatedAt: now.toISOString() } : null,
     questions: answerList(answer?.questions),
@@ -143,9 +147,9 @@ export function buildBriefDraft(answer, now = new Date()) {
   };
 }
 
-/** 1つの欄。長すぎるものは断るので、ここで切り詰めるのは保存済みの値だけです。 */
+/** 1つの欄。長さで落とすのは書くときだけなので、ここでは整えるだけです。 */
 function field(value) {
-  return typeof value === 'string' ? value.trim().slice(0, MAX_BRIEF_FIELD_CHARS) : '';
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function assertFieldFits(value, label, source) {

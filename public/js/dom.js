@@ -19,6 +19,7 @@ const SELECTORS = {
 
   commentsTabButton: '#comments-tab-button',
   managerTabButton: '#manager-tab-button',
+  managerTabCount: '#manager-tab-count',
   aiTabButton: '#ai-tab-button',
   placementTabButton: '#placement-tab-button',
   commentsPanel: '#comments-panel',

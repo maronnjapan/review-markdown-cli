@@ -1400,6 +1400,79 @@ test('the manager asks for what is not settled, and holds the review back once',
   assert.equal(document.querySelector('#placement-context-hint').hidden, false);
 });
 
+test('a document with nothing written yet cannot be edited until the manager has been answered', async (t) => {
+  // 骨組みだけの資料。これから「作る」もので、依頼どおり作る手前で止める対象。
+  const markdown = '# 再起動手順\n';
+  const { document, window } = await startApp(t, 'http://localhost/#/review/docs%2Fnew.md', {
+    '/api/file': async () => ({
+      path: 'docs/new.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'docs/new.md', comments: [] },
+      reviewFile: '.review/docs/new.md.review.json'
+    }),
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model' }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/review-skills': () => ({ skills: [] }),
+    '/api/review': (_input, options) => ({
+      review: { targetFile: 'docs/new.md', comments: JSON.parse(options.body).comments || [] },
+      reviewFile: '.review/docs/new.md.review.json'
+    })
+  });
+  await waitFor(() => document.querySelector('#markdown-content h1'));
+
+  // タブは既定でコメントを開くので、決まっていない数をラベルへ出して求めていることを見せる。
+  const tabCount = document.querySelector('#manager-tab-count');
+  assert.equal(tabCount.hidden, false);
+  assert.equal(tabCount.textContent, '0 / 3');
+
+  document.querySelector('#edit-mode-button').click();
+  await waitFor(() => document.querySelector('#manager-panel').classList.contains('hidden') === false);
+  assert.equal(document.querySelector('#edit-mode-button').getAttribute('aria-pressed'), 'false',
+    'まだ本文の無い資料は、3点を決めるまで書き始めさせない');
+  assert.match(document.querySelector('#toast-region').textContent, /まだ本文の無い資料です/);
+
+  // 止め続けはしない。押し直せば、決めないままでも書き始められる。
+  document.querySelector('#edit-mode-button').click();
+  await waitFor(() => document.querySelector('#edit-mode-button').getAttribute('aria-pressed') === 'true');
+
+  // 3つとも決めれば、タブの印は消える。
+  document.querySelector('#manager-tab-button').click();
+  for (const [selector, value] of [
+    ['#brief-purpose', '当番が一人で再起動できるようになる。'],
+    ['#brief-story', '条件 → 手順 → 確認。'],
+    ['#brief-expectation', '問い合わせが来なくなる。']
+  ]) {
+    const field = document.querySelector(selector);
+    field.value = value;
+    field.dispatchEvent(new window.Event('input', { bubbles: true }));
+  }
+  assert.equal(tabCount.hidden, true);
+});
+
+test('a document that is already written is not held back, only told once', async (t) => {
+  const markdown = '# 再起動手順\n\nまず deploy.sh を実行します。\n';
+  const { document } = await startApp(t, 'http://localhost/#/review/docs%2Fwritten.md', {
+    '/api/file': async () => ({
+      path: 'docs/written.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'docs/written.md', comments: [] },
+      reviewFile: '.review/docs/written.md.review.json'
+    }),
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model' }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/review-skills': () => ({ skills: [] })
+  });
+  await waitFor(() => document.querySelector('#markdown-content h1'));
+
+  // 直しに来た人と読みに来た人を、編集の手前で締め出さない。言うのは1回だけ。
+  document.querySelector('#edit-mode-button').click();
+  await waitFor(() => document.querySelector('#edit-mode-button').getAttribute('aria-pressed') === 'true');
+  assert.match(document.querySelector('#toast-region').textContent, /資料の管理者が目的・ストーリー・期待値を求めています/);
+  assert.doesNotMatch(document.querySelector('#toast-region').textContent, /まだ本文の無い資料です/);
+});
+
 test('every side pane scrolls inside itself, so nothing is cut off below the fold', async (t) => {
   const indexHtml = await fs.readFile(path.join(projectDir, 'public', 'index.html'), 'utf8');
   const styles = await fs.readFile(path.join(projectDir, 'public', 'style.css'), 'utf8');
