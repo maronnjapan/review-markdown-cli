@@ -545,6 +545,10 @@ function normalizeTarget(target) {
     type: ['text-selection', 'paragraph', 'section', 'document'].includes(target?.type)
       ? target.type
       : 'text-selection',
+    ...(target?.documentType === 'pdf' ? {
+      documentType: 'pdf',
+      pageNumber: Number.isInteger(target.pageNumber) ? target.pageNumber : null
+    } : {}),
     selectedText,
     contextBefore: String(target?.contextBefore || '').slice(-TARGET_CONTEXT_CHARS),
     contextAfter: String(target?.contextAfter || '').slice(0, TARGET_CONTEXT_CHARS),

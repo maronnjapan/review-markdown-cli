@@ -379,6 +379,7 @@ export function createDocumentReviewController({
   function syncRunState() {
     refs.reviewRunButton.disabled = Boolean(state.reviewAbortController)
       || Boolean(state.personaAbortController)
+      || state.documentType === 'pdf'
       || state.reviewSkillIds.length === 0;
     // 何が足りないかは、押す前に見えている必要があります。押してから初めて止められると、
     // 待たされたうえに引き返させられたようにしか見えません。

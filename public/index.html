@@ -3,15 +3,16 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Markdown Review</title>
+    <title>Markdown / PDF Review</title>
     <link rel="stylesheet" href="/zenn-content.css">
     <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/pdf/pdf.css">
   </head>
   <body>
     <header class="app-header">
       <div>
-        <p class="eyebrow">Local Markdown Review</p>
-        <h1>Markdown Review</h1>
+        <p class="eyebrow">Local Document Review</p>
+        <h1>Markdown / PDF Review</h1>
       </div>
       <a class="header-link" href="#/">ファイル一覧</a>
     </header>
@@ -21,20 +22,26 @@
       <section id="review-view" class="review-layout hidden">
         <article class="document-pane card">
           <div class="document-toolbar">
-            <button id="back-button" type="button">← ファイル一覧</button>
+            <div class="document-toolbar-heading">
+              <button id="back-button" type="button">← ファイル一覧</button>
+              <div class="document-name">
+                <span class="document-name-label">レビュー中</span>
+                <h2 id="document-title"></h2>
+              </div>
+            </div>
             <div class="document-toolbar-actions">
-              <div class="mode-switch" role="group" aria-label="操作モード">
+              <div id="mode-switch" class="mode-switch" role="group" aria-label="操作モード">
                 <button id="comment-mode-button" class="active" type="button" aria-pressed="true" aria-keyshortcuts="Control+Shift+E Meta+Shift+E" title="コメントモード（Ctrl/⌘+Shift+Eで切り替え）">コメント</button>
                 <button id="edit-mode-button" type="button" aria-pressed="false" aria-keyshortcuts="Control+Shift+E Meta+Shift+E" title="編集モード（Ctrl/⌘+Shift+Eで切り替え）">編集</button>
               </div>
-              <span class="mode-shortcut" title="コメント／編集を切り替え">Ctrl/⌘+Shift+E</span>
+              <span id="mode-shortcut" class="mode-shortcut" title="コメント／編集を切り替え">Ctrl/⌘+Shift+E</span>
               <button id="document-comment-button" type="button">文書全体にコメント</button>
               <button id="document-translate-button" class="hidden" type="button">文書全体を翻訳</button>
               <button id="document-ai-button" type="button">文書全体をAIに相談</button>
               <button id="copy-body-button" class="hidden" type="button" title="本文をそのままクリップボードへコピーします">本文をコピー</button>
             </div>
           </div>
-          <h2 id="document-title"></h2>
+          <p id="document-notice" class="pdf-readonly-notice" hidden></p>
           <div id="editor-toolbar" class="editor-toolbar hidden" role="toolbar" aria-label="文章の書式">
             <select id="block-format" aria-label="段落スタイル">
               <option value="p">段落</option>
@@ -60,20 +67,49 @@
           </div>
           <div id="markdown-content" class="markdown-body znc"></div>
         </article>
-        <aside class="comments-pane card">
-          <div class="side-pane-tabs" role="tablist" aria-label="サイドパネル">
-            <button id="comments-tab-button" class="active" type="button" role="tab" aria-selected="true">コメント</button>
-            <button id="manager-tab-button" class="hidden" type="button" role="tab" aria-selected="false">管理者<span id="manager-tab-count" class="tab-count" hidden></span></button>
-            <button id="ai-tab-button" type="button" role="tab" aria-selected="false">AI</button>
-            <button id="placement-tab-button" type="button" role="tab" aria-selected="false">指摘の配置</button>
-            <button id="review-tab-button" type="button" role="tab" aria-selected="false">AIレビュー</button>
-            <button id="revise-tab-button" type="button" role="tab" aria-selected="false">本文の修正</button>
+        <aside id="side-pane" class="comments-pane card" aria-label="レビューサイドパネル">
+          <div class="side-pane-header">
+            <div>
+              <p class="eyebrow">Review workspace</p>
+              <h2>レビュー</h2>
+            </div>
+            <button id="side-pane-close" class="side-pane-close" type="button" aria-label="レビューサイドパネルを閉じる">×</button>
           </div>
-          <section id="comments-panel">
+          <div class="side-pane-tabs" role="tablist" aria-label="サイドパネル">
+            <button id="outline-tab-button" type="button" role="tab" aria-selected="false" aria-controls="outline-panel">文書</button>
+            <button id="comments-tab-button" class="active" type="button" role="tab" aria-selected="true" aria-controls="comments-panel">コメント <span id="comment-count" class="comment-count">0</span></button>
+            <button id="manager-tab-button" class="hidden" type="button" role="tab" aria-selected="false" aria-controls="manager-panel">管理者<span id="manager-tab-count" class="tab-count" hidden></span></button>
+            <button id="ai-tab-button" type="button" role="tab" aria-selected="false" aria-controls="ai-panel">AI</button>
+            <button id="placement-tab-button" type="button" role="tab" aria-selected="false" aria-controls="placement-panel">指摘の配置</button>
+            <button id="review-tab-button" type="button" role="tab" aria-selected="false" aria-controls="review-panel">AIレビュー</button>
+            <button id="revise-tab-button" type="button" role="tab" aria-selected="false" aria-controls="revise-panel">本文の修正</button>
+          </div>
+          <section id="outline-panel" class="outline-panel hidden" role="tabpanel" aria-labelledby="outline-tab-button">
+            <div class="side-section-header">
+              <div>
+                <p class="eyebrow">Document tools</p>
+                <h2>文書メニュー</h2>
+              </div>
+              <button id="outline-top-button" type="button">↑ 先頭へ</button>
+            </div>
+            <div class="document-quick-actions" aria-label="文書全体の操作">
+              <button id="side-document-comment-button" type="button">文書全体にコメント</button>
+              <button id="side-document-translate-button" class="hidden" type="button">文書全体を翻訳</button>
+              <button id="side-document-ai-button" type="button">文書全体をAIに相談</button>
+            </div>
+            <div class="outline-heading">
+              <h3>目次</h3>
+              <span id="outline-count" class="outline-count">0</span>
+            </div>
+            <nav id="outline-list" class="outline-list" aria-label="文書の目次">
+              <p class="muted">見出しを読み込み中です。</p>
+            </nav>
+          </section>
+          <section id="comments-panel" role="tabpanel" aria-labelledby="comments-tab-button">
             <div class="comments-header">
               <div>
                 <p class="eyebrow">Review comments</p>
-                <h2>コメント <span id="comment-count" class="comment-count">0</span></h2>
+                <h2>コメント</h2>
               </div>
               <button id="save-button" type="button" title="自動保存を待たずにすぐ保存します">今すぐ保存</button>
             </div>
@@ -84,7 +120,7 @@
               <div id="comments-list" class="comments-list"></div>
             </div>
           </section>
-          <section id="manager-panel" class="manager-panel hidden" aria-live="polite">
+          <section id="manager-panel" class="manager-panel hidden" role="tabpanel" aria-labelledby="manager-tab-button" aria-live="polite">
             <div class="pane-scroll">
               <div class="ai-header">
                 <div>
@@ -129,7 +165,7 @@
               </details>
             </div>
           </section>
-          <section id="ai-panel" class="ai-panel hidden" aria-live="polite">
+          <section id="ai-panel" class="ai-panel hidden" role="tabpanel" aria-labelledby="ai-tab-button" aria-live="polite">
             <div class="pane-scroll">
               <div class="ai-header">
                 <div>
@@ -289,6 +325,12 @@
         </aside>
       </section>
     </main>
+
+    <button id="side-pane-toggle" class="side-pane-toggle hidden" type="button" aria-controls="side-pane" aria-expanded="false">
+      <span>レビュー</span>
+      <span id="side-pane-toggle-count" class="side-pane-toggle-count">0</span>
+    </button>
+    <div id="side-pane-backdrop" class="side-pane-backdrop hidden"></div>
 
     <div id="selection-toolbar" class="selection-toolbar hidden">
       <button id="selection-translate-button" class="hidden" type="button">翻訳</button>

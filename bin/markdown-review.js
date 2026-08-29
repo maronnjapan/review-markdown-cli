@@ -19,7 +19,7 @@ const { app, rootDir, filter } = createServer(options.targetDir, options);
 const { server, port } = await startServer();
 const url = `http://localhost:${port}`;
 
-console.log(`Markdown Review is serving ${rootDir}`);
+console.log(`Markdown / PDF Review is serving ${rootDir}`);
 if (options.configSources?.length) console.log(`  config: ${options.configSources.join(', ')}`);
 if (filter.include.length) console.log(`  include: ${filter.include.join(', ')}`);
 if (filter.exclude.length) console.log(`  exclude: ${filter.exclude.join(', ')}`);

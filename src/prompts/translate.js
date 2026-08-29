@@ -66,6 +66,7 @@ export function translationPrompt(target, term, readingContextBlock) {
     readingContextBlock,
     JSON.stringify({
       selectedText: target.selectedText,
+      ...(target.documentType === 'pdf' ? { documentType: 'pdf', pageNumber: target.pageNumber } : {}),
       headingPath: target.headingPath,
       contextBefore: target.contextBefore,
       contextAfter: target.contextAfter

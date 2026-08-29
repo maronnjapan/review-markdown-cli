@@ -24,18 +24,27 @@ import { createFileListView } from './fileListView.js';
 import { createLinkNavigator } from './links.js';
 import { createSidePanes } from './sidePanes.js';
 import { createRangeFor, findTextRange } from './textAnchor.js';
+import { createPdfViewer } from './pdf/viewer.js';
+import { targetTextOf } from './textAnchor.js';
 import { createToaster } from './toast.js';
+import { normalizeText } from './util.js';
 import { createState, resetDocumentState } from './state.js';
 
 const ROUTE_PATTERN = /^#\/review\/([^#]+)(#.*)?$/;
 const REVEAL_FLASH_MS = 1600;
+const PDF_STATUS_LABELS = {
+  open: '未確認',
+  resolved: '確認済み',
+  resolveAction: '確認済みにする',
+  reopenAction: '未確認に戻す'
+};
 
 /**
  * Wires the controllers together and owns the routing between the file list and
  * a single document. Everything stateful lives on the object returned by
  * `createState()`, so a second instance never inherits the first one's DOM.
  */
-export function createApp(document, { api = defaultApi } = {}) {
+export function createApp(document, { api = defaultApi, pdfViewerFactory = createPdfViewer } = {}) {
   const window = document.defaultView;
   const refs = queryRefs(document);
   const state = createState();
@@ -72,7 +81,10 @@ export function createApp(document, { api = defaultApi } = {}) {
     state,
     api,
     onCommentsChanged: renderComments,
-    onDocumentUpdated: adoptSavedDocument
+    onDocumentUpdated(data) {
+      adoptSavedDocument(data);
+      renderOutline();
+    }
   });
   const linkNavigator = createLinkNavigator({
     root: content,
@@ -92,7 +104,8 @@ export function createApp(document, { api = defaultApi } = {}) {
     flushComments: () => commentSaves.flush(),
     // 相談して分かったことは、その場でメモへ流し込めます。残すかどうかと、
     // どこまでを前提として書くかはレビュアーが決めます。
-    onKeepContext: (text) => contextNotes.keepFromChat(text)
+    onKeepContext: (text) => contextNotes.keepFromChat(text),
+    onPaneRequested: openSidePane
   });
   const placement = createCommentPlacementController({
     refs,
@@ -128,6 +141,11 @@ export function createApp(document, { api = defaultApi } = {}) {
     onApplyEdits: applyDocumentEdits,
     onRevealTarget: revealTarget
   });
+  const pdfViewer = pdfViewerFactory({
+    document,
+    content,
+    onSelectComment: (commentId) => focusCommentCard(commentId)
+  });
 
   let pendingAnchor = '';
   let pendingDeleteId = null;
@@ -159,8 +177,11 @@ export function createApp(document, { api = defaultApi } = {}) {
     }
 
     if (!match) {
+      pdfViewer.dispose();
       fileList.revealPath(state.currentPath);
       state.currentPath = null;
+      state.documentType = null;
+      hideSidePane();
       await fileList.show();
       return;
     }
@@ -216,18 +237,23 @@ export function createApp(document, { api = defaultApi } = {}) {
    * ---------------------------------------------------------------- */
 
   async function openFile(filePath) {
+    pdfViewer.dispose();
     editor.cancel();
     commentSaves.cancel();
     resetDocumentState(state, filePath);
+    closeSidePane();
     pendingDeleteId = null;
 
     refs.fileView.classList.add('hidden');
     refs.reviewView.classList.remove('hidden');
     refs.exportOutput.hidden = true;
     refs.documentTitle.textContent = filePath;
+    refs.documentTitle.title = filePath;
+    refs.outlineList.innerHTML = '<p class="muted">見出しを読み込み中です。</p>';
+    refs.outlineCount.textContent = '0';
     bodyCopy.syncControl();
     setCommentStatus('idle', 'コメントは自動保存されます。');
-    content.innerHTML = '<p class="muted">Markdownをレンダリング中...</p>';
+    content.innerHTML = '<p class="muted">文書を読み込み中...</p>';
     panes.show('comments');
     placement.reset();
     briefNoticeShown = false;
@@ -241,10 +267,18 @@ export function createApp(document, { api = defaultApi } = {}) {
       const data = await api.openFile(filePath);
       if (state.currentPath !== filePath) return;
       adoptSavedDocument(data);
-      renderCommentMode();
       updateModeControls();
+      if (state.documentType === 'pdf') {
+        await pdfViewer.open(data);
+        if (state.currentPath !== filePath) return;
+        renderOutline();
+        renderComments();
+      } else {
+        renderCommentMode();
+      }
       ai.loadDocument();
     } catch (error) {
+      if (state.currentPath !== filePath) return;
       content.innerHTML = `<p class="load-error">このファイルを開けませんでした: ${escapeText(error.message)}</p>`;
       toaster.error(`このファイルを開けませんでした: ${error.message}`);
     }
@@ -252,9 +286,10 @@ export function createApp(document, { api = defaultApi } = {}) {
 
   function adoptSavedDocument(data) {
     adoptFeatures(data.features);
-    state.markdown = data.markdown;
-    state.rawHtml = data.html;
-    state.editableHtml = data.editableHtml;
+    state.documentType = data.documentType || 'markdown';
+    state.markdown = data.markdown || '';
+    state.rawHtml = data.html || '';
+    state.editableHtml = data.editableHtml || '';
     state.textBody = data.textBody === true;
     if (data.review?.comments) state.comments = data.review.comments;
     if (typeof data.projectAiContext === 'string') state.projectAiContext = data.projectAiContext;
@@ -278,8 +313,9 @@ export function createApp(document, { api = defaultApi } = {}) {
     };
     refs.managerTabButton.classList.toggle('hidden', !state.features.manager);
     refs.documentTranslateButton.classList.toggle('hidden', !state.features.translation);
+    refs.sideDocumentTranslateButton.classList.toggle('hidden', !state.features.translation);
     refs.selectionTranslateButton.classList.toggle('hidden', !state.features.translation);
-    refs.aiTabButton.textContent = state.features.translation ? '翻訳・AI' : 'AI';
+    refs.aiTabButton.childNodes[0].textContent = state.features.translation ? '翻訳・AI' : 'AI';
     refs.aiPanel.querySelector('.ai-header h2').textContent = state.features.translation
       ? '翻訳・AIチャット'
       : 'AIチャット';
@@ -295,9 +331,15 @@ export function createApp(document, { api = defaultApi } = {}) {
    * ---------------------------------------------------------------- */
 
   function renderCommentMode() {
+    if (state.documentType === 'pdf') {
+      pdfViewer.renderHighlights(state.comments);
+      renderComments();
+      return;
+    }
     content.classList.remove('editing');
     content.innerHTML = state.rawHtml;
     decorateReviewTargets();
+    renderOutline();
     renderComments();
     renderDiagrams(content, { isStillCurrent: () => state.mode === 'comment' });
     if (pendingAnchor) {
@@ -344,6 +386,122 @@ export function createApp(document, { api = defaultApi } = {}) {
     }
   }
 
+  /* ---------------------------------------------------------------- *
+   * Persistent side pane and document outline
+   * ---------------------------------------------------------------- */
+
+  function openSidePane() {
+    if (!state.currentPath) return;
+    refs.selectionToolbar.classList.add('hidden');
+    refs.reviewView.classList.add('side-pane-open');
+    refs.sidePaneToggle.classList.add('hidden');
+    refs.sidePaneBackdrop.classList.remove('hidden');
+    refs.sidePaneToggle.setAttribute('aria-expanded', 'true');
+    refs.sidePane.removeAttribute('aria-hidden');
+    refs.sidePane.removeAttribute('inert');
+  }
+
+  function closeSidePane({ hideToggle = false, restoreFocus = false } = {}) {
+    refs.reviewView.classList.remove('side-pane-open');
+    refs.sidePaneBackdrop.classList.add('hidden');
+    refs.sidePaneToggle.setAttribute('aria-expanded', 'false');
+    refs.sidePaneToggle.classList.toggle('hidden', hideToggle || !state.currentPath);
+    syncSidePaneAccessibility();
+    if (restoreFocus && !hideToggle && state.currentPath) refs.sidePaneToggle.focus();
+  }
+
+  function hideSidePane() {
+    closeSidePane({ hideToggle: true });
+    refs.sidePane.setAttribute('aria-hidden', 'true');
+    refs.sidePane.setAttribute('inert', '');
+  }
+
+  function syncSidePaneAccessibility() {
+    const drawerClosed = isDrawerLayout() && !refs.reviewView.classList.contains('side-pane-open');
+    const inaccessible = !state.currentPath || drawerClosed;
+    if (inaccessible) {
+      refs.sidePane.setAttribute('aria-hidden', 'true');
+      refs.sidePane.setAttribute('inert', '');
+    } else {
+      refs.sidePane.removeAttribute('aria-hidden');
+      refs.sidePane.removeAttribute('inert');
+    }
+  }
+
+  function isDrawerLayout() {
+    return window.matchMedia
+      ? window.matchMedia('(max-width: 1100px)').matches
+      : (window.innerWidth || 1024) <= 1100;
+  }
+
+  function renderOutline() {
+    const pdfPages = state.documentType === 'pdf'
+      ? [...content.querySelectorAll('.pdf-page[data-page-number]')]
+      : [];
+    const headings = state.documentType === 'pdf'
+      ? []
+      : [...content.querySelectorAll('h1, h2, h3, h4, h5, h6')];
+    const targets = state.documentType === 'pdf' ? pdfPages : headings;
+    refs.outlineCount.textContent = String(targets.length);
+    refs.outlineList.replaceChildren();
+
+    if (targets.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = state.documentType === 'pdf'
+        ? '表示できるページはありません。'
+        : 'この文書には見出しがありません。';
+      refs.outlineList.append(empty);
+      return;
+    }
+
+    targets.forEach((target, index) => {
+      const pageNumber = target.dataset.pageNumber;
+      const level = pageNumber ? 1 : Number(target.tagName.slice(1));
+      const label = pageNumber ? `ページ ${pageNumber}` : targetTextOf(target).trim();
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'outline-item';
+      button.dataset.level = String(level);
+
+      const number = document.createElement('span');
+      number.className = 'outline-item-number';
+      number.textContent = pageNumber || String(index + 1);
+      const text = document.createElement('span');
+      text.className = 'outline-item-label';
+      text.textContent = label || `見出し ${index + 1}`;
+      button.append(number, text);
+      button.addEventListener('click', () => {
+        target.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+        closeSidePane();
+        focusReviewElement(target);
+      });
+      refs.outlineList.append(button);
+    });
+  }
+
+  function scrollToDocumentTop() {
+    const documentPane = document.querySelector('.document-pane');
+    documentPane?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    closeSidePane();
+    focusReviewElement(documentPane);
+  }
+
+  function focusReviewElement(element) {
+    if (!element) return;
+    if (!element.hasAttribute('tabindex')) element.tabIndex = -1;
+    element.focus?.({ preventScroll: true });
+  }
+
+  function syncStickyToolbarOffset() {
+    const update = () => {
+      const height = Math.ceil(refs.documentToolbar.getBoundingClientRect().height);
+      if (height > 0) refs.reviewView.style.setProperty('--document-toolbar-height', `${height}px`);
+    };
+    if (window.requestAnimationFrame) window.requestAnimationFrame(update);
+    else setTimeout(update, 0);
+  }
+
   function handleSelectionChange() {
     const selection = window.getSelection();
     const range = selection && !selection.isCollapsed && selection.rangeCount > 0
@@ -354,7 +512,9 @@ export function createApp(document, { api = defaultApi } = {}) {
       && content.contains(selection.focusNode)
       && content.contains(range.commonAncestorContainer);
     state.currentSelectionTarget = state.mode === 'comment' && insideDocument
-      ? targets.forSelection(range, selection.toString().trim())
+      ? state.documentType === 'pdf'
+        ? pdfViewer.selectionTarget(range, selection.toString().trim())
+        : targets.forSelection(range, selection.toString().trim())
       : null;
 
     if (!state.currentSelectionTarget) {
@@ -363,8 +523,14 @@ export function createApp(document, { api = defaultApi } = {}) {
       return;
     }
     const rect = range.getBoundingClientRect();
-    refs.selectionToolbar.style.left = `${rect.left + window.scrollX}px`;
-    refs.selectionToolbar.style.top = `${rect.bottom + window.scrollY + 8}px`;
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1024;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 768;
+    const toolbarWidth = Math.min(refs.selectionToolbar.offsetWidth || 250, viewportWidth - 16);
+    const left = Math.max(8, Math.min(rect.left, viewportWidth - toolbarWidth - 8));
+    const below = rect.bottom + 8;
+    const top = below + 52 <= viewportHeight ? below : Math.max(8, rect.top - 52);
+    refs.selectionToolbar.style.left = `${left}px`;
+    refs.selectionToolbar.style.top = `${top}px`;
     refs.selectionToolbar.classList.remove('hidden');
   }
 
@@ -476,6 +642,7 @@ export function createApp(document, { api = defaultApi } = {}) {
       comments: state.comments,
       mode: state.mode,
       pendingDeleteId,
+      statusLabels: state.documentType === 'pdf' ? PDF_STATUS_LABELS : undefined,
       handlers: {
         onEdit(index, value) {
           state.comments[index].comment = value;
@@ -483,6 +650,9 @@ export function createApp(document, { api = defaultApi } = {}) {
         },
         onRepeat(index) {
           dialog.open(copyCommentTarget(state.comments[index]));
+        },
+        onFocusTarget(index) {
+          focusCommentTarget(index);
         },
         onToggleStatus(index) {
           const comment = state.comments[index];
@@ -492,7 +662,11 @@ export function createApp(document, { api = defaultApi } = {}) {
           pendingDeleteId = null;
           renderComments();
           markCommentsDirty();
-          toaster.info(wasResolved ? 'コメントを未解決に戻しました。' : 'コメントを解決済みにしました。');
+          if (state.documentType === 'pdf') {
+            toaster.info(wasResolved ? 'コメントを未確認に戻しました。' : 'コメントを確認済みにしました。');
+          } else {
+            toaster.info(wasResolved ? 'コメントを未解決に戻しました。' : 'コメントを解決済みにしました。');
+          }
         },
         onRequestDelete(index) {
           pendingDeleteId = state.comments[index]?.id ?? null;
@@ -512,7 +686,12 @@ export function createApp(document, { api = defaultApi } = {}) {
       }
     });
     refs.commentCount.textContent = String(state.comments.length);
-    if (state.mode === 'comment') renderCommentHighlights(content, state.comments);
+    refs.sidePaneToggleCount.textContent = String(state.comments.length);
+    if (state.mode === 'comment' && state.documentType === 'pdf') {
+      pdfViewer.renderHighlights(state.comments);
+    } else if (state.mode === 'comment') {
+      renderCommentHighlights(content, state.comments);
+    }
   }
 
   /**
@@ -544,6 +723,7 @@ export function createApp(document, { api = defaultApi } = {}) {
   function revealComments(indexes) {
     if (indexes.length === 0) return;
     panes.show('comments');
+    openSidePane();
     const cards = indexes
       .map((index) => refs.commentsList.querySelector(`.comment-card[data-comment-index="${index}"]`))
       .filter(Boolean);
@@ -556,6 +736,8 @@ export function createApp(document, { api = defaultApi } = {}) {
   }
 
   function highlightCommentCard(commentId) {
+    panes.show('comments');
+    openSidePane();
     const card = refs.commentsList.querySelector(`.comment-card[data-comment-id="${cssAttr(commentId)}"]`);
     if (!card) return;
     card.classList.add('just-added');
@@ -617,6 +799,44 @@ export function createApp(document, { api = defaultApi } = {}) {
     state.commentsVersion += 1;
     if (!state.currentPath) return;
     commentSaves.schedule();
+  }
+
+  function focusCommentCard(commentId) {
+    if (!commentId) return;
+    highlightCommentCard(commentId);
+    refs.commentsList.querySelector(`.comment-card[data-comment-id="${cssAttr(commentId)}"]`)?.focus?.();
+  }
+
+  function focusCommentTarget(index) {
+    const comment = state.comments[index];
+    if (!comment) return;
+    let target = null;
+
+    if (comment.type === 'document') {
+      target = document.querySelector('.document-pane');
+    } else if (state.documentType === 'pdf') {
+      target = content.querySelector(`.pdf-comment-highlight[data-comment-id="${cssAttr(comment.id || '')}"]`)
+        || content.querySelector(`.pdf-page[data-page-number="${cssAttr(comment.pageNumber || '')}"]`);
+    } else {
+      const wanted = normalizeText(comment.selectedText || comment.targetText || comment.heading || '');
+      const selector = comment.type === 'section'
+        ? 'h1, h2, h3, h4, h5, h6'
+        : comment.type === 'text-selection'
+          ? '.comment-highlight-text, .editor-comment-anchor'
+          : 'p, li, blockquote, pre';
+      target = [...content.querySelectorAll(selector)]
+        .find((element) => normalizeText(targetTextOf(element)) === wanted) || null;
+    }
+
+    if (!target) {
+      toaster.error('コメント対象を本文内で見つけられませんでした。');
+      return;
+    }
+    closeSidePane();
+    target.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    target.classList.add('focused-review-target');
+    focusReviewElement(target);
+    setTimeout(() => target.classList.remove('focused-review-target'), 1800);
   }
 
   function markCommentsDirty() {
@@ -714,6 +934,7 @@ export function createApp(document, { api = defaultApi } = {}) {
    * ---------------------------------------------------------------- */
 
   async function setMode(nextMode) {
+    if (state.documentType === 'pdf') return;
     if (nextMode === state.mode || !state.currentPath) return;
     if (nextMode === 'comment') {
       if (!(await editor.flush())) return;
@@ -724,6 +945,7 @@ export function createApp(document, { api = defaultApi } = {}) {
       if (!allowedToWrite()) return;
       state.mode = 'edit';
       editor.render();
+      renderOutline();
       renderComments();
     }
     updateModeControls();
@@ -762,7 +984,13 @@ export function createApp(document, { api = defaultApi } = {}) {
   }
 
   function updateModeControls() {
+    const pdfReadOnly = state.documentType === 'pdf';
+    const bodyReadOnly = state.documentType !== 'markdown';
+    if (bodyReadOnly) state.mode = 'comment';
     const editing = state.mode === 'edit';
+    refs.modeSwitch.classList.toggle('hidden', bodyReadOnly);
+    refs.modeShortcut.classList.toggle('hidden', bodyReadOnly);
+    refs.editModeButton.disabled = bodyReadOnly;
     refs.commentModeButton.classList.toggle('active', !editing);
     refs.editModeButton.classList.toggle('active', editing);
     refs.commentModeButton.setAttribute('aria-pressed', String(!editing));
@@ -770,9 +998,25 @@ export function createApp(document, { api = defaultApi } = {}) {
     refs.editorToolbar.classList.toggle('hidden', !editing);
     refs.editorSaveRow.classList.toggle('hidden', !editing);
     refs.documentCommentButton.disabled = editing;
-    refs.documentTranslateButton.disabled = editing;
-    refs.documentAiButton.disabled = editing;
+    refs.documentTranslateButton.disabled = editing || pdfReadOnly;
+    refs.documentAiButton.disabled = editing || pdfReadOnly;
+    refs.sideDocumentCommentButton.disabled = editing;
+    refs.sideDocumentTranslateButton.disabled = editing || pdfReadOnly;
+    refs.sideDocumentAiButton.disabled = editing || pdfReadOnly;
+    refs.saveButton.disabled = editing;
+    refs.placementTabButton.disabled = pdfReadOnly;
+    refs.reviseTabButton.disabled = bodyReadOnly;
+    refs.documentTranslateButton.title = pdfReadOnly ? 'PDF全体の翻訳には対応していません。文章を選択してください。' : '';
+    refs.documentAiButton.title = pdfReadOnly ? 'PDF全体ではなく、文章を選択してAIに相談してください。' : '';
+    refs.sideDocumentTranslateButton.title = refs.documentTranslateButton.title;
+    refs.sideDocumentAiButton.title = refs.documentAiButton.title;
+    refs.documentNotice.hidden = !pdfReadOnly;
+    refs.documentNotice.textContent = pdfReadOnly
+      ? 'PDFは読み取り専用です。本体は変更されません。コメントの状態は、PDF外での対応を含めて「未確認／確認済み」として管理します。範囲選択は1ページ内で行ってください。'
+      : '';
     refs.reviewView.classList.toggle('editing-mode', editing);
+    refs.reviewView.classList.toggle('pdf-mode', pdfReadOnly);
+    syncStickyToolbarOffset();
     if (!editing) editor.setStatus('saved', '保存済み');
   }
 
@@ -818,6 +1062,10 @@ export function createApp(document, { api = defaultApi } = {}) {
 
   function bindGlobalEvents() {
     window.addEventListener('hashchange', route);
+    window.addEventListener('resize', () => {
+      syncStickyToolbarOffset();
+      syncSidePaneAccessibility();
+    });
     window.addEventListener('beforeunload', (event) => {
       if (!hasUnsavedWork()) return;
       event.preventDefault();
@@ -855,6 +1103,10 @@ export function createApp(document, { api = defaultApi } = {}) {
       keyboardSelectionActive = false;
       queueSelectionTranslation();
     });
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || !refs.reviewView.classList.contains('side-pane-open') || dialog.isOpen) return;
+      closeSidePane({ restoreFocus: true });
+    });
 
     refs.backButton.addEventListener('click', navigateBack);
     refs.headerLink.addEventListener('click', (event) => {
@@ -866,6 +1118,13 @@ export function createApp(document, { api = defaultApi } = {}) {
     refs.documentTranslateButton.addEventListener('click', () => ai.translate({ type: 'document' }));
     refs.documentAiButton.addEventListener('click', () => ai.ask({ type: 'document' }));
     refs.copyBodyButton?.addEventListener('click', bodyCopy.copy);
+    refs.sideDocumentCommentButton.addEventListener('click', () => dialog.open({ type: 'document' }));
+    refs.sideDocumentTranslateButton.addEventListener('click', () => ai.translate({ type: 'document' }));
+    refs.sideDocumentAiButton.addEventListener('click', () => ai.ask({ type: 'document' }));
+    refs.outlineTopButton.addEventListener('click', scrollToDocumentTop);
+    refs.sidePaneToggle.addEventListener('click', openSidePane);
+    refs.sidePaneClose.addEventListener('click', () => closeSidePane({ restoreFocus: true }));
+    refs.sidePaneBackdrop.addEventListener('click', () => closeSidePane({ restoreFocus: true }));
     refs.saveButton.addEventListener('click', () => commentSaves.run());
     refs.exportButton.addEventListener('click', exportReviewMarkdown);
     refs.commentModeButton.addEventListener('click', () => setMode('comment'));

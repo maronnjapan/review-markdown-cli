@@ -16,7 +16,9 @@ const TYPE_HINTS = {
 
 const STATUS_LABELS = {
   open: '未解決',
-  resolved: '解決済み'
+  resolved: '解決済み',
+  resolveAction: '解決済みにする',
+  reopenAction: '未解決に戻す'
 };
 
 /** どのAI機能が置いたコメントか。手で書いたコメントには印を付けません。 */
@@ -31,7 +33,8 @@ const SEVERITY_LABELS = {
   idea: '提案'
 };
 
-export function labelForType(type) {
+export function labelForType(type, documentType) {
+  if (documentType === 'pdf' && type === 'text-selection') return 'PDF範囲選択';
   return TYPE_LABELS[type] || type || 'コメント';
 }
 
@@ -41,10 +44,13 @@ export function commentTargetText(comment) {
 
 export function describeTarget(target) {
   if (target.type === 'document') return '文書全体';
+  if (target.documentType === 'pdf' && target.type === 'text-selection') {
+    return `ページ ${target.pageNumber || '?'}・選択範囲: ${truncate(commentTargetText(target))}`;
+  }
   if (target.type === 'section') return `見出し: ${target.heading || target.targetText || ''}`;
   if (target.type === 'paragraph') return `段落: ${truncate(commentTargetText(target))}`;
   if (target.type === 'text-selection') return `選択範囲: ${truncate(commentTargetText(target))}`;
-  return labelForType(target.type);
+  return labelForType(target.type, target.documentType);
 }
 
 export function statusForComment(comment) {
@@ -105,11 +111,13 @@ export function createCommentDialog(refs, { onSubmit }) {
 
   function open(target) {
     pendingTarget = target;
-    refs.dialogTypeBadge.textContent = labelForType(target.type);
+    refs.dialogTypeBadge.textContent = labelForType(target.type, target.documentType);
     refs.dialogTypeBadge.dataset.type = target.type || 'comment';
     refs.dialogTitle.textContent = target.type === 'document' ? '文書全体にコメント' : 'コメントを追加';
 
-    const headingPath = Array.isArray(target.headingPath) ? target.headingPath.filter(Boolean) : [];
+    const headingPath = target.documentType === 'pdf' && target.pageNumber
+      ? [`ページ ${target.pageNumber}`]
+      : Array.isArray(target.headingPath) ? target.headingPath.filter(Boolean) : [];
     refs.dialogTargetPath.textContent = headingPath.length ? headingPath.join(' › ') : '';
     refs.dialogTargetPath.hidden = headingPath.length === 0;
 
@@ -139,7 +147,10 @@ export function createCommentDialog(refs, { onSubmit }) {
  * Renders the comment pane. `handlers` receives the comment index so callers do
  * not have to re-derive it from the DOM.
  */
-export function renderCommentList(container, { comments, mode, pendingDeleteId, handlers }) {
+export function renderCommentList(container, {
+  comments, mode, pendingDeleteId, handlers, statusLabels = STATUS_LABELS
+}) {
+  const labels = { ...STATUS_LABELS, ...statusLabels };
   const readOnly = mode === 'edit';
   container.innerHTML = comments.length === 0
     ? '<p class="muted">まだコメントはありません。</p>'
@@ -148,7 +159,8 @@ export function renderCommentList(container, { comments, mode, pendingDeleteId, 
       comments.map((comment, index) => ({ comment, index }))
         .filter(({ comment }) => statusForComment(comment) === status),
       readOnly,
-      pendingDeleteId
+      pendingDeleteId,
+      labels
     )).join('');
 
   container.querySelectorAll('textarea[data-comment-index]').forEach((textarea) => {
@@ -160,39 +172,39 @@ export function renderCommentList(container, { comments, mode, pendingDeleteId, 
   });
 }
 
-function commentGroupHtml(status, entries, readOnly, pendingDeleteId) {
+function commentGroupHtml(status, entries, readOnly, pendingDeleteId, labels) {
   if (entries.length === 0) return '';
   return `
-    <section class="comment-group" data-status="${status}" aria-label="${STATUS_LABELS[status]}のコメント">
+    <section class="comment-group" data-status="${status}" aria-label="${labels[status]}のコメント">
       <div class="comment-group-header">
-        <h3>${STATUS_LABELS[status]}</h3>
+        <h3>${labels[status]}</h3>
         <span class="comment-group-count">${entries.length}</span>
       </div>
       <div class="comment-group-items">
-        ${entries.map(({ comment, index }) => commentCardHtml(comment, index, readOnly, pendingDeleteId)).join('')}
+        ${entries.map(({ comment, index }) => commentCardHtml(comment, index, readOnly, pendingDeleteId, labels)).join('')}
       </div>
     </section>`;
 }
 
-function commentCardHtml(comment, index, readOnly, pendingDeleteId) {
+function commentCardHtml(comment, index, readOnly, pendingDeleteId, labels) {
   const disabled = readOnly ? ' disabled' : '';
   const confirming = comment.id && comment.id === pendingDeleteId;
   const status = statusForComment(comment);
   return `
-    <article class="comment-card${comment.targetDetached ? ' detached' : ''}${confirming ? ' confirming' : ''}" data-comment-id="${escapeHtml(comment.id || '')}" data-comment-index="${index}" data-status="${status}">
+    <article class="comment-card${comment.targetDetached ? ' detached' : ''}${confirming ? ' confirming' : ''}" data-comment-id="${escapeHtml(comment.id || '')}" data-comment-index="${index}" data-status="${status}" tabindex="-1">
       <div class="comment-meta">
         <div class="comment-meta-labels">
-          <strong><span class="target-badge" data-type="${escapeHtml(comment.type || '')}">${escapeHtml(labelForType(comment.type))}</span> ${index + 1}</strong>
-          <span class="comment-status" data-status="${status}">${STATUS_LABELS[status]}</span>
+          <strong><span class="target-badge" data-type="${escapeHtml(comment.type || '')}">${escapeHtml(labelForType(comment.type, comment.documentType))}</span> ${index + 1}</strong>
+          <span class="comment-status" data-status="${status}">${labels[status]}</span>
           ${SOURCE_LABELS[comment.source] ? `<span class="comment-source">${escapeHtml(SOURCE_LABELS[comment.source])}</span>` : ''}
         </div>
         <time>${escapeHtml(formatTimestamp(comment.createdAt))}</time>
       </div>
-      <p class="target-summary">${escapeHtml(describeTarget(comment))}</p>
+      <button type="button" class="target-summary" data-action="onFocusTarget" data-index="${index}" title="本文のコメント対象へ移動">${escapeHtml(describeTarget(comment))}<span aria-hidden="true"> →</span></button>
       ${reviewedPartHtml(comment)}
       ${comment.targetDetached ? '<span class="detached-label">編集後の対象を特定できません</span>' : ''}
       <textarea data-comment-index="${index}" rows="4"${disabled}>${escapeHtml(comment.comment || '')}</textarea>
-      ${confirming ? deleteConfirmHtml(index) : actionsHtml(index, disabled, status)}
+      ${confirming ? deleteConfirmHtml(index) : actionsHtml(index, disabled, status, labels)}
     </article>`;
 }
 
@@ -218,11 +230,11 @@ function reviewedPartHtml(comment) {
     </section>`;
 }
 
-function actionsHtml(index, disabled, status) {
+function actionsHtml(index, disabled, status, labels) {
   return `
     <div class="comment-actions">
       <button type="button" data-action="onRepeat" data-index="${index}"${disabled}>同じ対象に追加</button>
-      <button type="button" class="status-action" data-action="onToggleStatus" data-index="${index}"${disabled}>${status === 'resolved' ? '未解決に戻す' : '解決済みにする'}</button>
+      <button type="button" class="status-action" data-action="onToggleStatus" data-index="${index}"${disabled}>${status === 'resolved' ? labels.reopenAction : labels.resolveAction}</button>
       <button type="button" data-action="onRequestDelete" data-index="${index}"${disabled}>削除</button>
     </div>`;
 }

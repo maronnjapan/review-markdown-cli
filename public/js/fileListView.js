@@ -16,7 +16,7 @@ export function createFileListView({ refs, state, api }) {
   async function show() {
     refs.reviewView.classList.add('hidden');
     refs.fileView.classList.remove('hidden');
-    refs.fileView.innerHTML = '<p class="muted">Markdownファイルを読み込み中...</p>';
+    refs.fileView.innerHTML = '<p class="muted">Markdown / PDFファイルを読み込み中...</p>';
 
     try {
       const data = await api.listFiles();

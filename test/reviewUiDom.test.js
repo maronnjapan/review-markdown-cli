@@ -93,6 +93,70 @@ test('the comment dialog names its target, and a link outside the root reports a
   assert.match(document.querySelector('#toast-region').textContent, /レビュー対象ディレクトリの外/);
 });
 
+test('the persistent review workspace exposes document tools, outline navigation, and mobile drawer controls', async (t) => {
+  const markdown = '# 設計メモ\n\n## 背景\n\nレビュー対象です。\n';
+  const comments = [{
+    id: 'workspace-comment',
+    type: 'paragraph',
+    selectedText: 'レビュー対象です。',
+    targetText: 'レビュー対象です。',
+    comment: '確認してください',
+    status: 'open'
+  }];
+  const { document, window } = await startApp(t, 'http://localhost/#/review/workspace.md', {
+    '/api/file': async () => ({
+      path: 'workspace.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'workspace.md', comments },
+      reviewFile: '.review/workspace.md.review.json'
+    })
+  });
+  await waitFor(() => document.querySelectorAll('.outline-item').length === 2);
+
+  assert.ok(document.querySelector('.document-toolbar #document-title'), '文書名は追従ツールバー内にある');
+  assert.deepEqual(
+    [...document.querySelectorAll('.outline-item-label')].map((item) => item.textContent),
+    ['設計メモ', '背景']
+  );
+  assert.equal(document.querySelector('#side-pane-toggle-count').textContent, '1');
+  assert.equal(document.querySelector('#side-pane').getAttribute('aria-hidden'), 'true');
+
+  document.querySelector('#side-pane-toggle').click();
+  assert.equal(document.querySelector('#review-view').classList.contains('side-pane-open'), true);
+  assert.equal(document.querySelector('#side-pane-toggle').getAttribute('aria-expanded'), 'true');
+  assert.equal(document.querySelector('#side-pane').hasAttribute('inert'), false);
+
+  document.querySelector('#outline-tab-button').click();
+  assert.equal(document.querySelector('#outline-panel').classList.contains('hidden'), false);
+  assert.equal(document.querySelector('#comments-panel').classList.contains('hidden'), true);
+  document.querySelector('#outline-tab-button').dispatchEvent(new window.KeyboardEvent('keydown', {
+    key: 'ArrowRight', bubbles: true
+  }));
+  assert.equal(document.querySelector('#comments-tab-button').getAttribute('aria-selected'), 'true');
+  document.querySelector('#outline-tab-button').click();
+
+  document.querySelector('#side-document-comment-button').click();
+  assert.equal(document.querySelector('#comment-dialog').open, true);
+  assert.equal(document.querySelector('#dialog-type-badge').textContent, '文書全体');
+  document.querySelector('#cancel-dialog').click();
+
+  document.querySelector('#side-pane-close').click();
+  assert.equal(document.querySelector('#review-view').classList.contains('side-pane-open'), false);
+  assert.equal(document.querySelector('#side-pane').getAttribute('aria-hidden'), 'true');
+
+  document.querySelector('#side-pane-toggle').click();
+  document.querySelector('#comments-tab-button').click();
+  document.querySelector('[data-comment-id="workspace-comment"] .target-summary').click();
+  const paragraph = [...document.querySelectorAll('#markdown-content p')]
+    .find((element) => element.textContent.includes('レビュー対象です。'));
+  assert.equal(paragraph.classList.contains('focused-review-target'), true, 'コメントから本文の対象へ戻れる');
+
+  paragraph.querySelector('.inline-ai-button').click();
+  assert.equal(document.querySelector('#ai-tab-button').getAttribute('aria-selected'), 'true');
+  assert.equal(document.querySelector('#review-view').classList.contains('side-pane-open'), true);
+});
+
 test('the manager and translation controls stay hidden until the server enables them', async (t) => {
   const markdown = '# Guide\n\nRun the program.\n';
   const { document } = await startApp(t, 'http://localhost/#/review/guide.md', {
@@ -109,6 +173,7 @@ test('the manager and translation controls stay hidden until the server enables 
 
   assert.equal(document.querySelector('#manager-tab-button').classList.contains('hidden'), true);
   assert.equal(document.querySelector('#document-translate-button').classList.contains('hidden'), true);
+  assert.equal(document.querySelector('#side-document-translate-button').classList.contains('hidden'), true);
   assert.equal(document.querySelector('#selection-translate-button').classList.contains('hidden'), true);
   assert.equal(document.querySelector('#markdown-content .inline-translate-button'), null);
   assert.equal(document.querySelector('#ai-tab-button').textContent, 'AI');
