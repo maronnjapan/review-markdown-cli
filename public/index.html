@@ -38,6 +38,7 @@
               <button id="document-comment-button" type="button">文書全体にコメント</button>
               <button id="document-translate-button" class="hidden" type="button">文書全体を翻訳</button>
               <button id="document-ai-button" type="button">文書全体をAIに相談</button>
+              <button id="context-open-button" type="button" title="前提と保存した相談をまとめて見る画面を開きます">コンテキスト</button>
               <button id="copy-body-button" class="hidden" type="button" title="本文をそのままクリップボードへコピーします">本文をコピー</button>
             </div>
           </div>
@@ -182,6 +183,7 @@
                 <p class="ai-context-hint">AIがこの文書を読むときの前提です。翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。</p>
                 <textarea id="ai-context-input" rows="4" placeholder="例：Node.js入門書の第3章。読者はJavaScriptの基礎を知っている前提。用語は原著の訳語に合わせる。"></textarea>
                 <p id="ai-context-status" class="ai-context-status" aria-live="polite"></p>
+                <button id="ai-context-open-page" class="context-open-link" type="button">広い画面で編集</button>
                 <div id="ai-context-project" class="ai-context-project" hidden>
                   <p class="ai-context-project-label">このディレクトリ全体の前提（設定ファイル）</p>
                   <blockquote id="ai-context-project-text"></blockquote>
@@ -204,6 +206,7 @@
                 </form>
                 <p id="context-note-full" class="context-note-full" hidden>メモが上限に達しました。古いものを消すか、まとめてください。</p>
                 <p id="context-notes-status" class="ai-context-status" aria-live="polite"></p>
+                <button id="context-notes-open-page" class="context-open-link" type="button">広い画面で編集</button>
                 <div id="context-notes-list" class="context-notes-list"></div>
               </details>
               <div class="ai-conversation-controls">
@@ -323,6 +326,120 @@
             </div>
           </section>
         </aside>
+      </section>
+      <section id="context-view" class="context-workspace hidden" aria-label="コンテキスト">
+        <header class="workspace-header card">
+          <div class="workspace-header-heading">
+            <button id="workspace-back-button" type="button">← レビューへ戻る</button>
+            <div class="document-name">
+              <span class="document-name-label">コンテキスト</span>
+              <h2 id="workspace-document-title"></h2>
+            </div>
+          </div>
+          <p class="workspace-lead">ここにあるものは、翻訳・AIチャット・指摘の配置・AIレビューが本文より先に読みます。書き換えは自動保存され、次のAI操作から効きます。</p>
+        </header>
+
+        <div class="workspace-grid">
+          <section id="workspace-brief" class="card workspace-card">
+            <header class="workspace-card-head">
+              <h3>資料の管理者が決めた3点</h3>
+              <span id="workspace-brief-state" class="ai-context-state">0 / 3</span>
+            </header>
+            <p class="ai-context-hint">この資料が何のためにあるかです。3点から外れた箇所は、AIレビューが指摘します。</p>
+            <div class="brief-form">
+              <div class="brief-field">
+                <label class="brief-field-label" for="workspace-brief-purpose">目的</label>
+                <p id="workspace-brief-purpose-hint" class="brief-field-hint">この資料が終わったとき、読み手に何が起きていれば成功か。「資料を作ること」は目的になりません。</p>
+                <textarea id="workspace-brief-purpose" rows="3" aria-describedby="workspace-brief-purpose-hint" placeholder="例：当番が、手順書を見ながら一人で再起動を完了できるようになる。"></textarea>
+              </div>
+              <div class="brief-field">
+                <label class="brief-field-label" for="workspace-brief-story">ストーリー</label>
+                <p id="workspace-brief-story-hint" class="brief-field-hint">その結論まで、何をどの順に示して連れて行くか。節の一覧ではなく、前が次を支える並びを書きます。</p>
+                <textarea id="workspace-brief-story" rows="3" aria-describedby="workspace-brief-story-hint" placeholder="例：止めてよい条件を先に決める → 止める手順 → 戻ったことの確かめ方 → 戻らなかったときの連絡先。"></textarea>
+              </div>
+              <div class="brief-field">
+                <label class="brief-field-label" for="workspace-brief-expectation">期待値</label>
+                <p id="workspace-brief-expectation-hint" class="brief-field-hint">読んだあと、読み手や頼んだ人が何を判断・実行できるか。</p>
+                <textarea id="workspace-brief-expectation" rows="3" aria-describedby="workspace-brief-expectation-hint" placeholder="例：当番から運用チームへの問い合わせが、再起動については来なくなる。"></textarea>
+              </div>
+              <div class="brief-actions">
+                <button id="workspace-brief-clear-button" type="button" disabled>3つを消す</button>
+              </div>
+              <p id="workspace-brief-status" class="ai-context-status" aria-live="polite"></p>
+            </div>
+            <details id="workspace-brief-compose" class="ai-context">
+              <summary>管理者に組み立てさせる</summary>
+              <p class="ai-context-hint">決まっていることを走り書きで渡すと、管理者が3つの欄へ組み直し、決まっていない分は問いとして返します。本文は読ませません。</p>
+              <form id="workspace-brief-compose-form" class="persona-form">
+                <textarea id="workspace-brief-input" rows="4" placeholder="例：運用チームから当番向けの再起動手順を頼まれた。事故が月1件ある。締め切りは来週。"></textarea>
+                <div class="persona-actions">
+                  <button id="workspace-brief-stop-button" class="hidden" type="button">停止</button>
+                  <button id="workspace-brief-compose-button" type="submit">管理者に聞く</button>
+                </div>
+              </form>
+              <div id="workspace-brief-result" class="brief-result"></div>
+            </details>
+          </section>
+
+          <section id="workspace-ai-context" class="card workspace-card">
+            <header class="workspace-card-head">
+              <h3>読み取りコンテキスト</h3>
+              <span id="workspace-ai-context-state" class="ai-context-state">未設定</span>
+            </header>
+            <p class="ai-context-hint">AIがこの文書を読むときの前提を1枚に整えたものです。書き換えると、次のAI操作からその前提で読みます。</p>
+            <textarea id="workspace-ai-context-input" rows="12" placeholder="例：Node.js入門書の第3章。読者はJavaScriptの基礎を知っている前提。用語は原著の訳語に合わせる。"></textarea>
+            <p id="workspace-ai-context-status" class="ai-context-status" aria-live="polite"></p>
+            <div id="workspace-ai-context-project" class="ai-context-project" hidden>
+              <p class="ai-context-project-label">このディレクトリ全体の前提（設定ファイル）</p>
+              <blockquote id="workspace-ai-context-project-text"></blockquote>
+              <p class="workspace-note">この欄は設定ファイル（`review-markdown config set aiContext`）で決まります。画面からは変えられません。文書ごとの前提は、これを置き換えずに足す形で渡します。</p>
+            </div>
+          </section>
+
+          <section id="workspace-notes" class="card workspace-card workspace-card-wide">
+            <header class="workspace-card-head">
+              <h3>コンテキストメモ</h3>
+              <span id="workspace-context-notes-state" class="ai-context-state">未設定</span>
+            </header>
+            <p class="ai-context-hint">この文書について分かったことを1件ずつ残します。読み取りコンテキストが「この文書はこう読む」の1枚なのに対して、こちらは「このとき、こう分かった」の積み上げです。</p>
+            <div class="workspace-notes-layout">
+              <form id="workspace-context-note-form" class="context-note-form">
+                <select id="workspace-context-note-kind" aria-label="メモの種類" aria-describedby="workspace-context-note-kind-hint"></select>
+                <p id="workspace-context-note-kind-hint" class="context-note-kind-hint" aria-live="polite"></p>
+                <textarea id="workspace-context-note-input" rows="5" placeholder="例：この節は前の版から移してきた。並び順は検討済みで、変えない。"></textarea>
+                <div class="context-note-actions">
+                  <button id="workspace-context-note-cancel" type="button" class="hidden">編集をやめる</button>
+                  <button id="workspace-context-note-submit" type="submit" disabled>残す</button>
+                </div>
+                <p id="workspace-context-note-full" class="context-note-full" hidden>メモが上限に達しました。古いものを消すか、まとめてください。</p>
+                <p id="workspace-context-notes-status" class="ai-context-status" aria-live="polite"></p>
+              </form>
+              <div id="workspace-context-notes-list" class="context-notes-list"></div>
+            </div>
+          </section>
+
+          <section id="workspace-persona" class="card workspace-card">
+            <header class="workspace-card-head">
+              <h3>読み手ペルソナ</h3>
+              <span id="workspace-persona-state" class="ai-context-state">未設定</span>
+            </header>
+            <p class="ai-context-hint">誰がこの文書を読むかです。組み立てと書き換えは、レビューを実行する場所と同じ「AIレビュー」タブで行います。</p>
+            <div id="workspace-persona-result" class="persona-result"></div>
+            <button id="workspace-persona-edit-button" type="button">「AIレビュー」タブで編集</button>
+          </section>
+
+          <section id="workspace-conversations" class="card workspace-card workspace-card-wide">
+            <header class="workspace-card-head">
+              <h3>AIチャットの記録</h3>
+              <span id="workspace-conversation-state" class="ai-context-state">0件</span>
+            </header>
+            <p class="ai-context-hint">この文書で交わした相談です。言い間違えた質問や、間違ったまま残っている回答はここで直せます。直したやり取りは、次にこの会話を続けるときAIが読み直します。</p>
+            <div class="workspace-conversations">
+              <nav id="workspace-conversation-list" class="workspace-conversation-list" aria-label="保存された会話"></nav>
+              <div id="workspace-conversation-detail" class="workspace-conversation-detail"></div>
+            </div>
+          </section>
+        </div>
       </section>
     </main>
 

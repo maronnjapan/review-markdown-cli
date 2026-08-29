@@ -124,6 +124,48 @@ const SELECTORS = {
   reviseStopButton: '#revise-stop-button',
   reviseResults: '#revise-results',
 
+  contextView: '#context-view',
+  contextOpenButton: '#context-open-button',
+  aiContextOpenPage: '#ai-context-open-page',
+  contextNotesOpenPage: '#context-notes-open-page',
+  workspaceBackButton: '#workspace-back-button',
+  workspaceDocumentTitle: '#workspace-document-title',
+  workspaceBriefCard: '#workspace-brief',
+  workspaceBriefState: '#workspace-brief-state',
+  workspaceBriefPurpose: '#workspace-brief-purpose',
+  workspaceBriefStory: '#workspace-brief-story',
+  workspaceBriefExpectation: '#workspace-brief-expectation',
+  workspaceBriefClearButton: '#workspace-brief-clear-button',
+  workspaceBriefStatus: '#workspace-brief-status',
+  workspaceBriefComposeForm: '#workspace-brief-compose-form',
+  workspaceBriefInput: '#workspace-brief-input',
+  workspaceBriefComposeButton: '#workspace-brief-compose-button',
+  workspaceBriefStopButton: '#workspace-brief-stop-button',
+  workspaceBriefResult: '#workspace-brief-result',
+  workspaceAiContext: '#workspace-ai-context',
+  workspaceAiContextState: '#workspace-ai-context-state',
+  workspaceAiContextInput: '#workspace-ai-context-input',
+  workspaceAiContextStatus: '#workspace-ai-context-status',
+  workspaceAiContextProject: '#workspace-ai-context-project',
+  workspaceAiContextProjectText: '#workspace-ai-context-project-text',
+  workspaceNotes: '#workspace-notes',
+  workspaceContextNotesState: '#workspace-context-notes-state',
+  workspaceContextNoteForm: '#workspace-context-note-form',
+  workspaceContextNoteKind: '#workspace-context-note-kind',
+  workspaceContextNoteKindHint: '#workspace-context-note-kind-hint',
+  workspaceContextNoteInput: '#workspace-context-note-input',
+  workspaceContextNoteCancel: '#workspace-context-note-cancel',
+  workspaceContextNoteSubmit: '#workspace-context-note-submit',
+  workspaceContextNoteFull: '#workspace-context-note-full',
+  workspaceContextNotesStatus: '#workspace-context-notes-status',
+  workspaceContextNotesList: '#workspace-context-notes-list',
+  workspacePersonaState: '#workspace-persona-state',
+  workspacePersonaResult: '#workspace-persona-result',
+  workspacePersonaEditButton: '#workspace-persona-edit-button',
+  workspaceConversationState: '#workspace-conversation-state',
+  workspaceConversationList: '#workspace-conversation-list',
+  workspaceConversationDetail: '#workspace-conversation-detail',
+
   selectionToolbar: '#selection-toolbar',
   selectionToolbarButton: '#selection-comment-button',
   selectionTranslateButton: '#selection-translate-button',
@@ -151,6 +193,17 @@ const SELECTORS = {
 
   toastRegion: '#toast-region'
 };
+
+/**
+ * 同じ操作盤をもう1か所へ出すための、名前だけをそろえた参照です。
+ *
+ * 操作盤（`aiContext.js` や `contextNotes.js`）は自分が触る要素を決まった名前で呼びます。
+ * サイドパネルとコンテキスト画面の両方へ同じ操作盤を出せるように、画面側の要素を
+ * その名前へ読み替えて渡します。ロジックを写さずに済ませるための、名前の付け替えだけです。
+ */
+export function aliasRefs(refs, aliases) {
+  return Object.fromEntries(Object.entries(aliases).map(([name, source]) => [name, refs[source]]));
+}
 
 /**
  * Resolves every element the app touches, once, against the given document.

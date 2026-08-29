@@ -42,7 +42,7 @@ const ROUTES = [
   { methods: ['GET'], pathname: '/api/export', handle: exportReview },
   { methods: ['GET'], pathname: '/api/ai/status', handle: aiStatus },
   { methods: ['GET'], pathname: '/api/ai/conversations', handle: listAiConversations },
-  { methods: ['POST', 'DELETE'], pathname: '/api/ai/conversation', handle: aiConversation },
+  { methods: ['POST', 'PATCH', 'DELETE'], pathname: '/api/ai/conversation', handle: aiConversation },
   { methods: ['POST'], pathname: '/api/ai/translate', feature: 'translation', handle: translateWithAi },
   { methods: ['POST'], pathname: '/api/ai/message', handle: sendAiMessage },
   { methods: ['POST'], pathname: '/api/ai/place-comments', handle: placeAiComments },
@@ -111,6 +111,13 @@ async function aiConversation(context) {
   if (request.method === 'DELETE') {
     await aiService.deleteConversation(body.id);
     return sendJson(response, { deleted: true });
+  }
+  if (request.method === 'PATCH') {
+    // 直せるのは題名と、残すやり取りだけです。対象の文章はここでは受け取りません。
+    // 会話が何について始まったかまで書き換えられると、記録として当てにならなくなります。
+    return sendJson(response, {
+      conversation: await aiService.updateConversation(body.id, { title: body.title, messages: body.messages })
+    });
   }
   const relativeFile = reviewTarget(rootDir, filter, body.path);
   assertSupportedPdfAiTarget(relativeFile, body.target);

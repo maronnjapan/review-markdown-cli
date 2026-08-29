@@ -398,6 +398,12 @@ export function createAiController({
     translate,
     prefetchTranslation,
     cancelTranslationPrefetch,
+    // 保存した会話は、コンテキスト画面からも直せます。直したあとの記録を、
+    // こちらの一覧と吹き出しへも映し直すための入口です。
+    refreshConversations() {
+      renderConversationOptions();
+      renderMessages();
+    },
     // Comments and the reading context change while the pane is open, and the
     // pane promises to say what travels with the question.
     refreshTarget: renderTarget

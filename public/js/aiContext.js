@@ -55,6 +55,20 @@ export function createAiContextController({ refs, state, onChange }) {
     refs.aiContextProjectText.textContent = projectContext;
   }
 
+  /**
+   * もう一方の画面で書き換えられた前提を、こちらの欄へ映します。
+   *
+   * この欄は同じ内容をサイドパネルとコンテキスト画面の2か所へ出しています。片方で
+   * 書いたものがもう片方に映らないと、古い文面の残った側で1文字打った瞬間に、
+   * さっき書いた分がまるごと消えます。打っている最中の欄には触りません。
+   */
+  function sync() {
+    const { activeElement } = refs.aiContextInput.ownerDocument;
+    if (activeElement !== refs.aiContextInput) refs.aiContextInput.value = state.aiContext || '';
+    renderProjectContext();
+    renderSummary();
+  }
+
   /** Text past the limit stays on screen but never becomes what we save. */
   function handleInput() {
     const text = refs.aiContextInput.value;
@@ -73,5 +87,5 @@ export function createAiContextController({ refs, state, onChange }) {
     refs.aiContextInput.addEventListener('input', handleInput);
   }
 
-  return { load, setStatus, renderSummary };
+  return { load, setStatus, renderSummary, sync };
 }

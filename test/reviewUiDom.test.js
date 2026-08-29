@@ -178,6 +178,11 @@ test('the manager and translation controls stay hidden until the server enables 
   assert.equal(document.querySelector('#markdown-content .inline-translate-button'), null);
   assert.equal(document.querySelector('#ai-tab-button').textContent, 'AI');
   assert.equal(document.querySelector('#review-brief-hint').hidden, true);
+  assert.equal(
+    document.querySelector('#workspace-brief').classList.contains('hidden'),
+    true,
+    'コンテキスト画面にも、保存できない3点の欄は出さない'
+  );
 });
 
 test('paragraph translation and chat use the same read-only target without leaking UI labels', async (t) => {
@@ -334,12 +339,15 @@ test('a question from the AI pane saves the comments first and says they are sha
   document.querySelector('#ai-chat-form').requestSubmit();
   await waitFor(() => document.querySelectorAll('.ai-message').length === 2);
 
+  // 前のテストの自動保存（800ms）は、window.close のあとでもこのテストの fetch スタブへ届きます。
+  // 順番を見るのはこの文書ぶんだけにします。
+  const ours = requests.filter(([type, body]) => type !== 'review' || body.path === 'guide.md');
   assert.deepEqual(
-    requests.map(([type]) => type),
+    ours.map(([type]) => type),
     ['review', 'conversation', 'message'],
     'AIへ渡す前に、書いたばかりのコメントを保存する'
   );
-  assert.equal(requests[0][1].comments[0].comment, '実行の前提条件を書いてほしい');
+  assert.equal(ours[0][1].comments[0].comment, '実行の前提条件を書いてほしい');
 
   // A comment added while the pane is open changes what the next question carries.
   paragraph.querySelector('.inline-comment-button').click();
@@ -511,7 +519,12 @@ test('a note kept from a chat answer is saved with the review and travels with t
   document.querySelector('#context-note-form').requestSubmit();
 
   assert.equal(document.querySelector('#context-notes-state').textContent.trim(), '2件');
-  assert.equal(document.querySelectorAll('.context-note-source').length, 1, '相談から残したメモには出どころが付く');
+  // メモの一覧はサイドパネルとコンテキスト画面の2か所に出るので、片方を数えます。
+  assert.equal(
+    document.querySelectorAll('#context-notes-list .context-note-source').length,
+    1,
+    '相談から残したメモには出どころが付く'
+  );
   assert.match(document.querySelector('#ai-target-comments').textContent, /コンテキストメモ2件も渡します/);
 
   document.querySelector('#save-button').click();
@@ -1876,6 +1889,135 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
     assert.equal(document.querySelectorAll(`${panel} .pane-scroll`).length, 1, `${panel} のスクロール領域は1つ`);
   }
   assert.match(styles, /\.pane-scroll \{[^}]*overflow-y: auto;/, '.pane-scroll が実際にスクロールする');
+});
+
+test('the context screen opens the saved premises wide, and lets the reviewer fix a saved chat', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const requests = [];
+  const conversation = {
+    id: 'conversation-context-page',
+    documentPath: 'guide.md',
+    title: 'Run the program.',
+    codexThreadId: 'thread-1',
+    target: { type: 'paragraph', selectedText: 'Run the program.', headingPath: ['Guide'] },
+    messages: [
+      { id: 'user-1', role: 'user', content: 'run はどう訳す？', createdAt: '2026-08-01T00:00:00.000Z' },
+      { id: 'assistant-1', role: 'assistant', content: '「実行する」です。', createdAt: '2026-08-01T00:00:10.000Z' }
+    ],
+    createdAt: '2026-08-01T00:00:00.000Z',
+    updatedAt: '2026-08-01T00:00:10.000Z'
+  };
+  const { document, window } = await startApp(t, 'http://localhost/#/review/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: {
+        targetFile: 'guide.md',
+        comments: [],
+        aiContext: '第3章。読者は初学者。',
+        brief: { purpose: '当番が一人で再起動できる', story: '条件 → 手順 → 確かめ方', expectation: '問い合わせが来なくなる' },
+        contextNotes: [
+          { id: 'note-1', kind: 'constraint', body: '用語は原著の訳語に合わせる', createdAt: '2026-08-01T00:00:00.000Z' }
+        ]
+      },
+      reviewFile: '.review/guide.md.review.json'
+    }),
+    '/api/review': (_input, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(['review', body]);
+      return { review: { targetFile: 'guide.md', comments: [] }, reviewFile: '.review/guide.md.review.json' };
+    },
+    '/api/ai/status': () => ({
+      token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model', effort: 'low'
+    }),
+    '/api/ai/conversations': () => ({ conversations: [conversation] }),
+    '/api/ai/conversation': (_input, options) => {
+      const body = JSON.parse(options.body);
+      requests.push([options.method, body]);
+      conversation.messages = conversation.messages
+        .filter((message) => body.messages.some((edited) => edited.id === message.id))
+        .map((message) => {
+          const edited = body.messages.find((entry) => entry.id === message.id);
+          return edited.content === message.content
+            ? message
+            : { ...message, content: edited.content, editedAt: '2026-08-30T00:00:00.000Z' };
+        });
+      // 直したやり取りを読み直させるため、サーバーはCodexのスレッドを畳んで返します。
+      conversation.codexThreadId = null;
+      return { conversation: { ...conversation } };
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content p'));
+  await waitFor(() => document.querySelectorAll('#ai-conversation-select option').length === 2);
+
+  document.querySelector('#context-open-button').click();
+  await waitFor(() => !document.querySelector('#context-view').classList.contains('hidden'));
+  assert.equal(document.querySelector('#review-view').classList.contains('hidden'), true, 'レビュー画面とは入れ替わる');
+  assert.equal(document.querySelector('#workspace-document-title').textContent, 'guide.md');
+
+  // 保存済みの前提が、そのまま広い欄へ出ています。
+  assert.equal(document.querySelector('#workspace-ai-context-input').value, '第3章。読者は初学者。');
+  assert.equal(document.querySelector('#workspace-brief-purpose').value, '当番が一人で再起動できる');
+  assert.equal(
+    document.querySelector('#workspace-context-notes-list .context-note-body').textContent,
+    '用語は原著の訳語に合わせる'
+  );
+  assert.equal(document.querySelector('#workspace-conversation-state').textContent, '1件');
+
+  // 片方の画面で書いたものは、もう片方の欄にも出ます。
+  const contextInput = document.querySelector('#workspace-ai-context-input');
+  contextInput.value = '第3章。読者は初学者。用語は原著に合わせる。';
+  contextInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(document.querySelector('#ai-context-input').value, '第3章。読者は初学者。用語は原著に合わせる。');
+
+  const noteInput = document.querySelector('#workspace-context-note-input');
+  noteInput.value = '図の単位はSIで統一済み。変えない。';
+  noteInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+  document.querySelector('#workspace-context-note-form').requestSubmit();
+  assert.equal(document.querySelector('#workspace-context-notes-state').textContent, '2件');
+  assert.equal(document.querySelectorAll('#context-notes-list .context-note').length, 2, 'サイドパネルの一覧にも出る');
+
+  // 保存した相談は、ここで読み直して直せます。
+  document.querySelector('[data-open-conversation]').click();
+  assert.equal(document.querySelectorAll('#workspace-conversation-detail .workspace-message').length, 2);
+  document.querySelector('[data-edit-message="user-1"]').click();
+  const messageForm = document.querySelector('[data-message-form="user-1"]');
+  messageForm.querySelector('textarea').value = 'この文脈の run はどう訳す？';
+  messageForm.requestSubmit();
+  await waitFor(() => requests.some(([method]) => method === 'PATCH'));
+
+  const [, patched] = requests.find(([method]) => method === 'PATCH');
+  assert.equal(patched.id, 'conversation-context-page');
+  assert.deepEqual(patched.messages, [
+    { id: 'user-1', content: 'この文脈の run はどう訳す？' },
+    { id: 'assistant-1', content: '「実行する」です。' }
+  ], '残す発言を、残す順にそのまま送る');
+  await waitFor(() => document.querySelector('.workspace-message .ai-message-body')?.textContent === 'この文脈の run はどう訳す？');
+  assert.match(document.querySelector('.workspace-message').textContent, /あとから編集/);
+
+  // 消すのは2段階です。押し間違いで記録が消えないようにします。
+  document.querySelector('[data-delete-message="assistant-1"]').click();
+  assert.match(document.querySelector('#workspace-conversation-detail .context-note-confirm').textContent, /削除しますか/);
+  document.querySelector('[data-confirm-delete="assistant-1"]').click();
+  await waitFor(() => requests.filter(([method]) => method === 'PATCH').length === 2);
+  assert.deepEqual(
+    requests.filter(([method]) => method === 'PATCH').at(-1)[1].messages.map(({ id }) => id),
+    ['user-1'],
+    '消した発言は、残す一覧から省いて送る'
+  );
+  await waitFor(() => document.querySelectorAll('#workspace-conversation-detail .workspace-message').length === 1);
+
+  document.querySelector('#workspace-back-button').click();
+  await waitFor(() => !document.querySelector('#review-view').classList.contains('hidden'));
+  assert.equal(document.querySelector('#context-view').classList.contains('hidden'), true);
+
+  // 読み手を決めるのはレビューを実行する場所と同じなので、そこへ連れて行きます。
+  document.querySelector('#context-open-button').click();
+  await waitFor(() => !document.querySelector('#context-view').classList.contains('hidden'));
+  document.querySelector('#workspace-persona-edit-button').click();
+  await waitFor(() => !document.querySelector('#review-view').classList.contains('hidden'));
+  assert.equal(document.querySelector('#review-panel').classList.contains('hidden'), false, 'AIレビューのタブを開く');
 });
 
 async function renderViews(markdown) {

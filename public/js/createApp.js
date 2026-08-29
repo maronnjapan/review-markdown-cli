@@ -13,12 +13,13 @@ import {
 } from './comments.js';
 import { createCommentPlacementController } from './commentPlacement.js';
 import { createContextNotesController } from './contextNotes.js';
+import { createContextPageController } from './contextPage.js';
 import { createDocumentBriefController, hasWrittenBody, missingBriefFields } from './documentBrief.js';
 import { renderDiagrams } from './diagrams.js';
 import { createDocumentReviewController } from './documentReview.js';
 import { createDocumentReviseController } from './documentRevise.js';
 import { createDocumentTargets } from './documentTargets.js';
-import { queryRefs } from './dom.js';
+import { aliasRefs, queryRefs } from './dom.js';
 import { createEditor } from './editor.js';
 import { createFileListView } from './fileListView.js';
 import { createLinkNavigator } from './links.js';
@@ -31,6 +32,52 @@ import { normalizeText } from './util.js';
 import { createState, resetDocumentState } from './state.js';
 
 const ROUTE_PATTERN = /^#\/review\/([^#]+)(#.*)?$/;
+/** 同じ文書の前提と相談の記録を、本文の隣ではなく1枚に開く画面です。 */
+const CONTEXT_ROUTE_PATTERN = /^#\/context\/([^#]+)$/;
+
+/**
+ * コンテキスト画面へ出す操作盤の、要素の読み替え表です。
+ *
+ * 読み取りコンテキスト・コンテキストメモ・資料の管理者の3点は、サイドパネルと
+ * コンテキスト画面の2か所から書けます。操作盤（`aiContext.js` などが返すもの）を
+ * 2つ作って、片方にはこの表で読み替えた要素を渡します。画面ごとに同じ処理を
+ * 書き写さずに済ませるためで、書き換えた中身はどちらも同じ state に入ります。
+ */
+const WORKSPACE_AI_CONTEXT_REFS = {
+  aiContextInput: 'workspaceAiContextInput',
+  aiContextStatus: 'workspaceAiContextStatus',
+  aiContextState: 'workspaceAiContextState',
+  aiContextProject: 'workspaceAiContextProject',
+  aiContextProjectText: 'workspaceAiContextProjectText'
+};
+const WORKSPACE_NOTES_REFS = {
+  contextNotes: 'workspaceNotes',
+  contextNotesState: 'workspaceContextNotesState',
+  contextNoteForm: 'workspaceContextNoteForm',
+  contextNoteKind: 'workspaceContextNoteKind',
+  contextNoteKindHint: 'workspaceContextNoteKindHint',
+  contextNoteInput: 'workspaceContextNoteInput',
+  contextNoteCancel: 'workspaceContextNoteCancel',
+  contextNoteSubmit: 'workspaceContextNoteSubmit',
+  contextNoteFull: 'workspaceContextNoteFull',
+  contextNotesStatus: 'workspaceContextNotesStatus',
+  contextNotesList: 'workspaceContextNotesList'
+};
+const WORKSPACE_BRIEF_REFS = {
+  briefState: 'workspaceBriefState',
+  briefPurpose: 'workspaceBriefPurpose',
+  briefStory: 'workspaceBriefStory',
+  briefExpectation: 'workspaceBriefExpectation',
+  briefClearButton: 'workspaceBriefClearButton',
+  briefStatus: 'workspaceBriefStatus',
+  briefComposeForm: 'workspaceBriefComposeForm',
+  briefInput: 'workspaceBriefInput',
+  briefComposeButton: 'workspaceBriefComposeButton',
+  briefStopButton: 'workspaceBriefStopButton',
+  briefResult: 'workspaceBriefResult',
+  // タブの「あと何個決まっていないか」は1つしかないので、どちらの操作盤も同じものを書きます。
+  managerTabCount: 'managerTabCount'
+};
 const REVEAL_FLASH_MS = 1600;
 const PDF_STATUS_LABELS = {
   open: '未確認',
@@ -60,22 +107,43 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     hasPendingWork: () => (state.mode !== 'edit' && state.commentsDirty)
       || state.aiContextDirty || state.briefDirty || state.contextNotesDirty || state.personaDirty
   });
-  const aiContext = createAiContextController({ refs, state, onChange: markAiContextDirty });
-  const documentBrief = createDocumentBriefController({
-    refs,
+  // 前提を書く欄は、サイドパネルとコンテキスト画面の2か所に出ます。操作盤を2つ作って
+  // 束ね、どちらから書き換えても同じ state を見て両方が描き直すようにしています。
+  const aiContext = fanOut([
+    createAiContextController({ refs, state, onChange: markAiContextDirty }),
+    createAiContextController({
+      refs: aliasRefs(refs, WORKSPACE_AI_CONTEXT_REFS),
+      state,
+      onChange: markAiContextDirty
+    })
+  ]);
+  const briefControllerOptions = {
     state,
     api,
     toaster,
     prepareAi: () => ai.prepare(),
     flushComments: () => commentSaves.flush(),
     onChange: markBriefDirty
-  });
-  const contextNotes = createContextNotesController({
+  };
+  const documentBrief = fanOut([
+    createDocumentBriefController({ refs, ...briefControllerOptions }),
+    createDocumentBriefController({ refs: aliasRefs(refs, WORKSPACE_BRIEF_REFS), ...briefControllerOptions })
+  ]);
+  // 相談の答えを下書きにする導線は、押した画面の欄へ入れます。両方へ入れると、
+  // 見えていないほうの欄にも書きかけが残ります。
+  const sideContextNotes = createContextNotesController({
     refs,
     state,
     toaster,
     onChange: markContextNotesDirty
   });
+  const workspaceContextNotes = createContextNotesController({
+    refs: aliasRefs(refs, WORKSPACE_NOTES_REFS),
+    state,
+    toaster,
+    onChange: markContextNotesDirty
+  });
+  const contextNotes = fanOut([sideContextNotes, workspaceContextNotes]);
   const editor = createEditor({
     refs,
     state,
@@ -104,7 +172,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     flushComments: () => commentSaves.flush(),
     // 相談して分かったことは、その場でメモへ流し込めます。残すかどうかと、
     // どこまでを前提として書くかはレビュアーが決めます。
-    onKeepContext: (text) => contextNotes.keepFromChat(text),
+    onKeepContext: (text) => sideContextNotes.keepFromChat(text),
     onPaneRequested: openSidePane
   });
   const placement = createCommentPlacementController({
@@ -146,8 +214,21 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     content,
     onSelectComment: (commentId) => focusCommentCard(commentId)
   });
+  const contextPage = createContextPageController({
+    refs,
+    state,
+    api,
+    toaster,
+    // 記録から残すメモは、いま開いているコンテキスト画面の欄へ入れます。
+    onKeepNote: (text) => workspaceContextNotes.keepFromChat(text),
+    onEditPersona: openPersonaEditor,
+    // 会話を直したら、サイドパネルのAIチャットも同じ記録を映し直します。
+    onConversationsChanged: () => ai.refreshConversations()
+  });
 
   let pendingAnchor = '';
+  // コンテキスト画面から戻るとき、レビュー画面で開き直すタブ。
+  let pendingPane = null;
   let pendingDeleteId = null;
   // 管理者が3点を求めていることを、書き始めるときに言ったかどうか。文書ごとに1回だけです。
   let briefNoticeShown = false;
@@ -167,9 +248,13 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
    * ---------------------------------------------------------------- */
 
   async function route() {
-    const match = window.location.hash.match(ROUTE_PATTERN);
+    const hash = window.location.hash;
+    const reviewMatch = hash.match(ROUTE_PATTERN);
+    // コンテキスト画面は同じ文書の別の面なので、行き来しても文書は開いたままです。
+    const contextMatch = hash.match(CONTEXT_ROUTE_PATTERN);
+    const match = reviewMatch || contextMatch;
     const nextPath = match ? decodeURIComponent(match[1]) : null;
-    const anchor = match ? match[2] || '' : '';
+    const anchor = reviewMatch ? reviewMatch[2] || '' : '';
 
     if (state.currentPath && nextPath !== state.currentPath && !(await leaveDocument())) {
       window.location.hash = `#/review/${encodeURIComponent(state.currentPath)}`;
@@ -178,6 +263,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
 
     if (!match) {
       pdfViewer.dispose();
+      refs.contextView.classList.add('hidden');
       fileList.revealPath(state.currentPath);
       state.currentPath = null;
       state.documentType = null;
@@ -187,11 +273,53 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     }
 
     if (nextPath === state.currentPath) {
-      linkNavigator.scrollToAnchor(anchor);
+      showDocumentView(contextMatch ? 'context' : 'review');
+      if (reviewMatch) linkNavigator.scrollToAnchor(anchor);
       return;
     }
     pendingAnchor = anchor;
     await openFile(nextPath);
+    if (contextMatch && state.currentPath === nextPath) showDocumentView('context');
+  }
+
+  /**
+   * 開いている文書の、どちらの面を出すか。
+   *
+   * コンテキスト画面はレビュー画面と同じ文書を別の面から見るもので、開き直しではありません。
+   * サイドパネルはレビュー画面のものなので、コンテキスト画面では畳みます。隠れた要素の
+   * 中にフォーカスや読み上げが入り込まないようにするためです。
+   */
+  function showDocumentView(view) {
+    refs.fileView.classList.add('hidden');
+    refs.contextView.classList.toggle('hidden', view !== 'context');
+    refs.reviewView.classList.toggle('hidden', view === 'context');
+    if (view === 'context') {
+      hideSidePane();
+      contextPage.render();
+      return;
+    }
+    closeSidePane();
+    if (!pendingPane) return;
+    panes.show(pendingPane);
+    openSidePane();
+    pendingPane = null;
+  }
+
+  function openContextPage() {
+    if (!state.currentPath) return;
+    window.location.hash = `#/context/${encodeURIComponent(state.currentPath)}`;
+  }
+
+  /**
+   * 読み手を決める場所は、レビューを実行する場所と同じままにしてあります。
+   *
+   * ここで開くのではなく、開く先を控えて画面を切り替えます。アドレスを書き換えた直後に
+   * 開いても、あとから走るルーティングがサイドパネルを畳み直してしまうからです。
+   */
+  function openPersonaEditor() {
+    if (!state.currentPath) return;
+    pendingPane = 'review';
+    window.location.hash = `#/review/${encodeURIComponent(state.currentPath)}`;
   }
 
   /** Saves (or asks about) pending work before the current document goes away. */
@@ -259,6 +387,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     briefNoticeShown = false;
     documentBrief.load();
     contextNotes.load();
+    contextPage.load();
     documentReview.load();
     revise.reset();
     renderComments();
@@ -303,6 +432,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     documentBrief.refresh();
     contextNotes.render();
     documentReview.refresh();
+    contextPage.render();
     bodyCopy.syncControl();
   }
 
@@ -312,6 +442,9 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       translation: features?.translation === true
     };
     refs.managerTabButton.classList.toggle('hidden', !state.features.manager);
+    // 管理者が無効なときの3点は、保存側も断ります。書ける欄を出しておくと、
+    // 書いたあとの保存で初めて断られることになります。
+    refs.workspaceBriefCard.classList.toggle('hidden', !state.features.manager);
     refs.documentTranslateButton.classList.toggle('hidden', !state.features.translation);
     refs.sideDocumentTranslateButton.classList.toggle('hidden', !state.features.translation);
     refs.selectionTranslateButton.classList.toggle('hidden', !state.features.translation);
@@ -749,6 +882,8 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     state.aiContextDirty = true;
     // Every edit invalidates in-flight saves: their response must not overwrite newer text.
     state.commentsVersion += 1;
+    // 同じ前提を2か所へ出しているので、書いていないほうの欄にも同じ文面を映します。
+    aiContext.sync();
     // The AI pane promises to say what travels with a question; now it does.
     ai.refreshTarget();
     if (!state.currentPath) return;
@@ -767,6 +902,8 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     ai.refreshTarget();
     // 「指摘の配置にも渡る」の表示は書いた前提と合わせて決まるので、そちらへ見直させます。
     aiContext.renderSummary();
+    // 残したメモは2か所へ出しているので、押していないほうの一覧も描き直します。
+    contextNotes.render();
     contextNotes.setStatus('dirty');
     if (!state.currentPath) return;
     commentSaves.schedule();
@@ -787,6 +924,8 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     contextNotes.render();
     // 関門はいま画面にある3点で開くので、レビューのパネルにも見直させます。
     documentReview.refresh();
+    // 3点も2か所から書けるので、書いていないほうの欄へ同じ内容を映します。
+    documentBrief.sync();
     documentBrief.setStatus('dirty');
     if (!state.currentPath) return;
     commentSaves.schedule();
@@ -797,6 +936,8 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     state.personaDirty = true;
     // Every edit invalidates in-flight saves: their response must not overwrite newer text.
     state.commentsVersion += 1;
+    // コンテキスト画面にも読み手を出しているので、決め直した内容をそちらへ映します。
+    contextPage.render();
     if (!state.currentPath) return;
     commentSaves.schedule();
   }
@@ -1122,6 +1263,12 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     refs.sideDocumentTranslateButton.addEventListener('click', () => ai.translate({ type: 'document' }));
     refs.sideDocumentAiButton.addEventListener('click', () => ai.ask({ type: 'document' }));
     refs.outlineTopButton.addEventListener('click', scrollToDocumentTop);
+    refs.contextOpenButton.addEventListener('click', openContextPage);
+    refs.aiContextOpenPage.addEventListener('click', openContextPage);
+    refs.contextNotesOpenPage.addEventListener('click', openContextPage);
+    refs.workspaceBackButton.addEventListener('click', () => {
+      if (state.currentPath) window.location.hash = `#/review/${encodeURIComponent(state.currentPath)}`;
+    });
     refs.sidePaneToggle.addEventListener('click', openSidePane);
     refs.sidePaneClose.addEventListener('click', () => closeSidePane({ restoreFocus: true }));
     refs.sidePaneBackdrop.addEventListener('click', () => closeSidePane({ restoreFocus: true }));
@@ -1156,6 +1303,20 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
 
   function cssAttr(value) {
     return String(value).replace(/["\\]/g, '\\$&');
+  }
+
+  /**
+   * 同じ操作盤を2か所へ出したときの、まとめ役です。
+   *
+   * 呼ぶ側からは1つの操作盤に見えたまま、`load()` も `setStatus()` も両方へ届きます。
+   * 中身はどちらも同じ state を読むので、片方で書き換えたものがもう片方にも出ます。
+   */
+  function fanOut(controllers) {
+    const names = [...new Set(controllers.flatMap((controller) => Object.keys(controller)))];
+    return Object.fromEntries(names.map((name) => [
+      name,
+      (...args) => controllers.map((controller) => controller[name]?.(...args))
+    ]));
   }
 
   function escapeText(value) {

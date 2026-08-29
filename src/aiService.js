@@ -17,6 +17,7 @@ import { AiStore, defaultAiDataDir, translationCacheKey } from './aiStore.js';
 import { CodexAppServer } from './codexAppServer.js';
 import { purposeFor } from './codexProfiles.js';
 import { collectCommentContext, commentContextBlock } from './commentContext.js';
+import { applyConversationEdits } from './conversationEdits.js';
 import { buildBriefDraft, normalizeBriefInput } from './documentBrief.js';
 import {
   REVISE_SCHEMA,
@@ -405,6 +406,29 @@ export class AiService {
       await this.store.saveConversation(conversation);
       throw error;
     }
+  }
+
+  /**
+   * 保存した会話を、レビュアーが直したとおりに置き換えます。
+   *
+   * やり取りが変わったときは、Codexのスレッドを畳みます。スレッドが残っているかぎり
+   * モデルは直す前の発言を覚えていて、こちらが何を書き換えても読み直さないからです。
+   * 畳んでおけば、次の質問は1回目として飛び、直したあとの記録がそのまま前提になります
+   * （`prompts/chat.js` の `initialChatPrompt`）。
+   */
+  async updateConversation(id, edits) {
+    const stored = await this.store.getConversation(id);
+    if (!stored) throw new Error('会話が見つかりません');
+    const { conversation, transcriptChanged } = applyConversationEdits(stored, edits);
+    if (transcriptChanged && conversation.codexThreadId) {
+      try {
+        await this.codex.deleteThread(conversation.codexThreadId);
+      } catch {
+        // Codex側が先に失っていても、こちらの記録は直せます。開き直すのは次の質問のときです。
+      }
+      conversation.codexThreadId = null;
+    }
+    return this.store.saveConversation(conversation);
   }
 
   async deleteConversation(id) {

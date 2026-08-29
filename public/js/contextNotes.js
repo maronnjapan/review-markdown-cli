@@ -177,6 +177,9 @@ export function createContextNotesController({ refs, state, toaster, onChange })
 
   function render() {
     const notes = state.contextNotes;
+    // もう一方の画面で消されたメモを直しているところだった、という場合だけここに当たります。
+    // 消えたものを直し続けさせると、「このメモを直す」が新しい1件を作ることになります。
+    if (editingId && !notes.some((entry) => entry.id === editingId)) resetForm();
     refs.contextNotesState.textContent = notes.length ? `${notes.length}件` : '未設定';
     refs.contextNotesState.dataset.state = notes.length ? 'set' : 'unset';
     // 種類ごとに何が変わるかは、選んでいる最中にだけ要ります。常時4行出すと欄が読めません。
