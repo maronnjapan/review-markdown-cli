@@ -13,7 +13,8 @@ const PANES = {
  */
 export function createSidePanes({ refs, state }) {
   function show(name) {
-    state.sidePane = PANES[name] ? name : 'comments';
+    const requested = PANES[name];
+    state.sidePane = requested && !refs[requested.tab].classList.contains('hidden') ? name : 'comments';
     for (const [pane, { panel, tab }] of Object.entries(PANES)) {
       const active = pane === state.sidePane;
       refs[panel].classList.toggle('hidden', !active);

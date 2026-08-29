@@ -18,6 +18,8 @@ export { listMarkdownFiles } from './markdownFiles.js';
  * @param {string[]} [options.exclude] レビュー対象から外すグロブ。
  * @param {string} [options.aiContext] 全文書に効く読み取りコンテキスト。
  * @param {object} [options.aiModels] 用途ごとのモデル指定（`config.js` の `aiModelsFromConfig`）。
+ * @param {boolean} [options.manager] 資料の管理者を有効にする。既定は無効。
+ * @param {boolean} [options.translation] 翻訳機能を有効にする。既定は無効。
  *
  * テストのための差し替え口:
  * @param {object} [options.aiService] AiService そのもの。渡すと下の3つは見ません。
@@ -29,11 +31,15 @@ export { listMarkdownFiles } from './markdownFiles.js';
 export function createServer(targetDir = '.', options = {}) {
   const rootDir = path.resolve(targetDir);
   const filter = createPathFilter(options);
-  const aiService = options.aiService || createAiService(rootDir, options);
+  const features = Object.freeze({
+    manager: options.manager === true,
+    translation: options.translation === true
+  });
+  const aiService = options.aiService || createAiService(rootDir, { ...options, features });
   const aiToken = options.aiToken || crypto.randomBytes(24).toString('base64url');
   // What every document under this root is read under; a document adds its own.
   const projectAiContext = normalizeAiContext(options.aiContext, 'aiContext');
-  const handleRequest = createRequestHandler({ rootDir, filter, aiService, aiToken, projectAiContext });
+  const handleRequest = createRequestHandler({ rootDir, filter, aiService, aiToken, projectAiContext, features });
 
   const app = {
     listen(port, callback) {

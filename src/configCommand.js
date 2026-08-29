@@ -48,6 +48,8 @@ Examples:
   review-markdown config add exclude 'drafts/**' '**/*.wip.md'
   review-markdown config add exclude node_modules   # どの階層の node_modules も無視する
   review-markdown config set port 4000
+  review-markdown config set manager true
+  review-markdown config set translation true
   review-markdown config set aiContext '入門者向けの技術書。読者はJavaScriptの基礎を知っている。'
   review-markdown config list
 
@@ -55,6 +57,9 @@ Examples:
 部分一致を使えます。ディレクトリに一致したパターンは、その配下すべてに一致します。
 スラッシュを含まないパターンはどの階層にも一致し、先頭に / を付けると直下だけに一致します。
 設定ファイル名は ${CONFIG_FILE_NAME} です。
+
+manager と translation は既定では無効です。
+使う機能だけ true にすると、次回以降の起動でも有効になります。
 
 aiContext は翻訳・AIチャット・指摘の配置で AI に渡す読み取りコンテキストです。
 ここに書いた前提はディレクトリ配下のすべての文書に効きます。

@@ -10,6 +10,9 @@ export function createState() {
     filters: { include: [], exclude: [] },
     openDirs: new Set(),
 
+    // Optional features are opt-in and repeated with each document response.
+    features: { manager: false, translation: false },
+
     // Open document
     currentPath: null,
     markdown: '',

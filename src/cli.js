@@ -13,6 +13,11 @@ Options:
       --exclude <glob>  レビュー対象から外すパス。複数指定・カンマ区切り可
       --ai-context <text>
                         AIがこの原稿を読むときの前提を渡す
+      --enable-manager  資料の管理者を有効にする（既定: 無効）
+      --enable-translation
+                        翻訳機能を有効にする（既定: 無効）
+      --no-manager      設定ファイルで有効な管理者を無効にする
+      --no-translation  設定ファイルで有効な翻訳を無効にする
       --config <file>   使用する設定ファイルを指定する
       --no-config       設定ファイルを読み込まない
       --no-open         ブラウザの自動起動をスキップする
@@ -69,6 +74,10 @@ export function parseArgs(argv, env = {}) {
     portSource: env.PORT ? 'env' : 'default',
     open: true,
     openSource: 'default',
+    manager: false,
+    managerSource: 'default',
+    translation: false,
+    translationSource: 'default',
     include: [],
     exclude: [],
     aiContext: undefined,
@@ -103,6 +112,12 @@ export function parseArgs(argv, env = {}) {
     } else if (flag === '--no-open') {
       options.open = false;
       options.openSource = 'flag';
+    } else if (flag === '--enable-manager' || flag === '--no-manager') {
+      options.manager = flag === '--enable-manager';
+      options.managerSource = 'flag';
+    } else if (flag === '--enable-translation' || flag === '--no-translation') {
+      options.translation = flag === '--enable-translation';
+      options.translationSource = 'flag';
     } else if (flag === '--no-config') {
       options.useConfig = false;
     } else if (flag.startsWith('-')) {

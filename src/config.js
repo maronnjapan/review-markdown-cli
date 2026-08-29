@@ -51,6 +51,16 @@ const CONFIG_KEY_SPECS = {
     parse: (value, source) => parseBoolean(value, source),
     help: '起動時にブラウザを開くかどうか（true / false）'
   },
+  manager: {
+    kind: 'scalar',
+    parse: (value, source) => parseBoolean(value, source),
+    help: '資料の管理者を有効にするかどうか（既定: false）'
+  },
+  translation: {
+    kind: 'scalar',
+    parse: (value, source) => parseBoolean(value, source),
+    help: '翻訳機能を有効にするかどうか（既定: false）'
+  },
   aiContext: {
     kind: 'text',
     parse: (value, source) => normalizeAiContext(value, source),
@@ -286,12 +296,16 @@ export async function loadConfig({
 export function applyConfigToOptions(options, config = {}) {
   const usePort = options.portSource === 'default' && config.port !== undefined;
   const useOpen = options.openSource === 'default' && config.open !== undefined;
+  const useManager = options.managerSource === 'default' && config.manager !== undefined;
+  const useTranslation = options.translationSource === 'default' && config.translation !== undefined;
   return {
     ...options,
     include: dedupe([...(config.include || []), ...options.include]),
     exclude: dedupe([...(config.exclude || []), ...options.exclude]),
     port: usePort ? config.port : options.port,
     open: useOpen ? config.open : options.open,
+    manager: useManager ? config.manager : options.manager,
+    translation: useTranslation ? config.translation : options.translation,
     aiContext: options.aiContext ?? config.aiContext ?? '',
     // モデルの指定はコマンドラインに口を持たないので、設定ファイルの値がそのまま届きます。
     aiModels: aiModelsFromConfig(config)

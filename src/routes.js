@@ -32,18 +32,25 @@ const ROUTES = [
   { methods: ['GET'], pathname: '/api/ai/status', handle: aiStatus },
   { methods: ['GET'], pathname: '/api/ai/conversations', handle: listAiConversations },
   { methods: ['POST', 'DELETE'], pathname: '/api/ai/conversation', handle: aiConversation },
-  { methods: ['POST'], pathname: '/api/ai/translate', handle: translateWithAi },
+  { methods: ['POST'], pathname: '/api/ai/translate', feature: 'translation', handle: translateWithAi },
   { methods: ['POST'], pathname: '/api/ai/message', handle: sendAiMessage },
   { methods: ['POST'], pathname: '/api/ai/place-comments', handle: placeAiComments },
   { methods: ['GET'], pathname: '/api/ai/review-skills', handle: listAiReviewSkills },
   { methods: ['GET'], pathname: '/api/ai/review-skill', handle: readAiReviewSkill },
-  { methods: ['POST'], pathname: '/api/ai/brief', handle: composeAiDocumentBrief },
+  { methods: ['POST'], pathname: '/api/ai/brief', feature: 'manager', handle: composeAiDocumentBrief },
   { methods: ['POST'], pathname: '/api/ai/persona', handle: composeAiPersona },
   { methods: ['POST'], pathname: '/api/ai/review', handle: reviewWithAi },
   { methods: ['POST'], pathname: '/api/ai/revise', handle: reviseWithAi }
 ];
 
-export function createRequestHandler({ rootDir, filter, aiService, aiToken, projectAiContext = '' }) {
+export function createRequestHandler({
+  rootDir,
+  filter,
+  aiService,
+  aiToken,
+  projectAiContext = '',
+  features = { manager: false, translation: false }
+}) {
   return async function handleRequest(request, response) {
     const url = new URL(request.url, 'http://localhost');
     const route = ROUTES.find((candidate) => (
@@ -55,13 +62,17 @@ export function createRequestHandler({ rootDir, filter, aiService, aiToken, proj
       aiService,
       aiToken,
       projectAiContext,
+      features,
       request,
       response,
       url,
       headOnly: request.method === 'HEAD'
     };
 
-    if (route) return route.handle(context);
+    if (route) {
+      if (route.feature && !features[route.feature]) throw featureDisabled(route.feature);
+      return route.handle(context);
+    }
     if (request.method === 'GET' || request.method === 'HEAD') {
       return serveStatic(url.pathname, response, context.headOnly);
     }
@@ -274,15 +285,16 @@ function assertLocalAiRequest(request) {
   }
 }
 
-async function listFiles({ rootDir, filter, response }) {
+async function listFiles({ rootDir, filter, features, response }) {
   return sendJson(response, {
     rootDir,
     files: await listMarkdownFiles(rootDir, filter),
-    filters: { include: filter.include, exclude: filter.exclude }
+    filters: { include: filter.include, exclude: filter.exclude },
+    features
   });
 }
 
-async function openFile({ rootDir, filter, projectAiContext, url, response }) {
+async function openFile({ rootDir, filter, projectAiContext, features, url, response }) {
   const relativeFile = reviewTarget(rootDir, filter, url.searchParams.get('path'));
   const markdown = await fs.readFile(path.join(rootDir, relativeFile), 'utf8');
   const review = await readReview(rootDir, relativeFile);
@@ -291,8 +303,9 @@ async function openFile({ rootDir, filter, projectAiContext, url, response }) {
     markdown,
     textBody: isTextDocumentPath(relativeFile),
     ...await renderBothViews(markdown, relativeFile, filter),
-    review,
+    review: visibleReview(review, features),
     projectAiContext,
+    features,
     reviewFile: await relativeReviewPath(rootDir, relativeFile)
   });
 }
@@ -302,8 +315,9 @@ async function openFile({ rootDir, filter, projectAiContext, url, response }) {
  * reviewer typed in; an approved AI proposal sends the Markdown it proposed
  * (`src/documentEdits.js`). Either way the write is the reviewer's own.
  */
-async function saveFile({ rootDir, filter, projectAiContext, request, response }) {
+async function saveFile({ rootDir, filter, projectAiContext, features, request, response }) {
   const body = await readJsonBody(request);
+  assertManagerUpdateAllowed(body, features);
   const relativeFile = reviewTarget(rootDir, filter, body.path);
   if (!isMarkdownPath(relativeFile)) throw httpError('Only Markdown files can be edited', 400);
 
@@ -327,8 +341,9 @@ async function saveFile({ rootDir, filter, projectAiContext, request, response }
     textBody: isTextDocumentPath(relativeFile),
     ...await renderBothViews(markdown, relativeFile, filter),
     appliedEdits,
-    review,
+    review: visibleReview(review, features),
     projectAiContext,
+    features,
     reviewFile: await relativeReviewPath(rootDir, relativeFile)
   });
 }
@@ -352,24 +367,25 @@ function openAsset({ rootDir, filter, url, response, headOnly }) {
   return serveAsset(rootDir, relativeFile, url.searchParams.get('src'), response, headOnly);
 }
 
-async function saveReview({ rootDir, filter, request, response }) {
+async function saveReview({ rootDir, filter, features, request, response }) {
   const body = await readJsonBody(request);
+  assertManagerUpdateAllowed(body, features);
   const relativeFile = reviewTarget(rootDir, filter, body.path);
   return sendJson(response, {
-    review: await writeReview(
+    review: visibleReview(await writeReview(
       rootDir,
       relativeFile,
       await commentsFor(rootDir, relativeFile, body),
       reviewPremiseOf(body)
-    ),
+    ), features),
     reviewFile: await relativeReviewPath(rootDir, relativeFile)
   });
 }
 
-async function exportReview({ rootDir, filter, url, response }) {
+async function exportReview({ rootDir, filter, features, url, response }) {
   const relativeFile = reviewTarget(rootDir, filter, url.searchParams.get('path'));
   const review = await readReview(rootDir, relativeFile);
-  const markdown = buildReviewMarkdown(review);
+  const markdown = buildReviewMarkdown(visibleReview(review, features));
   const outputPath = await exportPathForExistingReview(rootDir, relativeFile);
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, markdown, 'utf8');
@@ -409,6 +425,21 @@ function reviewPremiseOf(body) {
     ...(Array.isArray(body.contextNotes) ? { contextNotes: body.contextNotes } : {}),
     ...(body.persona !== undefined ? { persona: body.persona } : {})
   };
+}
+
+/** Disabled features are unavailable through direct API calls as well as hidden in the browser. */
+function featureDisabled(feature) {
+  const label = feature === 'manager' ? '資料の管理者' : '翻訳機能';
+  return httpError(`${label}は無効です。設定または起動オプションで有効にしてください`, 404);
+}
+
+function assertManagerUpdateAllowed(body, features) {
+  if (body.brief !== undefined && !features.manager) throw featureDisabled('manager');
+}
+
+/** Keep a saved brief on disk for a later re-enable, but do not expose or use it while disabled. */
+function visibleReview(review, features) {
+  return features.manager ? review : { ...review, brief: null };
 }
 
 

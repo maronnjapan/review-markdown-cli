@@ -24,6 +24,8 @@ if (options.configSources?.length) console.log(`  config: ${options.configSource
 if (filter.include.length) console.log(`  include: ${filter.include.join(', ')}`);
 if (filter.exclude.length) console.log(`  exclude: ${filter.exclude.join(', ')}`);
 if (options.aiContext) console.log(`  ai context: ${summarize(options.aiContext)}`);
+if (options.manager) console.log('  manager: enabled');
+if (options.translation) console.log('  translation: enabled');
 // モデルを名指ししたときだけ出します。自動で選んだモデルは /api/ai/status が画面へ出します。
 for (const [label, value] of aiModelLines(options)) console.log(`  ${label}: ${value}`);
 if (port !== options.port) {

@@ -73,18 +73,39 @@ test('the global config applies everywhere and the project config adds to it', a
 });
 
 test('command line options win over the config file, patterns are merged', async () => {
-  const root = await seedProject({ exclude: ['drafts'], port: 4200, open: true });
+  const root = await seedProject({
+    exclude: ['drafts'], port: 4200, open: true, manager: true, translation: true
+  });
   const { config } = await loadConfig({ targetDir: root, env: emptyEnv(root) });
 
   const merged = applyConfigToOptions(parseArgs([root, '--exclude', 'tmp']), config);
   assert.deepEqual(merged.exclude, ['drafts', 'tmp']);
   assert.equal(merged.port, 4200, 'the config fills in the port nobody asked for');
   assert.equal(merged.open, true);
+  assert.equal(merged.manager, true);
+  assert.equal(merged.translation, true);
 
-  const explicit = applyConfigToOptions(parseArgs([root, '--port', '5000', '--no-open']), config);
+  const explicit = applyConfigToOptions(parseArgs([
+    root, '--port', '5000', '--no-open', '--no-manager', '--no-translation'
+  ]), config);
   assert.equal(explicit.port, 5000);
   assert.equal(explicit.open, false);
+  assert.equal(explicit.manager, false);
+  assert.equal(explicit.translation, false);
   assert.equal(applyConfigToOptions(parseArgs([root], { PORT: '5100' }), config).port, 5100, 'PORT beats the config');
+});
+
+test('the manager and translation are disabled until explicitly enabled', () => {
+  const defaults = applyConfigToOptions(parseArgs(['.']), {});
+  assert.equal(defaults.manager, false);
+  assert.equal(defaults.translation, false);
+
+  const flags = applyConfigToOptions(parseArgs(['.', '--enable-manager', '--enable-translation']), {});
+  assert.equal(flags.manager, true);
+  assert.equal(flags.translation, true);
+
+  const { config } = normalizeConfig({ manager: 'on', translation: true });
+  assert.deepEqual(config, { manager: true, translation: true });
 });
 
 test('--no-config and --config pick which file is read', async () => {

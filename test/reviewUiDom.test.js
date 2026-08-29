@@ -93,6 +93,28 @@ test('the comment dialog names its target, and a link outside the root reports a
   assert.match(document.querySelector('#toast-region').textContent, /レビュー対象ディレクトリの外/);
 });
 
+test('the manager and translation controls stay hidden until the server enables them', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const { document } = await startApp(t, 'http://localhost/#/review/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'guide.md', comments: [] },
+      features: { manager: false, translation: false },
+      reviewFile: '.review/guide.md.review.json'
+    })
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-ai-button'));
+
+  assert.equal(document.querySelector('#manager-tab-button').classList.contains('hidden'), true);
+  assert.equal(document.querySelector('#document-translate-button').classList.contains('hidden'), true);
+  assert.equal(document.querySelector('#selection-translate-button').classList.contains('hidden'), true);
+  assert.equal(document.querySelector('#markdown-content .inline-translate-button'), null);
+  assert.equal(document.querySelector('#ai-tab-button').textContent, 'AI');
+  assert.equal(document.querySelector('#review-brief-hint').hidden, true);
+});
+
 test('paragraph translation and chat use the same read-only target without leaking UI labels', async (t) => {
   const markdown = '# Guide\n\nClick this button to run the program.\n';
   const requests = [];
@@ -1820,7 +1842,10 @@ async function startApp(t, url, responses) {
     if (!handler) throw new Error(`Unexpected fetch: ${input}`);
     const result = await handler(input, options);
     if (result instanceof Response) return result;
-    return new Response(JSON.stringify(result), {
+    const responseBody = requested === '/api/file' && result.features === undefined
+      ? { ...result, features: { manager: true, translation: true } }
+      : result;
+    return new Response(JSON.stringify(responseBody), {
       status: 200,
       headers: { 'Content-Type': 'application/json' }
     });

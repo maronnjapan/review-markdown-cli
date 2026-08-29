@@ -251,6 +251,7 @@ export function createApp(document, { api = defaultApi } = {}) {
   }
 
   function adoptSavedDocument(data) {
+    adoptFeatures(data.features);
     state.markdown = data.markdown;
     state.rawHtml = data.html;
     state.editableHtml = data.editableHtml;
@@ -259,7 +260,7 @@ export function createApp(document, { api = defaultApi } = {}) {
     if (typeof data.projectAiContext === 'string') state.projectAiContext = data.projectAiContext;
     // A save that carried the context back confirms it; nothing typed since is lost.
     if (!state.aiContextDirty) state.aiContext = data.review?.aiContext || '';
-    if (!state.briefDirty) state.brief = data.review?.brief || null;
+    if (!state.briefDirty) state.brief = state.features.manager ? (data.review?.brief || null) : null;
     if (!state.contextNotesDirty) state.contextNotes = data.review?.contextNotes || [];
     if (!state.personaDirty) state.persona = data.review?.persona || null;
     state.commentsDirty = false;
@@ -268,6 +269,25 @@ export function createApp(document, { api = defaultApi } = {}) {
     contextNotes.render();
     documentReview.refresh();
     bodyCopy.syncControl();
+  }
+
+  function adoptFeatures(features) {
+    state.features = {
+      manager: features?.manager === true,
+      translation: features?.translation === true
+    };
+    refs.managerTabButton.classList.toggle('hidden', !state.features.manager);
+    refs.documentTranslateButton.classList.toggle('hidden', !state.features.translation);
+    refs.selectionTranslateButton.classList.toggle('hidden', !state.features.translation);
+    refs.aiTabButton.textContent = state.features.translation ? '翻訳・AI' : 'AI';
+    refs.aiPanel.querySelector('.ai-header h2').textContent = state.features.translation
+      ? '翻訳・AIチャット'
+      : 'AIチャット';
+    if (!state.features.translation) {
+      ai.cancelTranslationPrefetch();
+      state.translation = null;
+      refs.translationResult.classList.add('hidden');
+    }
   }
 
   /* ---------------------------------------------------------------- *
@@ -298,7 +318,9 @@ export function createApp(document, { api = defaultApi } = {}) {
   function addCommentAffordance(element, type, label) {
     element.classList.add('review-target');
     element.append(
-      createTargetAction('inline-translate-button', '翻訳', (target) => ai.translate(target)),
+      ...(state.features.translation
+        ? [createTargetAction('inline-translate-button', '翻訳', (target) => ai.translate(target))]
+        : []),
       createTargetAction('inline-ai-button', 'AIに質問', (target) => ai.ask(target)),
       createTargetAction(
         'inline-comment-button',
@@ -347,6 +369,7 @@ export function createApp(document, { api = defaultApi } = {}) {
   }
 
   function queueSelectionTranslation() {
+    if (!state.features.translation) return;
     clearTimeout(selectionCommitTimer);
     selectionCommitTimer = setTimeout(() => {
       handleSelectionChange();
@@ -722,6 +745,7 @@ export function createApp(document, { api = defaultApi } = {}) {
    * 置くものではありません。
    */
   function allowedToWrite() {
+    if (!state.features.manager) return true;
     const missing = missingBriefFields(state.brief);
     if (missing.length === 0 || briefNoticeShown) return true;
     briefNoticeShown = true;

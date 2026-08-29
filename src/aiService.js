@@ -82,17 +82,23 @@ export function createAiService(rootDir, options = {}) {
   const store = options.aiStore || new AiStore(rootDir, { dataDir });
   const runtimeDir = path.join(dataDir, 'runtime');
   const codex = options.codexClient || new CodexAppServer({ runtimeDir, models: options.aiModels });
-  return new AiService(rootDir, { store, codex, projectContext: options.aiContext });
+  return new AiService(rootDir, {
+    store,
+    codex,
+    projectContext: options.aiContext,
+    managerEnabled: options.features?.manager === true
+  });
 }
 
 export class AiService {
-  constructor(rootDir, { store, codex, projectContext = '' }) {
+  constructor(rootDir, { store, codex, projectContext = '', managerEnabled = false }) {
     this.rootDir = rootDir;
     this.store = store;
     this.codex = codex;
     // The reading context from the config file or --ai-context. It applies to
     // every document under the review root; each document can add its own.
     this.projectContext = normalizeAiContext(projectContext, 'aiContext');
+    this.managerEnabled = managerEnabled === true;
   }
 
   /**
@@ -108,7 +114,7 @@ export class AiService {
     return resolveAiContext({
       project: this.projectContext,
       document: aiContext,
-      brief,
+      brief: this.managerEnabled ? brief : null,
       notes: contextNotes,
       persona
     });
@@ -224,7 +230,7 @@ export class AiService {
     const readingContext = resolveAiContext({
       project: this.projectContext,
       document: aiContext,
-      brief,
+      brief: this.managerEnabled ? brief : null,
       notes: contextNotes
     });
     const { answer } = await this.askForJson({

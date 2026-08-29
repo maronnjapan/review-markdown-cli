@@ -41,6 +41,22 @@ review-markdown .
 
 ブラウザで `http://localhost:3000` を開くと、指定ディレクトリ配下のMarkdownファイル一覧が表示されます（`--no-open` を付けない限り自動で開きます）。
 
+資料の管理者と翻訳は、既定では無効です。
+今回の起動だけで使う場合は、必要な機能のオプションを付けます。
+
+```bash
+review-markdown . --enable-manager
+review-markdown . --enable-translation
+review-markdown . --enable-manager --enable-translation
+```
+
+次回以降も有効にする場合は、設定ファイルへ保存します。
+
+```bash
+review-markdown config set manager true
+review-markdown config set translation true
+```
+
 除外したいディレクトリは `config` コマンドで設定ファイルに保存できます。一度設定すれば、次回以降は `review-markdown .` だけで同じ設定が適用されます。
 
 ```bash
@@ -101,6 +117,9 @@ review-markdown .
 レビュー画面上部の「コメント」「編集」、または `Ctrl/⌘+Shift+E` で操作モードを切り替えます。コメントモードでは従来どおり対象を選んでコメントを追加でき、編集モードでは表示中の見出し、段落、リスト、表、コードなどを直接変更できます。編集モードでは、行頭の `# `、`- `、`> ` などと、`**太字**`、`*斜体*`、`[リンク](https://example.com)` などの記法が入力時に反映されます。段落を空にすると、その段落は次の自動保存時に本文から削除されます。
 
 ## 翻訳とAIチャット
+
+翻訳は既定では無効で、`--enable-translation` または設定の `"translation": true` で有効になります。
+AIチャットは翻訳の設定にかかわらず利用できます。
 
 翻訳とチャットには、APIキーではなく端末の `codex` コマンドを使います。
 事前に Codex CLI をインストールし、`codex login` で認証してください。
@@ -451,6 +470,9 @@ Codex 自身がファイルへ触ることはありません。
 
 ## 資料の管理者
 
+資料の管理者は既定では無効で、`--enable-manager` または設定の `"manager": true` で有効になります。
+無効な間は管理者タブを表示せず、編集とAIレビューの関門も動作しません。
+
 資料を作り始める前に、決まっていないと後で全部やり直しになるものが3つあります。
 
 | 項目 | 決めること |
@@ -764,6 +786,8 @@ review-markdown .
   "exclude": ["drafts/**", "**/*.wip.md", "node_modules"],
   "port": 4000,
   "open": true,
+  "manager": true,
+  "translation": true,
   "aiContext": "入門者向けの技術書。読者はJavaScriptの基礎を知っている。",
   "aiReviewModel": "gpt-5.6-codex",
   "aiReviewEffort": "high"
@@ -776,6 +800,8 @@ review-markdown .
 | `exclude` | 文字列の配列 | レビュー対象から外すパスのパターン |
 | `port` | 数値 | ローカルサーバーのポート番号 |
 | `open` | 真偽値 | 起動時にブラウザを開くかどうか |
+| `manager` | 真偽値 | 資料の管理者を有効にするかどうか（既定は `false`） |
+| `translation` | 真偽値 | 翻訳機能を有効にするかどうか（既定は `false`） |
 | `aiContext` | 文字列 | AIがこのディレクトリの原稿を読むときの前提（4000文字まで） |
 | `aiModel` | 文字列 | 翻訳・AIチャット・指摘の配置に使うCodexのモデル |
 | `aiEffort` | 文字列 | 同上の推論強度（`none` / `low` / `medium` / `high` など） |
@@ -796,6 +822,7 @@ review-markdown .
 
 - `include` / `exclude` は、ユーザー全体の設定・プロジェクト設定・コマンドラインの指定をすべて合成します。
 - `port` と `open` は「コマンドライン > 環境変数 `PORT` > プロジェクト設定 > ユーザー全体の設定 > 既定値」の順で決まります。
+- `manager` と `translation` は既定で `false` です。`--enable-manager` と `--enable-translation` で今回の起動だけ有効にでき、`--no-manager` と `--no-translation` で設定ファイルの値を上書きできます。
 - `aiContext` は「コマンドライン（`--ai-context`）> プロジェクト設定 > ユーザー全体の設定」の順で決まります。文書ごとの読み取りコンテキストは、これを置き換えずに足す形でAIへ渡します。
 - `--config <file>` で設定ファイルを直接指定すると、そのファイルだけを読み込みます。
 - `--no-config` を付けると、設定ファイルを一切読み込みません。

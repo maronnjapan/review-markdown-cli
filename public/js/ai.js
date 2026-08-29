@@ -71,6 +71,7 @@ export function createAiController({
   }
 
   async function translate(target) {
+    if (!state.features.translation) return;
     state.aiTarget = cloneTarget(target);
     state.translation = { status: 'loading' };
     panes.show('ai');
@@ -107,6 +108,7 @@ export function createAiController({
   }
 
   function prefetchTranslation(target) {
+    if (!state.features.translation) return;
     const text = String(target?.selectedText || target?.targetText || '').trim();
     if (!text) return;
     const key = targetKey(target);

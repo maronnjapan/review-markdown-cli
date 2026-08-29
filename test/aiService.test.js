@@ -298,7 +298,7 @@ test('what the manager settled reaches every AI feature, and the manager itself 
       return { text: JSON.stringify({ contextualMeaning: '実行する', meanings: [], explanation: '' }) };
     }
   });
-  const service = new AiService(root, { store, codex });
+  const service = new AiService(root, { store, codex, managerEnabled: true });
 
   await service.translate('guide.md', { type: 'text-selection', selectedText: 'deploy' });
   await service.placeComments('guide.md', '前提が抜けている');
@@ -338,6 +338,26 @@ test('what the manager settled reaches every AI feature, and the manager itself 
   assert.deepEqual(draft.questions, ['何のための資料ですか。']);
 
   await assert.rejects(service.composeDocumentBrief('guide.md', '   '), /決まっていることを入力してください/);
+});
+
+test('a disabled manager keeps a saved brief out of AI context', async (t) => {
+  const { root, store } = await testStore(t);
+  await writeReview(root, 'guide.md', [], {
+    brief: { purpose: '保存済みの目的', story: '保存済みの流れ', expectation: '保存済みの期待値' }
+  });
+  const prompts = [];
+  const codex = fakeCodex({
+    async runTurn(input) {
+      prompts.push(input.prompt);
+      return { text: JSON.stringify({ contextualMeaning: '実行する', meanings: [], explanation: '' }) };
+    }
+  });
+  const service = new AiService(root, { store, codex });
+
+  await service.translate('guide.md', { type: 'text-selection', selectedText: 'run' });
+
+  assert.doesNotMatch(prompts[0], /<document_brief>/);
+  assert.doesNotMatch(prompts[0], /保存済みの目的/);
 });
 
 test('a conversation catches up when the reading context changes, and stays quiet when it does not', async (t) => {

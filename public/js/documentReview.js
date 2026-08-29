@@ -300,7 +300,7 @@ export function createDocumentReviewController({
     const skillIds = [...state.reviewSkillIds];
     if (skillIds.length === 0) return;
     // 管理者が3点を求めている間は、1度目の実行を止めます。押し直せば実行します。
-    const missing = missingBriefFields(state.brief);
+    const missing = state.features.manager ? missingBriefFields(state.brief) : [];
     if (missing.length > 0 && !briefWarned) {
       briefWarned = true;
       syncRunState();
@@ -382,7 +382,7 @@ export function createDocumentReviewController({
       || state.reviewSkillIds.length === 0;
     // 何が足りないかは、押す前に見えている必要があります。押してから初めて止められると、
     // 待たされたうえに引き返させられたようにしか見えません。
-    const missing = missingBriefFields(state.brief);
+    const missing = state.features.manager ? missingBriefFields(state.brief) : [];
     // 揃った時点で関門は閉じ直します。あとで3点を消したのなら、それはもう一度
     // 気づくべき変化で、一度通したことを理由に黙って通すものではありません。
     if (missing.length === 0) briefWarned = false;

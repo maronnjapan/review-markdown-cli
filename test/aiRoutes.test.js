@@ -5,6 +5,49 @@ import path from 'node:path';
 import test from 'node:test';
 import { createServer } from '../src/server.js';
 
+test('the manager and translation routes are unavailable by default', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-disabled-features-'));
+  await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\nRun the program.\n', 'utf8');
+  const aiService = {
+    async status() { return { available: true, provider: 'codex' }; },
+    async translate() { throw new Error('disabled translation must not run'); },
+    async composeDocumentBrief() { throw new Error('disabled manager must not run'); },
+    close() {}
+  };
+  const { app } = createServer(root, { aiService, aiToken: 'disabled-token' });
+  const server = app.listen(0);
+  await new Promise((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const opened = await fetch(`${baseUrl}/api/file?path=guide.md`).then((response) => response.json());
+  assert.deepEqual(opened.features, { manager: false, translation: false });
+
+  const headers = { 'Content-Type': 'application/json', 'X-Review-Markdown-Token': 'disabled-token' };
+  for (const [endpoint, body] of [
+    ['/api/ai/translate', { path: 'guide.md', target: { type: 'paragraph', selectedText: 'Run.' } }],
+    ['/api/ai/brief', { path: 'guide.md', input: '運用手順' }]
+  ]) {
+    const response = await fetch(`${baseUrl}${endpoint}`, {
+      method: 'POST', headers, body: JSON.stringify(body)
+    });
+    assert.equal(response.status, 404, `${endpoint} は明示的に有効化するまで使えない`);
+  }
+
+  const briefSave = await fetch(`${baseUrl}/api/review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: 'guide.md', brief: { purpose: 'x', story: 'y', expectation: 'z' } })
+  });
+  assert.equal(briefSave.status, 404, '無効時は直接APIから管理者の前提も保存できない');
+});
+
 test('AI routes require a per-launch token and stream read-only results', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-ai-routes-'));
   await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\nRun the program.\n', 'utf8');
@@ -22,7 +65,7 @@ test('AI routes require a per-launch token and stream read-only results', async 
     async deleteConversation() {},
     close() {}
   };
-  const { app } = createServer(root, { aiService, aiToken: 'test-launch-token' });
+  const { app } = createServer(root, { aiService, aiToken: 'test-launch-token', translation: true });
   const server = app.listen(0);
   await new Promise((resolve, reject) => {
     server.once('listening', resolve);
@@ -210,7 +253,7 @@ test('the manager endpoint streams a draft, and the three settled points save wi
     },
     close() {}
   };
-  const { app } = createServer(root, { aiService, aiToken: 'brief-token' });
+  const { app } = createServer(root, { aiService, aiToken: 'brief-token', manager: true });
   const server = app.listen(0);
   await new Promise((resolve, reject) => {
     server.once('listening', resolve);
@@ -400,7 +443,7 @@ test('path を書き忘れたAI要求は、ストリームを開く前に400で�
     async translate() { throw new Error('対象が決まる前に呼んではいけない'); },
     close() {}
   };
-  const { app } = createServer(root, { aiService, aiToken: 'test-launch-token' });
+  const { app } = createServer(root, { aiService, aiToken: 'test-launch-token', translation: true });
   const server = app.listen(0);
   await new Promise((resolve, reject) => {
     server.once('listening', resolve);
