@@ -15,7 +15,8 @@ export function createAiController({
   refs, state, api, toaster, panes,
   flushComments = async () => true,
   // 相談して分かったことをコンテキストメモの下書きへ渡します。
-  onKeepContext = () => {}
+  onKeepContext = () => {},
+  onPaneRequested = () => {}
 }) {
   let preparePromise = null;
 
@@ -63,6 +64,7 @@ export function createAiController({
     state.activeConversationId = null;
     state.translation = null;
     panes.show('ai');
+    onPaneRequested();
     renderTarget();
     renderTranslation();
     renderMessages();
@@ -75,6 +77,7 @@ export function createAiController({
     state.aiTarget = cloneTarget(target);
     state.translation = { status: 'loading' };
     panes.show('ai');
+    onPaneRequested();
     renderTarget();
     renderTranslation();
 
@@ -180,6 +183,10 @@ export function createAiController({
     const content = refs.aiChatInput.value.trim();
     if (!content || state.aiAbortController) return;
     if (!state.aiTarget) {
+      if (state.documentType === 'pdf') {
+        toaster.error('PDFでは文章を選択してからAIに質問してください。');
+        return;
+      }
       state.aiTarget = { type: 'document' };
       renderTarget();
     }
@@ -281,9 +288,13 @@ export function createAiController({
     const target = state.aiTarget;
     refs.aiTarget.classList.toggle('hidden', !target);
     if (!target) return;
-    refs.aiTargetType.textContent = TARGET_LABELS[target.type] || '対象';
+    refs.aiTargetType.textContent = target.documentType === 'pdf' && target.type === 'text-selection'
+      ? 'PDF範囲選択'
+      : TARGET_LABELS[target.type] || '対象';
     refs.aiTargetType.dataset.type = target.type || '';
-    refs.aiTargetPath.textContent = (target.headingPath || []).join(' › ');
+    refs.aiTargetPath.textContent = target.documentType === 'pdf' && target.pageNumber
+      ? `ページ ${target.pageNumber}`
+      : (target.headingPath || []).join(' › ');
     refs.aiTargetPath.hidden = !refs.aiTargetPath.textContent;
     refs.aiTargetText.textContent = target.type === 'document'
       ? '現在の文書全体を会話開始時のスナップショットとして使用します。'
@@ -333,7 +344,9 @@ export function createAiController({
     const conversation = activeConversation();
     const messages = conversation?.messages || [];
     if (messages.length === 0 && streaming === null) {
-      refs.aiMessages.innerHTML = '<p class="muted">質問を入力すると、対象文章とこの文書のコメントを含めた読み取り専用の会話を開始します。</p>';
+      refs.aiMessages.innerHTML = state.documentType === 'pdf' && !state.aiTarget
+        ? '<p class="muted">PDF内の文章を選択して「AIに質問」を選んでください。PDF全体は会話対象にできません。</p>'
+        : '<p class="muted">質問を入力すると、対象文章とこの文書のコメントを含めた読み取り専用の会話を開始します。</p>';
       return;
     }
     refs.aiMessages.innerHTML = [
@@ -385,6 +398,12 @@ export function createAiController({
     translate,
     prefetchTranslation,
     cancelTranslationPrefetch,
+    // 保存した会話は、コンテキスト画面からも直せます。直したあとの記録を、
+    // こちらの一覧と吹き出しへも映し直すための入口です。
+    refreshConversations() {
+      renderConversationOptions();
+      renderMessages();
+    },
     // Comments and the reading context change while the pane is open, and the
     // pane promises to say what travels with the question.
     refreshTarget: renderTarget

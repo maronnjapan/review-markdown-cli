@@ -161,14 +161,21 @@ const OTHER_GROUP = { title: 'その他のコメント', render: renderGenericCo
 
 export function buildReviewMarkdown(review) {
   const grouped = groupByType(Array.isArray(review.comments) ? review.comments : []);
+  const pdfReview = /\.pdf$/i.test(review.targetFile || '');
+  const statusLabels = pdfReview
+    ? { open: '未確認', resolved: '確認済み' }
+    : { open: '未解決', resolved: '解決済み' };
 
   const lines = [`# Review for ${review.targetFile}`, ''];
+  if (pdfReview) {
+    lines.push('> 対象PDFは読み取り専用です。コメントの対応はPDF外で行い、状態は確認状況を表します。', '');
+  }
   appendDocumentBrief(lines, review.brief);
   if (review.aiContext) lines.push('## 読み取りコンテキスト', '', review.aiContext, '');
   appendContextNotes(lines, review.contextNotes);
   appendPersona(lines, review.persona);
   for (const group of [...COMMENT_GROUPS, OTHER_GROUP]) {
-    appendCommentGroup(lines, group.title, grouped.get(group) || [], group.render);
+    appendCommentGroup(lines, group.title, grouped.get(group) || [], group.render, statusLabels);
   }
   return `${lines.join('\n').trim()}\n`;
 }
@@ -240,12 +247,12 @@ function appendPersona(lines, persona) {
   lines.push('');
 }
 
-function appendCommentGroup(lines, title, comments, renderer) {
+function appendCommentGroup(lines, title, comments, renderer, statusLabels) {
   if (comments.length === 0) return;
   lines.push(`## ${title}`, '');
   comments.forEach((comment, index) => {
     lines.push(`### コメント${index + 1}`, '');
-    lines.push(`状態: ${comment.status === 'resolved' ? '解決済み' : '未解決'}`, '');
+    lines.push(`状態: ${comment.status === 'resolved' ? statusLabels.resolved : statusLabels.open}`, '');
     lines.push(...renderReviewOrigin(comment));
     lines.push(...renderer(comment));
     lines.push('');
@@ -276,6 +283,7 @@ function renderDocumentComment(comment) {
 
 function renderSelectionComment(comment) {
   const lines = [];
+  if (comment.documentType === 'pdf' || comment.pageNumber) lines.push(`ページ: ${comment.pageNumber || '(不明)'}`, '');
   if (comment.headingPath?.length) lines.push(`見出し階層: ${comment.headingPath.join(' > ')}`, '');
   lines.push('対象テキスト:', '', quoteBlock(comment.selectedText || '(選択テキストなし)'), '', 'コメント:', '', comment.comment || '(コメント本文なし)');
   if (comment.contextBefore || comment.contextAfter) {

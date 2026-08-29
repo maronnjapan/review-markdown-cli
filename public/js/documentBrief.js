@@ -87,6 +87,18 @@ export function createDocumentBriefController({ refs, state, api, toaster, prepa
     for (const { id, ref } of FIELDS) refs[ref].value = state.brief?.[id] || '';
   }
 
+  /**
+   * もう一方の画面で書き換えられた3点を、こちらの欄へ映します。
+   * 3点は「AIレビュー」タブとコンテキスト画面の2か所から書けるので、
+   * 片方で決めた内容が残っていない側から上書きされないように揃えます。
+   */
+  function sync() {
+    const { activeElement } = refs.briefPurpose.ownerDocument;
+    if (FIELDS.some(({ ref }) => refs[ref] === activeElement)) return;
+    fillFields();
+    render();
+  }
+
   function handleInput() {
     touched = true;
     const tooLong = FIELDS.find(({ ref }) => refs[ref].value.trim().length > MAX_BRIEF_FIELD_CHARS);
@@ -208,7 +220,7 @@ export function createDocumentBriefController({ refs, state, api, toaster, prepa
     refs.briefClearButton.addEventListener('click', clearBrief);
   }
 
-  return { load, refresh, render, setStatus };
+  return { load, refresh, render, setStatus, sync };
 }
 
 /**

@@ -51,6 +51,16 @@ export const api = {
     return postJson('/api/ai/conversation', payload, aiHeaders());
   },
 
+  /** 保存した会話の題名と、残すやり取りを置き換えます。 */
+  async updateAiConversation(payload) {
+    await ensureAiToken();
+    return fetchJson('/api/ai/conversation', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...aiHeaders() },
+      body: JSON.stringify(payload)
+    });
+  },
+
   async deleteAiConversation(id) {
     await ensureAiToken();
     return fetchJson('/api/ai/conversation', {

@@ -52,11 +52,22 @@ test('external URLs, mail addresses and in-page anchors are left alone', () => {
 });
 
 test('non-Markdown targets inside the root are served as files', () => {
-  const resolved = resolveDocumentLink('./files/spec.pdf?v=2', { relativeFile: 'docs/intro.md' });
+  const resolved = resolveDocumentLink('./files/data.zip?v=2', { relativeFile: 'docs/intro.md' });
 
   assert.equal(resolved.state, 'asset');
-  assert.equal(resolved.path, 'docs/files/spec.pdf');
-  assert.equal(resolved.href, '/api/asset?from=docs%2Fintro.md&src=.%2Ffiles%2Fspec.pdf%3Fv%3D2');
+  assert.equal(resolved.path, 'docs/files/data.zip');
+  assert.equal(resolved.href, '/api/asset?from=docs%2Fintro.md&src=.%2Ffiles%2Fdata.zip%3Fv%3D2');
+});
+
+test('PDF targets inside the root open in the review UI', () => {
+  const resolved = resolveDocumentLink('./files/spec.pdf', { relativeFile: 'docs/intro.md' });
+
+  assert.deepEqual(resolved, {
+    state: 'internal',
+    href: '#/review/docs%2Ffiles%2Fspec.pdf',
+    path: 'docs/files/spec.pdf',
+    hash: ''
+  });
 });
 
 test('rendered links carry the verdict, and editing writes the original path back', async () => {

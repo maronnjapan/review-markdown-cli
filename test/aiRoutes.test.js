@@ -130,6 +130,56 @@ test('AI routes require a per-launch token and stream read-only results', async 
   );
 });
 
+test('a saved chat is corrected through the same guarded endpoint', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-ai-conversation-edit-'));
+  await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n', 'utf8');
+  const edits = [];
+  const aiService = {
+    async status() { return { available: true, provider: 'codex' }; },
+    async updateConversation(id, payload) {
+      edits.push([id, payload]);
+      return { id, title: payload.title, messages: payload.messages, codexThreadId: null };
+    },
+    close() {}
+  };
+  const { app } = createServer(root, { aiService, aiToken: 'edit-token' });
+  const server = app.listen(0);
+  await new Promise((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const body = JSON.stringify({
+    id: 'conversation-1',
+    title: 'run の訳語',
+    messages: [{ id: 'user-1', content: 'この文脈の run はどう訳す？' }]
+  });
+
+  const unauthorized = await fetch(`${baseUrl}/api/ai/conversation`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body
+  });
+  assert.equal(unauthorized.status, 403, '記録の書き換えも、ほかのAI操作と同じ関門を通す');
+
+  const response = await fetch(`${baseUrl}/api/ai/conversation`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'X-Review-Markdown-Token': 'edit-token' },
+    body
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).conversation.title, 'run の訳語');
+  assert.deepEqual(edits, [['conversation-1', {
+    title: 'run の訳語',
+    messages: [{ id: 'user-1', content: 'この文脈の run はどう訳す？' }]
+  }]], '題名と残すやり取りだけが、そのまま渡る');
+});
+
 test('comment placement streams proposals and never writes them itself', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-ai-place-'));
   await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\nRun the program.\n', 'utf8');

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { isPdfPath } from './pdf/index.js';
 import { decodeMarkdownPath, isExternalUrl, splitUrl } from './urlPath.js';
 
 export const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkd']);
@@ -40,8 +41,8 @@ export function reviewUrlFor(relativePath, hash = '') {
  * Returns `null` for anything we leave alone (external URLs, `mailto:`, in-page
  * anchors), otherwise a descriptor the renderer turns into DOM attributes:
  *
- * - `internal` — another Markdown file under the review root: navigate in-app.
- * - `asset`    — a non-Markdown file under the review root: serve it as a file.
+ * - `internal` — another Markdown/PDF file under the review root: navigate in-app.
+ * - `asset`    — another file under the review root: serve it as a file.
  * - `outside`  — resolves above the review root: refuse with an explanation.
  * - `filtered` — under the root but hidden by --include/--exclude.
  *
@@ -68,7 +69,7 @@ export function resolveDocumentLink(href, { relativeFile, isInScope = () => true
   // A link to the review root itself already lands on the file list.
   if (target === '') return null;
 
-  if (!isMarkdownPath(target)) {
+  if (!isMarkdownPath(target) && !isPdfPath(target)) {
     return { state: 'asset', href: assetUrlFor(relativeFile, `${rawPath}${query}`), path: target };
   }
 

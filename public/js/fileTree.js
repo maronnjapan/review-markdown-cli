@@ -47,7 +47,7 @@ export function ancestorDirsOf(filePath) {
  * every draft it contains.
  */
 export function renderFileTree(files, { openDirs = new Set() } = {}) {
-  if (files.length === 0) return '<p class="muted tree-empty">Markdownファイルが見つかりません。</p>';
+  if (files.length === 0) return '<p class="muted tree-empty">Markdown / PDFファイルが見つかりません。</p>';
   return renderNode(buildFileTree(files), 0, '', openDirs);
 }
 
@@ -71,9 +71,10 @@ function renderNode(node, depth, prefix, openDirs) {
   }
 
   for (const file of files) {
+    const pdf = /\.pdf$/i.test(file.name);
     html += `
-      <a class="tree-row tree-file" style="--depth:${depth}" href="#/review/${encodeURIComponent(file.path)}">
-        <span class="tree-icon tree-icon-file" aria-hidden="true"></span>
+      <a class="tree-row tree-file${pdf ? ' tree-file-pdf' : ''}" style="--depth:${depth}" href="#/review/${encodeURIComponent(file.path)}">
+        <span class="tree-icon tree-icon-file${pdf ? ' tree-icon-pdf' : ''}" aria-hidden="true"></span>
         <span class="tree-label">${escapeHtml(file.name)}</span>
       </a>`;
   }

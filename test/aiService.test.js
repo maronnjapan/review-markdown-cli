@@ -83,6 +83,52 @@ test('chat keeps a local transcript and continues the same Codex thread', async 
   assert.equal(persisted.messages.at(-1).content, 'はい、その理解で合っています。');
 });
 
+test('a corrected chat is what the next turn reads, and the stale Codex thread is dropped', async (t) => {
+  const { root, store } = await testStore(t);
+  await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\nRun the program.\n', 'utf8');
+  const calls = [];
+  const deleted = [];
+  const codex = fakeCodex({
+    async runTurn(input) {
+      calls.push(input);
+      return { text: '「走る」です。' };
+    },
+    async deleteThread(id) { deleted.push(id); }
+  });
+  const service = new AiService(root, { store, codex });
+  const created = await service.createConversation({ documentPath: 'guide.md', target: { type: 'document' } });
+  const first = await service.sendMessage(created.id, 'run はどう訳す？');
+  const [question, answer] = first.conversation.messages;
+
+  const updated = await service.updateConversation(created.id, {
+    title: 'run の訳語',
+    messages: [
+      { id: question.id, content: 'この文脈の run はどう訳す？' },
+      { id: answer.id, content: 'この文脈では「実行する」です。' }
+    ]
+  });
+
+  assert.equal(updated.title, 'run の訳語');
+  assert.equal(updated.codexThreadId, null, '直した記録を読ませるため、覚えているスレッドは畳む');
+  assert.deepEqual(deleted, ['thread-1']);
+  const persisted = await store.getConversation(created.id);
+  assert.equal(persisted.messages[1].content, 'この文脈では「実行する」です。');
+  assert.ok(persisted.messages[1].editedAt, '後から直した発言には印が残る');
+
+  const second = await service.sendMessage(created.id, 'ほかの訳は？');
+  assert.equal(second.conversation.codexThreadId, 'thread-2', '次の質問は開き直したスレッドへ飛ぶ');
+  assert.match(calls.at(-1).prompt, /この文脈では「実行する」です。/, '1回目として、直したやり取りを読ませる');
+});
+
+test('a chat that lost its record is refused rather than silently rebuilt', async (t) => {
+  const { root, store } = await testStore(t);
+  const service = new AiService(root, { store, codex: fakeCodex() });
+  await assert.rejects(
+    () => service.updateConversation('11111111-2222-3333-4444-555555555555', { title: 'ない会話' }),
+    /会話が見つかりません/
+  );
+});
+
 test('chat hands Codex the review comments written on the document', async (t) => {
   const { root, store } = await testStore(t);
   await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\n## 手順\n\nRun the program.\n', 'utf8');

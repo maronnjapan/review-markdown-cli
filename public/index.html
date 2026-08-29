@@ -3,15 +3,16 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Markdown Review</title>
+    <title>Markdown / PDF Review</title>
     <link rel="stylesheet" href="/zenn-content.css">
     <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/pdf/pdf.css">
   </head>
   <body>
     <header class="app-header">
       <div>
-        <p class="eyebrow">Local Markdown Review</p>
-        <h1>Markdown Review</h1>
+        <p class="eyebrow">Local Document Review</p>
+        <h1>Markdown / PDF Review</h1>
       </div>
       <a class="header-link" href="#/">ファイル一覧</a>
     </header>
@@ -21,20 +22,27 @@
       <section id="review-view" class="review-layout hidden">
         <article class="document-pane card">
           <div class="document-toolbar">
-            <button id="back-button" type="button">← ファイル一覧</button>
+            <div class="document-toolbar-heading">
+              <button id="back-button" type="button">← ファイル一覧</button>
+              <div class="document-name">
+                <span class="document-name-label">レビュー中</span>
+                <h2 id="document-title"></h2>
+              </div>
+            </div>
             <div class="document-toolbar-actions">
-              <div class="mode-switch" role="group" aria-label="操作モード">
+              <div id="mode-switch" class="mode-switch" role="group" aria-label="操作モード">
                 <button id="comment-mode-button" class="active" type="button" aria-pressed="true" aria-keyshortcuts="Control+Shift+E Meta+Shift+E" title="コメントモード（Ctrl/⌘+Shift+Eで切り替え）">コメント</button>
                 <button id="edit-mode-button" type="button" aria-pressed="false" aria-keyshortcuts="Control+Shift+E Meta+Shift+E" title="編集モード（Ctrl/⌘+Shift+Eで切り替え）">編集</button>
               </div>
-              <span class="mode-shortcut" title="コメント／編集を切り替え">Ctrl/⌘+Shift+E</span>
+              <span id="mode-shortcut" class="mode-shortcut" title="コメント／編集を切り替え">Ctrl/⌘+Shift+E</span>
               <button id="document-comment-button" type="button">文書全体にコメント</button>
               <button id="document-translate-button" class="hidden" type="button">文書全体を翻訳</button>
               <button id="document-ai-button" type="button">文書全体をAIに相談</button>
+              <button id="context-open-button" type="button" title="前提と保存した相談をまとめて見る画面を開きます">コンテキスト</button>
               <button id="copy-body-button" class="hidden" type="button" title="本文をそのままクリップボードへコピーします">本文をコピー</button>
             </div>
           </div>
-          <h2 id="document-title"></h2>
+          <p id="document-notice" class="pdf-readonly-notice" hidden></p>
           <div id="editor-toolbar" class="editor-toolbar hidden" role="toolbar" aria-label="文章の書式">
             <select id="block-format" aria-label="段落スタイル">
               <option value="p">段落</option>
@@ -60,20 +68,49 @@
           </div>
           <div id="markdown-content" class="markdown-body znc"></div>
         </article>
-        <aside class="comments-pane card">
-          <div class="side-pane-tabs" role="tablist" aria-label="サイドパネル">
-            <button id="comments-tab-button" class="active" type="button" role="tab" aria-selected="true">コメント</button>
-            <button id="manager-tab-button" class="hidden" type="button" role="tab" aria-selected="false">管理者<span id="manager-tab-count" class="tab-count" hidden></span></button>
-            <button id="ai-tab-button" type="button" role="tab" aria-selected="false">AI</button>
-            <button id="placement-tab-button" type="button" role="tab" aria-selected="false">指摘の配置</button>
-            <button id="review-tab-button" type="button" role="tab" aria-selected="false">AIレビュー</button>
-            <button id="revise-tab-button" type="button" role="tab" aria-selected="false">本文の修正</button>
+        <aside id="side-pane" class="comments-pane card" aria-label="レビューサイドパネル">
+          <div class="side-pane-header">
+            <div>
+              <p class="eyebrow">Review workspace</p>
+              <h2>レビュー</h2>
+            </div>
+            <button id="side-pane-close" class="side-pane-close" type="button" aria-label="レビューサイドパネルを閉じる">×</button>
           </div>
-          <section id="comments-panel">
+          <div class="side-pane-tabs" role="tablist" aria-label="サイドパネル">
+            <button id="outline-tab-button" type="button" role="tab" aria-selected="false" aria-controls="outline-panel">文書</button>
+            <button id="comments-tab-button" class="active" type="button" role="tab" aria-selected="true" aria-controls="comments-panel">コメント <span id="comment-count" class="comment-count">0</span></button>
+            <button id="manager-tab-button" class="hidden" type="button" role="tab" aria-selected="false" aria-controls="manager-panel">管理者<span id="manager-tab-count" class="tab-count" hidden></span></button>
+            <button id="ai-tab-button" type="button" role="tab" aria-selected="false" aria-controls="ai-panel">AI</button>
+            <button id="placement-tab-button" type="button" role="tab" aria-selected="false" aria-controls="placement-panel">指摘の配置</button>
+            <button id="review-tab-button" type="button" role="tab" aria-selected="false" aria-controls="review-panel">AIレビュー</button>
+            <button id="revise-tab-button" type="button" role="tab" aria-selected="false" aria-controls="revise-panel">本文の修正</button>
+          </div>
+          <section id="outline-panel" class="outline-panel hidden" role="tabpanel" aria-labelledby="outline-tab-button">
+            <div class="side-section-header">
+              <div>
+                <p class="eyebrow">Document tools</p>
+                <h2>文書メニュー</h2>
+              </div>
+              <button id="outline-top-button" type="button">↑ 先頭へ</button>
+            </div>
+            <div class="document-quick-actions" aria-label="文書全体の操作">
+              <button id="side-document-comment-button" type="button">文書全体にコメント</button>
+              <button id="side-document-translate-button" class="hidden" type="button">文書全体を翻訳</button>
+              <button id="side-document-ai-button" type="button">文書全体をAIに相談</button>
+            </div>
+            <div class="outline-heading">
+              <h3>目次</h3>
+              <span id="outline-count" class="outline-count">0</span>
+            </div>
+            <nav id="outline-list" class="outline-list" aria-label="文書の目次">
+              <p class="muted">見出しを読み込み中です。</p>
+            </nav>
+          </section>
+          <section id="comments-panel" role="tabpanel" aria-labelledby="comments-tab-button">
             <div class="comments-header">
               <div>
                 <p class="eyebrow">Review comments</p>
-                <h2>コメント <span id="comment-count" class="comment-count">0</span></h2>
+                <h2>コメント</h2>
               </div>
               <button id="save-button" type="button" title="自動保存を待たずにすぐ保存します">今すぐ保存</button>
             </div>
@@ -84,7 +121,7 @@
               <div id="comments-list" class="comments-list"></div>
             </div>
           </section>
-          <section id="manager-panel" class="manager-panel hidden" aria-live="polite">
+          <section id="manager-panel" class="manager-panel hidden" role="tabpanel" aria-labelledby="manager-tab-button" aria-live="polite">
             <div class="pane-scroll">
               <div class="ai-header">
                 <div>
@@ -129,7 +166,7 @@
               </details>
             </div>
           </section>
-          <section id="ai-panel" class="ai-panel hidden" aria-live="polite">
+          <section id="ai-panel" class="ai-panel hidden" role="tabpanel" aria-labelledby="ai-tab-button" aria-live="polite">
             <div class="pane-scroll">
               <div class="ai-header">
                 <div>
@@ -146,6 +183,7 @@
                 <p class="ai-context-hint">AIがこの文書を読むときの前提です。翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。</p>
                 <textarea id="ai-context-input" rows="4" placeholder="例：Node.js入門書の第3章。読者はJavaScriptの基礎を知っている前提。用語は原著の訳語に合わせる。"></textarea>
                 <p id="ai-context-status" class="ai-context-status" aria-live="polite"></p>
+                <button id="ai-context-open-page" class="context-open-link" type="button">広い画面で編集</button>
                 <div id="ai-context-project" class="ai-context-project" hidden>
                   <p class="ai-context-project-label">このディレクトリ全体の前提（設定ファイル）</p>
                   <blockquote id="ai-context-project-text"></blockquote>
@@ -168,6 +206,7 @@
                 </form>
                 <p id="context-note-full" class="context-note-full" hidden>メモが上限に達しました。古いものを消すか、まとめてください。</p>
                 <p id="context-notes-status" class="ai-context-status" aria-live="polite"></p>
+                <button id="context-notes-open-page" class="context-open-link" type="button">広い画面で編集</button>
                 <div id="context-notes-list" class="context-notes-list"></div>
               </details>
               <div class="ai-conversation-controls">
@@ -288,7 +327,127 @@
           </section>
         </aside>
       </section>
+      <section id="context-view" class="context-workspace hidden" aria-label="コンテキスト">
+        <header class="workspace-header card">
+          <div class="workspace-header-heading">
+            <button id="workspace-back-button" type="button">← レビューへ戻る</button>
+            <div class="document-name">
+              <span class="document-name-label">コンテキスト</span>
+              <h2 id="workspace-document-title"></h2>
+            </div>
+          </div>
+          <p class="workspace-lead">ここにあるものは、翻訳・AIチャット・指摘の配置・AIレビューが本文より先に読みます。書き換えは自動保存され、次のAI操作から効きます。</p>
+        </header>
+
+        <div class="workspace-grid">
+          <section id="workspace-brief" class="card workspace-card">
+            <header class="workspace-card-head">
+              <h3>資料の管理者が決めた3点</h3>
+              <span id="workspace-brief-state" class="ai-context-state">0 / 3</span>
+            </header>
+            <p class="ai-context-hint">この資料が何のためにあるかです。3点から外れた箇所は、AIレビューが指摘します。</p>
+            <div class="brief-form">
+              <div class="brief-field">
+                <label class="brief-field-label" for="workspace-brief-purpose">目的</label>
+                <p id="workspace-brief-purpose-hint" class="brief-field-hint">この資料が終わったとき、読み手に何が起きていれば成功か。「資料を作ること」は目的になりません。</p>
+                <textarea id="workspace-brief-purpose" rows="3" aria-describedby="workspace-brief-purpose-hint" placeholder="例：当番が、手順書を見ながら一人で再起動を完了できるようになる。"></textarea>
+              </div>
+              <div class="brief-field">
+                <label class="brief-field-label" for="workspace-brief-story">ストーリー</label>
+                <p id="workspace-brief-story-hint" class="brief-field-hint">その結論まで、何をどの順に示して連れて行くか。節の一覧ではなく、前が次を支える並びを書きます。</p>
+                <textarea id="workspace-brief-story" rows="3" aria-describedby="workspace-brief-story-hint" placeholder="例：止めてよい条件を先に決める → 止める手順 → 戻ったことの確かめ方 → 戻らなかったときの連絡先。"></textarea>
+              </div>
+              <div class="brief-field">
+                <label class="brief-field-label" for="workspace-brief-expectation">期待値</label>
+                <p id="workspace-brief-expectation-hint" class="brief-field-hint">読んだあと、読み手や頼んだ人が何を判断・実行できるか。</p>
+                <textarea id="workspace-brief-expectation" rows="3" aria-describedby="workspace-brief-expectation-hint" placeholder="例：当番から運用チームへの問い合わせが、再起動については来なくなる。"></textarea>
+              </div>
+              <div class="brief-actions">
+                <button id="workspace-brief-clear-button" type="button" disabled>3つを消す</button>
+              </div>
+              <p id="workspace-brief-status" class="ai-context-status" aria-live="polite"></p>
+            </div>
+            <details id="workspace-brief-compose" class="ai-context">
+              <summary>管理者に組み立てさせる</summary>
+              <p class="ai-context-hint">決まっていることを走り書きで渡すと、管理者が3つの欄へ組み直し、決まっていない分は問いとして返します。本文は読ませません。</p>
+              <form id="workspace-brief-compose-form" class="persona-form">
+                <textarea id="workspace-brief-input" rows="4" placeholder="例：運用チームから当番向けの再起動手順を頼まれた。事故が月1件ある。締め切りは来週。"></textarea>
+                <div class="persona-actions">
+                  <button id="workspace-brief-stop-button" class="hidden" type="button">停止</button>
+                  <button id="workspace-brief-compose-button" type="submit">管理者に聞く</button>
+                </div>
+              </form>
+              <div id="workspace-brief-result" class="brief-result"></div>
+            </details>
+          </section>
+
+          <section id="workspace-ai-context" class="card workspace-card">
+            <header class="workspace-card-head">
+              <h3>読み取りコンテキスト</h3>
+              <span id="workspace-ai-context-state" class="ai-context-state">未設定</span>
+            </header>
+            <p class="ai-context-hint">AIがこの文書を読むときの前提を1枚に整えたものです。書き換えると、次のAI操作からその前提で読みます。</p>
+            <textarea id="workspace-ai-context-input" rows="12" placeholder="例：Node.js入門書の第3章。読者はJavaScriptの基礎を知っている前提。用語は原著の訳語に合わせる。"></textarea>
+            <p id="workspace-ai-context-status" class="ai-context-status" aria-live="polite"></p>
+            <div id="workspace-ai-context-project" class="ai-context-project" hidden>
+              <p class="ai-context-project-label">このディレクトリ全体の前提（設定ファイル）</p>
+              <blockquote id="workspace-ai-context-project-text"></blockquote>
+              <p class="workspace-note">この欄は設定ファイル（`review-markdown config set aiContext`）で決まります。画面からは変えられません。文書ごとの前提は、これを置き換えずに足す形で渡します。</p>
+            </div>
+          </section>
+
+          <section id="workspace-notes" class="card workspace-card workspace-card-wide">
+            <header class="workspace-card-head">
+              <h3>コンテキストメモ</h3>
+              <span id="workspace-context-notes-state" class="ai-context-state">未設定</span>
+            </header>
+            <p class="ai-context-hint">この文書について分かったことを1件ずつ残します。読み取りコンテキストが「この文書はこう読む」の1枚なのに対して、こちらは「このとき、こう分かった」の積み上げです。</p>
+            <div class="workspace-notes-layout">
+              <form id="workspace-context-note-form" class="context-note-form">
+                <select id="workspace-context-note-kind" aria-label="メモの種類" aria-describedby="workspace-context-note-kind-hint"></select>
+                <p id="workspace-context-note-kind-hint" class="context-note-kind-hint" aria-live="polite"></p>
+                <textarea id="workspace-context-note-input" rows="5" placeholder="例：この節は前の版から移してきた。並び順は検討済みで、変えない。"></textarea>
+                <div class="context-note-actions">
+                  <button id="workspace-context-note-cancel" type="button" class="hidden">編集をやめる</button>
+                  <button id="workspace-context-note-submit" type="submit" disabled>残す</button>
+                </div>
+                <p id="workspace-context-note-full" class="context-note-full" hidden>メモが上限に達しました。古いものを消すか、まとめてください。</p>
+                <p id="workspace-context-notes-status" class="ai-context-status" aria-live="polite"></p>
+              </form>
+              <div id="workspace-context-notes-list" class="context-notes-list"></div>
+            </div>
+          </section>
+
+          <section id="workspace-persona" class="card workspace-card">
+            <header class="workspace-card-head">
+              <h3>読み手ペルソナ</h3>
+              <span id="workspace-persona-state" class="ai-context-state">未設定</span>
+            </header>
+            <p class="ai-context-hint">誰がこの文書を読むかです。組み立てと書き換えは、レビューを実行する場所と同じ「AIレビュー」タブで行います。</p>
+            <div id="workspace-persona-result" class="persona-result"></div>
+            <button id="workspace-persona-edit-button" type="button">「AIレビュー」タブで編集</button>
+          </section>
+
+          <section id="workspace-conversations" class="card workspace-card workspace-card-wide">
+            <header class="workspace-card-head">
+              <h3>AIチャットの記録</h3>
+              <span id="workspace-conversation-state" class="ai-context-state">0件</span>
+            </header>
+            <p class="ai-context-hint">この文書で交わした相談です。言い間違えた質問や、間違ったまま残っている回答はここで直せます。直したやり取りは、次にこの会話を続けるときAIが読み直します。</p>
+            <div class="workspace-conversations">
+              <nav id="workspace-conversation-list" class="workspace-conversation-list" aria-label="保存された会話"></nav>
+              <div id="workspace-conversation-detail" class="workspace-conversation-detail"></div>
+            </div>
+          </section>
+        </div>
+      </section>
     </main>
+
+    <button id="side-pane-toggle" class="side-pane-toggle hidden" type="button" aria-controls="side-pane" aria-expanded="false">
+      <span>レビュー</span>
+      <span id="side-pane-toggle-count" class="side-pane-toggle-count">0</span>
+    </button>
+    <div id="side-pane-backdrop" class="side-pane-backdrop hidden"></div>
 
     <div id="selection-toolbar" class="selection-toolbar hidden">
       <button id="selection-translate-button" class="hidden" type="button">翻訳</button>

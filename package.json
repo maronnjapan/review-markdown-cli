@@ -1,7 +1,7 @@
 {
   "name": "review-markdown",
   "version": "0.1.0",
-  "description": "Local CLI and web app for reviewing and directly editing Markdown files.",
+  "description": "Local CLI and web app for reviewing Markdown and PDF files, with direct Markdown editing.",
   "type": "module",
   "license": "MIT",
   "author": "maronnjapan",
@@ -32,6 +32,7 @@
   },
   "keywords": [
     "markdown",
+    "pdf",
     "review",
     "cli",
     "zenn",
@@ -39,6 +40,7 @@
   ],
   "dependencies": {
     "cheerio": "^1.2.0",
+    "pdfjs-dist": "6.2.108",
     "turndown": "^7.2.4",
     "turndown-plugin-gfm": "^1.0.2",
     "zenn-content-css": "^0.5.2",

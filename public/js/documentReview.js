@@ -379,6 +379,7 @@ export function createDocumentReviewController({
   function syncRunState() {
     refs.reviewRunButton.disabled = Boolean(state.reviewAbortController)
       || Boolean(state.personaAbortController)
+      || state.documentType === 'pdf'
       || state.reviewSkillIds.length === 0;
     // 何が足りないかは、押す前に見えている必要があります。押してから初めて止められると、
     // 待たされたうえに引き返させられたようにしか見えません。
@@ -458,7 +459,8 @@ function verificationHtml(result) {
   return `<p class="review-verification" data-state="done">${escapeHtml(message)}</p>`;
 }
 
-function personaHtml(persona) {
+/** 決まった読み手の見せ方。コンテキスト画面も同じ形で出します。 */
+export function personaHtml(persona) {
   if (!persona) {
     return '<p class="muted">読み手を書いて「そのまま使う」を押すとその文章のまま、「AIで組み立てる」を押すとAIが立場・前提知識・目的へ組み直して使います。</p>';
   }

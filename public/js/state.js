@@ -10,11 +10,13 @@ export function createState() {
     filters: { include: [], exclude: [] },
     openDirs: new Set(),
 
-    // Optional features are opt-in and repeated with each document response.
+    // Optional features are opt-in. The server repeats these flags with each
+    // document response so a direct URL and a file-list navigation behave alike.
     features: { manager: false, translation: false },
 
     // Open document
     currentPath: null,
+    documentType: null,
     markdown: '',
     rawHtml: '',
     editableHtml: '',
@@ -89,6 +91,7 @@ export function createState() {
 
 export function resetDocumentState(state, filePath) {
   state.currentPath = filePath;
+  state.documentType = null;
   state.mode = 'comment';
   state.textBody = false;
   state.markdown = '';

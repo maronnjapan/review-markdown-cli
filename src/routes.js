@@ -8,6 +8,14 @@ import { assetUrlFor, isMarkdownPath, isTextDocumentPath, resolveDocumentLink } 
 import { renderMarkdown } from './markdown.js';
 import { listMarkdownFiles } from './markdownFiles.js';
 import {
+  assertSupportedPdfAiTarget,
+  isPdfPath,
+  listPdfFiles,
+  pdfUrlFor,
+  servePdf,
+  servePdfJsAsset
+} from './pdf/index.js';
+import {
   buildReviewMarkdown,
   exportPathFor,
   findExistingReviewPath,
@@ -26,12 +34,15 @@ const ROUTES = [
   { methods: ['GET'], pathname: '/api/files', handle: listFiles },
   { methods: ['GET'], pathname: '/api/file', handle: openFile },
   { methods: ['POST'], pathname: '/api/file', handle: saveFile },
+  { methods: ['GET', 'HEAD'], pathname: '/api/pdf', handle: openPdf },
   { methods: ['GET', 'HEAD'], pathname: '/api/asset', handle: openAsset },
+  { methods: ['GET', 'HEAD'], pathname: '/vendor/pdfjs/pdf.mjs', handle: openPdfJsAsset },
+  { methods: ['GET', 'HEAD'], pathname: '/vendor/pdfjs/pdf.worker.min.mjs', handle: openPdfJsAsset },
   { methods: ['POST'], pathname: '/api/review', handle: saveReview },
   { methods: ['GET'], pathname: '/api/export', handle: exportReview },
   { methods: ['GET'], pathname: '/api/ai/status', handle: aiStatus },
   { methods: ['GET'], pathname: '/api/ai/conversations', handle: listAiConversations },
-  { methods: ['POST', 'DELETE'], pathname: '/api/ai/conversation', handle: aiConversation },
+  { methods: ['POST', 'PATCH', 'DELETE'], pathname: '/api/ai/conversation', handle: aiConversation },
   { methods: ['POST'], pathname: '/api/ai/translate', feature: 'translation', handle: translateWithAi },
   { methods: ['POST'], pathname: '/api/ai/message', handle: sendAiMessage },
   { methods: ['POST'], pathname: '/api/ai/place-comments', handle: placeAiComments },
@@ -101,7 +112,15 @@ async function aiConversation(context) {
     await aiService.deleteConversation(body.id);
     return sendJson(response, { deleted: true });
   }
+  if (request.method === 'PATCH') {
+    // 直せるのは題名と、残すやり取りだけです。対象の文章はここでは受け取りません。
+    // 会話が何について始まったかまで書き換えられると、記録として当てにならなくなります。
+    return sendJson(response, {
+      conversation: await aiService.updateConversation(body.id, { title: body.title, messages: body.messages })
+    });
+  }
   const relativeFile = reviewTarget(rootDir, filter, body.path);
+  assertSupportedPdfAiTarget(relativeFile, body.target);
   return sendJson(response, {
     conversation: await aiService.createConversation({ documentPath: relativeFile, target: body.target })
   });
@@ -128,6 +147,7 @@ async function streamAiRequest(context, { run, toEvent, needsDocument = true }) 
   // ここで弾けば、NDJSONを開く前に 400 を返せます。開いてしまうと 200 のまま
   // 中身がエラーになり、呼ぶ側は「使い方の誤り」と「AIの失敗」を区別できません。
   const documentPath = needsDocument ? reviewTarget(rootDir, filter, body.path) : null;
+  if (documentPath) assertSupportedPdfAiTarget(documentPath, body.target);
   return streamAiResponse(request, response, async ({ send, signal }) => {
     send({ type: 'started' });
     const result = await run({
@@ -286,9 +306,13 @@ function assertLocalAiRequest(request) {
 }
 
 async function listFiles({ rootDir, filter, features, response }) {
+  const [markdownFiles, pdfFiles] = await Promise.all([
+    listMarkdownFiles(rootDir, filter),
+    listPdfFiles(rootDir, filter)
+  ]);
   return sendJson(response, {
     rootDir,
-    files: await listMarkdownFiles(rootDir, filter),
+    files: [...markdownFiles, ...pdfFiles].sort((a, b) => a.localeCompare(b)),
     filters: { include: filter.include, exclude: filter.exclude },
     features
   });
@@ -296,10 +320,26 @@ async function listFiles({ rootDir, filter, features, response }) {
 
 async function openFile({ rootDir, filter, projectAiContext, features, url, response }) {
   const relativeFile = reviewTarget(rootDir, filter, url.searchParams.get('path'));
+  if (isPdfPath(relativeFile)) {
+    const stats = await fs.stat(path.join(rootDir, relativeFile));
+    if (!stats.isFile()) throw httpError(`PDF not found: ${relativeFile}`, 404);
+    return sendJson(response, {
+      path: relativeFile,
+      documentType: 'pdf',
+      pdfUrl: pdfUrlFor(relativeFile),
+      textBody: false,
+      review: visibleReview(await readReview(rootDir, relativeFile), features),
+      projectAiContext,
+      features,
+      reviewFile: await relativeReviewPath(rootDir, relativeFile)
+    });
+  }
+  if (!isTextDocumentPath(relativeFile)) throw httpError('Only text documents and PDF files can be reviewed', 400);
   const markdown = await fs.readFile(path.join(rootDir, relativeFile), 'utf8');
   const review = await readReview(rootDir, relativeFile);
   return sendJson(response, {
     path: relativeFile,
+    documentType: isMarkdownPath(relativeFile) ? 'markdown' : 'text',
     markdown,
     textBody: isTextDocumentPath(relativeFile),
     ...await renderBothViews(markdown, relativeFile, filter),
@@ -315,6 +355,15 @@ async function openFile({ rootDir, filter, projectAiContext, features, url, resp
  * reviewer typed in; an approved AI proposal sends the Markdown it proposed
  * (`src/documentEdits.js`). Either way the write is the reviewer's own.
  */
+function openPdf({ rootDir, filter, request, response, url, headOnly }) {
+  const relativeFile = reviewTarget(rootDir, filter, url.searchParams.get('path'));
+  return servePdf(rootDir, relativeFile, request, response, headOnly);
+}
+
+function openPdfJsAsset({ response, url, headOnly }) {
+  return servePdfJsAsset(url.pathname, response, headOnly);
+}
+
 async function saveFile({ rootDir, filter, projectAiContext, features, request, response }) {
   const body = await readJsonBody(request);
   assertManagerUpdateAllowed(body, features);
@@ -395,7 +444,7 @@ async function exportReview({ rootDir, filter, features, url, response }) {
 /** Normalizes the requested path and refuses anything the include/exclude patterns hide. */
 function reviewTarget(rootDir, filter, requestedPath) {
   const relativeFile = normalizeRelativePath(rootDir, requestedPath);
-  if (isMarkdownPath(relativeFile) && !filter.matchesFile(relativeFile)) {
+  if ((isMarkdownPath(relativeFile) || isPdfPath(relativeFile)) && !filter.matchesFile(relativeFile)) {
     throw httpError(`このファイルは include / exclude の設定によりレビュー対象から外れています: ${relativeFile}`, 404);
   }
   return relativeFile;
