@@ -14,6 +14,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { normalizeAiContext } from './aiContext.js';
+import { AI_PROVIDERS, DEFAULT_AI_PROVIDER, unknownProviderMessage } from './aiProviders/index.js';
 import { normalizePatterns } from './pathFilter.js';
 
 export const CONFIG_FILE_NAME = '.review-markdown.json';
@@ -26,8 +27,13 @@ export const CONFIG_FILE_NAME = '.review-markdown.json';
  *   text  : 自由な文章。`config set` は与えられた語をすべてつなぎます。
  *   scalar: 値1つ。`config set` は先頭の語だけを取ります。
  *
- * モデルの実行コマンドは、意図してここに置いていません。レビュー対象のリポジトリが
- * 自前の `.review-markdown.json` を同梱していることがあり、そこから起動する実行ファイルを
+ * `scope: 'user'` を付けたキーは、探索で見つけたプロジェクト設定からは読みません。
+ * レビュー対象のリポジトリが自前の `.review-markdown.json` を同梱していることがあり、
+ * 原稿を開いただけで原稿の送り先が変わってしまうからです。どのAIへ原稿を渡すかは、
+ * その端末の持ち主が決めることなので、ユーザー全体の設定（`--global`）か、
+ * コマンドラインで名指しした `--config` からだけ受け取ります。
+ *
+ * モデルの実行コマンドは、意図してここに置いていません。そこから起動する実行ファイルを
  * 選ばせると、原稿を開いただけで任意のコマンドが走ることになるからです。
  */
 const CONFIG_KEY_SPECS = {
@@ -66,10 +72,22 @@ const CONFIG_KEY_SPECS = {
     parse: (value, source) => normalizeAiContext(value, source),
     help: 'AIがこのディレクトリの原稿を読むときの前提（文章）'
   },
+  aiProvider: {
+    kind: 'scalar',
+    scope: 'user',
+    parse: (value, source) => parseProvider(value, source),
+    help: `どのAIで走らせるか（${AI_PROVIDERS.join(' / ')}。既定: ${DEFAULT_AI_PROVIDER}）`
+  },
+  aiModelProvider: {
+    kind: 'scalar',
+    scope: 'user',
+    parse: (value, source) => parseIdentifier(value, source),
+    help: 'aiProvider が langchain のときのプロバイダ名（anthropic / openai / ollama など）'
+  },
   aiModel: {
     kind: 'scalar',
     parse: (value, source) => parseIdentifier(value, source),
-    help: '翻訳・AIチャット・指摘の配置に使うCodexのモデル（既定: 速いモデルを自動で選ぶ）'
+    help: '翻訳・AIチャット・指摘の配置に使うモデル（既定: そのAIの速い方）'
   },
   aiEffort: {
     kind: 'scalar',
@@ -79,7 +97,7 @@ const CONFIG_KEY_SPECS = {
   aiReviewModel: {
     kind: 'scalar',
     parse: (value, source) => parseIdentifier(value, source),
-    help: 'AIレビューと読み手ペルソナに使うCodexのモデル（既定: 深く読むモデルを自動で選ぶ）'
+    help: 'AIレビューと読み手ペルソナに使うモデル（既定: そのAIの深く読む方）'
   },
   aiReviewEffort: {
     kind: 'scalar',
@@ -92,13 +110,15 @@ export const CONFIG_KEYS = Object.keys(CONFIG_KEY_SPECS);
 export const LIST_KEYS = keysOfKind('list');
 /** Free text, so `config set` joins the words it was given instead of taking the first. */
 export const TEXT_KEYS = keysOfKind('text');
+/** レビュー対象のリポジトリからは受け取らないキー。理由は `CONFIG_KEY_SPECS` の説明。 */
+export const USER_SCOPED_KEYS = CONFIG_KEYS.filter((key) => CONFIG_KEY_SPECS[key].scope === 'user');
 
 /** `config --help` の Keys 節。表から作るので、キーを足しても説明を書き忘れません。 */
 export const CONFIG_KEY_HELP = CONFIG_KEYS.map((key) => (
-  `  ${key.padEnd(15)}${CONFIG_KEY_SPECS[key].help}`
+  `  ${key.padEnd(17)}${CONFIG_KEY_SPECS[key].help}`
 )).join('\n');
 
-/** 用途ごとのモデル指定。設定していない用途は、Codexが持っているものから自動で選びます。 */
+/** 用途ごとのモデル指定。設定していない用途は、選んだAIの既定から選びます。 */
 export function aiModelsFromConfig(config = {}) {
   return {
     assistant: { model: config.aiModel, effort: config.aiEffort },
@@ -148,8 +168,12 @@ export function defaultProjectConfigPath(dir = '.') {
  * Reads and validates one config file.
  * Returns `{ exists: false }` when the file is absent, so a missing config is
  * never an error; anything unreadable or malformed throws instead.
+ *
+ * @param {object} [options]
+ * @param {boolean} [options.userScoped] false にすると、端末の持ち主だけが決められるキーを
+ *   読み飛ばして警告にします。探索で見つけたプロジェクト設定はこちらで読みます。
  */
-export async function readConfigFile(filePath) {
+export async function readConfigFile(filePath, { userScoped = true } = {}) {
   let raw;
   try {
     raw = await fs.readFile(filePath, 'utf8');
@@ -165,7 +189,7 @@ export async function readConfigFile(filePath) {
     throw new Error(`設定ファイルがJSONとして読めません: ${filePath}: ${error.message}`);
   }
 
-  const { config, warnings } = normalizeConfig(parsed, filePath);
+  const { config, warnings } = normalizeConfig(parsed, filePath, { userScoped });
   return { path: filePath, exists: true, config, warnings };
 }
 
@@ -176,8 +200,12 @@ export async function writeConfigFile(filePath, config) {
   return normalized;
 }
 
-/** Validates one config object. Unknown keys are reported as warnings, not errors. */
-export function normalizeConfig(raw, source = 'config') {
+/**
+ * Validates one config object. Unknown keys are reported as warnings, not errors.
+ * `userScoped: false` does the same for the keys only the person at the keyboard
+ * may set: 値を見ずに読み飛ばして、警告にします。
+ */
+export function normalizeConfig(raw, source = 'config', { userScoped = true } = {}) {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error(`${source}: 設定はJSONオブジェクトで書いてください`);
   }
@@ -190,6 +218,15 @@ export function normalizeConfig(raw, source = 'config') {
       warnings.push(`${source}: 不明な設定キーを無視しました: ${key}`);
       continue;
     }
+    // 読まないと決めたキーは、中身も見ません。レビュー対象のリポジトリが書いた値のせいで
+    // 起動できなくなるのは、そのリポジトリに起動を止めさせているのと同じだからです。
+    if (!userScoped && USER_SCOPED_KEYS.includes(key)) {
+      warnings.push(
+        `${source}: ${key} はプロジェクト設定では無視します`
+        + `（ユーザー全体の設定に \`review-markdown config set ${key} … --global\` で書いてください）`
+      );
+      continue;
+    }
     config[key] = normalizeConfigValue(key, raw[key], source);
   }
   return { config, warnings };
@@ -200,6 +237,13 @@ export function normalizeConfigValue(key, value, source = 'config') {
   const spec = CONFIG_KEY_SPECS[key];
   if (!spec) throw new Error(`${source}: 不明な設定キーです: ${key}（使えるキー: ${CONFIG_KEYS.join(', ')}）`);
   return spec.parse(value, `${source}: ${key}`);
+}
+
+/** どのAIで走らせるか。知らない名前は、使えるものを並べて断ります。 */
+export function parseProvider(value, source = 'aiProvider') {
+  const provider = parseIdentifier(value, source);
+  if (!AI_PROVIDERS.includes(provider)) throw new Error(`${source}: ${unknownProviderMessage(provider)}`);
+  return provider;
 }
 
 /** モデル名や推論強度のような、空白を含まない1語の設定値。 */
@@ -277,9 +321,11 @@ export async function loadConfig({
   const globalFile = await readConfigFile(globalConfigPath(env, platform));
   if (globalFile.exists) files.push(globalFile);
 
+  // 探索で見つけたファイルは、レビュー対象のリポジトリが同梱していることがあります。
+  // 原稿の送り先を決めるキーだけは、ここからは受け取りません（`CONFIG_KEY_SPECS` の説明）。
   const projectPath = await findProjectConfigPath(targetDir);
   if (projectPath && path.resolve(projectPath) !== path.resolve(globalFile.path)) {
-    files.push(await readConfigFile(projectPath));
+    files.push(await readConfigFile(projectPath, { userScoped: false }));
   }
 
   return {
@@ -307,7 +353,10 @@ export function applyConfigToOptions(options, config = {}) {
     manager: useManager ? config.manager : options.manager,
     translation: useTranslation ? config.translation : options.translation,
     aiContext: options.aiContext ?? config.aiContext ?? '',
-    // モデルの指定はコマンドラインに口を持たないので、設定ファイルの値がそのまま届きます。
+    // AIの選択とモデルの指定はコマンドラインに口を持たないので、設定ファイルの値が
+    // そのまま届きます。どれも未設定なら、既定のAIをその既定のモデルで走らせます。
+    aiProvider: config.aiProvider ?? DEFAULT_AI_PROVIDER,
+    aiModelProvider: config.aiModelProvider,
     aiModels: aiModelsFromConfig(config)
   };
 }

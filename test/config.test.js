@@ -260,6 +260,70 @@ test('設定していない用途は、Codexが持っているものから自動
   });
 });
 
+test('どのAIで走らせるかは、端末の持ち主だけが決められる', async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'review-config-home-'));
+  const globalFile = path.join(home, 'review-markdown', 'config.json');
+  await fs.mkdir(path.dirname(globalFile), { recursive: true });
+  await fs.writeFile(globalFile, JSON.stringify({ aiProvider: 'claude' }), 'utf8');
+
+  // レビュー対象のリポジトリが自前の設定ファイルを同梱していることがあります。そこから
+  // 送り先を選ばせると、原稿を開いただけで別の相手へ渡ることになるので、読み飛ばします。
+  const root = await seedProject({ aiProvider: 'langchain', aiModelProvider: 'openai', aiReviewModel: 'gpt-5.6-codex' });
+  const { config, warnings } = await loadConfig({
+    targetDir: root, env: { XDG_CONFIG_HOME: home, HOME: home }, platform: 'linux'
+  });
+
+  assert.equal(config.aiProvider, 'claude', 'ユーザー全体の設定は効く');
+  assert.equal(config.aiModelProvider, undefined);
+  assert.equal(config.aiReviewModel, 'gpt-5.6-codex', 'モデルの指定はプロジェクト設定からも効く');
+  assert.deepEqual(warnings.map((warning) => warning.replace(/^.*json: /, '')), [
+    'aiProvider はプロジェクト設定では無視します（ユーザー全体の設定に `review-markdown config set aiProvider … --global` で書いてください）',
+    'aiModelProvider はプロジェクト設定では無視します（ユーザー全体の設定に `review-markdown config set aiModelProvider … --global` で書いてください）'
+  ]);
+});
+
+test('プロジェクト設定に壊れた値が置かれていても、起動は止まらない', async () => {
+  // 読まないと決めたキーは中身も見ません。見てしまうと、レビュー対象のリポジトリが
+  // 値を1つ置くだけでこのアプリを起動できなくできます。
+  const root = await seedProject({ aiProvider: 'openai', exclude: ['drafts'] });
+  const { config, warnings } = await loadConfig({ targetDir: root, env: emptyEnv(root) });
+
+  assert.equal(config.aiProvider, undefined);
+  assert.deepEqual(config.exclude, ['drafts'], 'ほかの設定はそのまま効く');
+  assert.equal(warnings.length, 1);
+});
+
+test('--config で名指ししたファイルからは、走らせるAIも受け取る', async () => {
+  const root = await seedProject();
+  const configPath = path.join(root, 'mine.json');
+  await fs.writeFile(configPath, JSON.stringify({ aiProvider: 'langchain', aiModel: 'llama3.1' }), 'utf8');
+  const { config, warnings } = await loadConfig({ targetDir: root, configPath, env: emptyEnv(root) });
+
+  assert.equal(config.aiProvider, 'langchain', 'コマンドラインで指定したファイルは持ち主が選んだもの');
+  assert.deepEqual(warnings, []);
+});
+
+test('知らないAIの名前は、使えるものを並べて断る', async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'review-config-home-'));
+  const globalFile = path.join(home, 'review-markdown', 'config.json');
+  await fs.mkdir(path.dirname(globalFile), { recursive: true });
+  await fs.writeFile(globalFile, JSON.stringify({ aiProvider: 'gemini' }), 'utf8');
+
+  await assert.rejects(
+    loadConfig({ targetDir: await seedProject(), env: { XDG_CONFIG_HOME: home, HOME: home }, platform: 'linux' }),
+    /使えないaiProviderです: gemini（使えるもの: codex, claude, langchain）/
+  );
+});
+
+test('何も書かなければ、既定のAIで走る', async () => {
+  const root = await seedProject();
+  const { config } = await loadConfig({ targetDir: root, env: emptyEnv(root) });
+  const options = applyConfigToOptions(parseArgs([root]), config);
+
+  assert.equal(options.aiProvider, 'codex');
+  assert.equal(options.aiModelProvider, undefined);
+});
+
 test('モデル名に空白は書けない。値を取り違えたまま起動させないため', async () => {
   const root = await seedProject({ aiModel: 'gpt 5.6 luna' });
   await assert.rejects(

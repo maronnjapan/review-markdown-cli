@@ -17,6 +17,8 @@ export { listMarkdownFiles } from './markdownFiles.js';
  * @param {string[]} [options.include] レビュー対象に含めるグロブ。
  * @param {string[]} [options.exclude] レビュー対象から外すグロブ。
  * @param {string} [options.aiContext] 全文書に効く読み取りコンテキスト。
+ * @param {string} [options.aiProvider] どのAIで走らせるか（`codex` / `claude` / `langchain`）。
+ * @param {string} [options.aiModelProvider] LangChainのプロバイダ名（`aiProvider` が `langchain` のときだけ）。
  * @param {object} [options.aiModels] 用途ごとのモデル指定（`config.js` の `aiModelsFromConfig`）。
  * @param {boolean} [options.manager] 資料の管理者を有効にする。既定は無効。
  * @param {boolean} [options.translation] 翻訳機能を有効にする。既定は無効。
@@ -24,7 +26,7 @@ export { listMarkdownFiles } from './markdownFiles.js';
  * テストのための差し替え口:
  * @param {object} [options.aiService] AiService そのもの。渡すと下の3つは見ません。
  * @param {object} [options.aiStore] 会話と翻訳キャッシュの保存先。
- * @param {object} [options.codexClient] Codexクライアント。
+ * @param {object} [options.aiClient] AIクライアント。渡すと `aiProvider` は見ません。
  * @param {string} [options.aiDataDir] 端末側の保存ディレクトリ。
  * @param {string} [options.aiToken] AIエンドポイントのトークン。既定は起動ごとの乱数。
  */

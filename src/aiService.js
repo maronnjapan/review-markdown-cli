@@ -14,7 +14,7 @@ import {
   TERM_MAX_WORDS
 } from './aiLimits.js';
 import { AiStore, defaultAiDataDir, translationCacheKey } from './aiStore.js';
-import { CodexAppServer } from './codexAppServer.js';
+import { createAiClient, providerLabel } from './aiProviders/index.js';
 import { purposeFor } from './codexProfiles.js';
 import { collectCommentContext, commentContextBlock } from './commentContext.js';
 import { applyConversationEdits } from './conversationEdits.js';
@@ -50,52 +50,49 @@ import { readReview } from './reviewStore.js';
 /**
  * AI機能の配線です。
  *
- * どの機能も形は同じで、「材料を集める → プロンプトを組む → Codexへ1ターン投げる →
+ * どの機能も形は同じで、「材料を集める → プロンプトを組む → AIへ1ターン投げる →
  * 返ってきたJSONを整える」の4つしかしません。3番目は `askForJson` にまとめてあるので、
  * 各メソッドで読むべきなのは1・2・4だけです。
  *
- * 文面は `prompts/` に、量の上限は `aiLimits.js` に、どのモデルで読ませるかは
- * `codexProfiles.js` にあります。ここにはどれも書きません。
+ * 文面は `prompts/` に、量の上限は `aiLimits.js` に、どのAIで読ませるかは
+ * `aiProviders/` にあります。ここにはどれも書きません。どのAIを選んでも、ここから
+ * 見える形は同じです。
  */
 
 /** 答えを解析できなかったときの文面。機能名だけが差し替わります。 */
 const ANSWER_SUBJECTS = {
-  translate: 'Codexの翻訳結果',
-  place: 'Codexの配置結果',
+  translate: 'AIの翻訳結果',
+  place: 'AIの配置結果',
   brief: '管理者が組み立てた目的・ストーリー・期待値',
-  persona: 'Codexが組み直した読み手ペルソナ',
-  review: 'Codexのレビュー結果',
-  revise: 'Codexの修正案'
+  persona: 'AIが組み直した読み手ペルソナ',
+  review: 'AIのレビュー結果',
+  revise: 'AIの修正案'
 };
-
-/**
- * Codexが返した失敗を、レビュアーが次に何をすればよいか分かる日本語にします。
- * 上から順に当てて、最初に一致したものを使います。
- */
-const CODEX_ERROR_HINTS = [
-  [/not found|ENOENT/i, 'Codexコマンドが見つかりません'],
-  [/unauthorized|login|authentication/i, 'Codexへログインしてください'],
-  [/usageLimit|usage limit/i, 'Codexの利用上限に達しました']
-];
 
 export function createAiService(rootDir, options = {}) {
   const dataDir = options.aiDataDir || defaultAiDataDir();
   const store = options.aiStore || new AiStore(rootDir, { dataDir });
   const runtimeDir = path.join(dataDir, 'runtime');
-  const codex = options.codexClient || new CodexAppServer({ runtimeDir, models: options.aiModels });
+  const client = options.aiClient || createAiClient({
+    provider: options.aiProvider,
+    modelProvider: options.aiModelProvider,
+    models: options.aiModels,
+    runtimeDir
+  });
   return new AiService(rootDir, {
     store,
-    codex,
+    client,
     projectContext: options.aiContext,
     managerEnabled: options.features?.manager === true
   });
 }
 
 export class AiService {
-  constructor(rootDir, { store, codex, projectContext = '', managerEnabled = false }) {
+  constructor(rootDir, { store, client, projectContext = '', managerEnabled = false }) {
     this.rootDir = rootDir;
     this.store = store;
-    this.codex = codex;
+    // どのAIかは `aiProviders/` が決めます。ここから先は、相手が誰でも同じ扱いです。
+    this.ai = client;
     // The reading context from the config file or --ai-context. It applies to
     // every document under the review root; each document can add its own.
     this.projectContext = normalizeAiContext(projectContext, 'aiContext');
@@ -122,11 +119,13 @@ export class AiService {
   }
 
   async status() {
+    const provider = this.ai.provider || 'codex';
+    const label = providerLabel(provider);
     try {
-      await this.codex.start();
-      return { available: true, provider: 'codex', model: this.codex.model, effort: this.codex.effort };
+      await this.ai.start();
+      return { available: true, provider, label, model: this.ai.model, effort: this.ai.effort };
     } catch (error) {
-      return { available: false, provider: 'codex', error: friendlyCodexError(error) };
+      return { available: false, provider, label, error: this.describeError(error) };
     }
   }
 
@@ -173,7 +172,7 @@ export class AiService {
     return buildPlacements(segments, answer);
   }
 
-  /** どのレビュースキルを選べるか。Codexは要らないので、起動前でも答えられます。 */
+  /** どのレビュースキルを選べるか。AIは要らないので、起動前でも答えられます。 */
   listReviewSkills() {
     return listReviewSkills(this.rootDir);
   }
@@ -390,7 +389,7 @@ export class AiService {
       const { threadId, firstTurn } = await this.openConversationThread(conversation);
       const comments = await collectCommentContext(this.rootDir, conversation.documentPath, conversation.target);
       const readingContext = await this.readingContext(conversation.documentPath);
-      const { text } = await this.codex.runTurn({
+      const { text } = await this.ai.runTurn({
         threadId,
         prompt: chatPrompt(conversation, content, comments, readingContext, firstTurn),
         onDelta,
@@ -402,7 +401,7 @@ export class AiService {
       return { conversation, message: assistantMessage };
     } catch (error) {
       conversation.updatedAt = new Date().toISOString();
-      conversation.lastError = friendlyCodexError(error);
+      conversation.lastError = this.describeError(error);
       await this.store.saveConversation(conversation);
       throw error;
     }
@@ -411,7 +410,7 @@ export class AiService {
   /**
    * 保存した会話を、レビュアーが直したとおりに置き換えます。
    *
-   * やり取りが変わったときは、Codexのスレッドを畳みます。スレッドが残っているかぎり
+   * やり取りが変わったときは、AIのスレッドを畳みます。スレッドが残っているかぎり
    * モデルは直す前の発言を覚えていて、こちらが何を書き換えても読み直さないからです。
    * 畳んでおけば、次の質問は1回目として飛び、直したあとの記録がそのまま前提になります
    * （`prompts/chat.js` の `initialChatPrompt`）。
@@ -422,9 +421,9 @@ export class AiService {
     const { conversation, transcriptChanged } = applyConversationEdits(stored, edits);
     if (transcriptChanged && conversation.codexThreadId) {
       try {
-        await this.codex.deleteThread(conversation.codexThreadId);
+        await this.ai.deleteThread(conversation.codexThreadId);
       } catch {
-        // Codex側が先に失っていても、こちらの記録は直せます。開き直すのは次の質問のときです。
+        // AI側が先に失っていても、こちらの記録は直せます。開き直すのは次の質問のときです。
       }
       conversation.codexThreadId = null;
     }
@@ -435,9 +434,9 @@ export class AiService {
     const conversation = await this.store.getConversation(id);
     if (conversation?.codexThreadId) {
       try {
-        await this.codex.deleteThread(conversation.codexThreadId);
+        await this.ai.deleteThread(conversation.codexThreadId);
       } catch {
-        // The app transcript remains deletable even if Codex already lost its session.
+        // The app transcript remains deletable even if the AI already lost its session.
       }
     }
     await this.store.deleteConversation(id);
@@ -455,7 +454,16 @@ export class AiService {
   }
 
   close() {
-    return this.codex.close();
+    return this.ai.close();
+  }
+
+  /**
+   * 失敗した理由を、レビュアーが次に何をすればよいか分かる日本語にします。
+   * 何が起きうるかはAIごとに違うので、言い換えは選んだAI（`aiProviders/`）に任せます。
+   */
+  describeError(error) {
+    if (error?.name === 'AbortError') return error.message;
+    return this.ai.describeError?.(error) ?? String(error?.message || error);
   }
 
   /* ---------------------------------------------------------------- *
@@ -474,8 +482,8 @@ export class AiService {
    */
   async askForJson({ feature, threadId, prompt, outputSchema, onDelta, signal }) {
     const purpose = purposeFor(feature);
-    const thread = threadId || await this.codex.createThread({ ephemeral: true, purpose });
-    const { text } = await this.codex.runTurn({ threadId: thread, prompt, outputSchema, onDelta, signal });
+    const thread = threadId || await this.ai.createThread({ ephemeral: true, purpose });
+    const { text } = await this.ai.runTurn({ threadId: thread, prompt, outputSchema, onDelta, signal });
     try {
       return { answer: JSON.parse(text), threadId: thread };
     } catch {
@@ -507,19 +515,20 @@ export class AiService {
   }
 
   /**
-   * 会話のCodexスレッド。前のスレッドが残っていれば再開し、Codex側で失われていれば
-   * 開き直します。開き直したときは1回目として扱います。モデルは何も覚えていないからです。
+   * 会話のスレッド。前のスレッドが残っていれば再開し、AI側で失われていれば開き直します。
+   * 開き直したときは1回目として扱います。モデルは何も覚えていないからです。
+   * 保存名が `codexThreadId` なのは、走らせるAIを選べるようになる前からの記録だからです。
    */
   async openConversationThread(conversation) {
     if (conversation.codexThreadId) {
       try {
-        await this.codex.resumeThread(conversation.codexThreadId);
+        await this.ai.resumeThread(conversation.codexThreadId);
         return { threadId: conversation.codexThreadId, firstTurn: false };
       } catch {
         conversation.codexThreadId = null;
       }
     }
-    conversation.codexThreadId = await this.codex.createThread({
+    conversation.codexThreadId = await this.ai.createThread({
       ephemeral: false,
       purpose: purposeFor('chat')
     });
@@ -596,10 +605,4 @@ function conversationTitle(target) {
   if (target.type === 'document') return '文書全体についての会話';
   const text = target.selectedText.replace(/\s+/g, ' ').trim();
   return text.length > CONVERSATION_TITLE_CHARS ? `${text.slice(0, CONVERSATION_TITLE_CHARS)}…` : text;
-}
-
-function friendlyCodexError(error) {
-  if (error?.name === 'AbortError') return error.message;
-  const message = String(error?.message || error);
-  return CODEX_ERROR_HINTS.find(([pattern]) => pattern.test(message))?.[1] || message;
 }

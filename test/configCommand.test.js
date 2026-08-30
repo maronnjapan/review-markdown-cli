@@ -161,6 +161,40 @@ function getAvailablePort() {
   });
 }
 
+test('走らせるAIは --global を付けたときだけ書き込める', async () => {
+  const dir = await tempDir();
+  const home = await tempDir();
+  const env = { XDG_CONFIG_HOME: home, HOME: home };
+
+  // プロジェクト設定へ書けても、読み込みでは無視します。書けてしまうほうが分かりにくいので、
+  // 書く手前で、どう書けばよいかを言って断ります。
+  await assert.rejects(
+    run(['set', 'aiProvider', 'claude', '--dir', dir]),
+    /aiProvider はユーザー全体の設定にだけ書けます: review-markdown config set aiProvider <値> --global/
+  );
+  await assert.rejects(fs.readFile(path.join(dir, CONFIG_FILE_NAME), 'utf8'), /ENOENT/);
+
+  const written = await run(['set', 'aiProvider', 'claude', '--global'], { env });
+  assert.equal(written.exitCode, 0);
+  assert.deepEqual(
+    JSON.parse(await fs.readFile(path.join(home, 'review-markdown', 'config.json'), 'utf8')),
+    { aiProvider: 'claude' }
+  );
+
+  // モデルの指定はプロジェクト設定にも書けます。相手を選ぶキーではないためです。
+  const model = await run(['set', 'aiReviewModel', 'claude-opus-5', '--dir', dir]);
+  assert.equal(model.exitCode, 0);
+  assert.deepEqual(await readConfig(dir), { aiReviewModel: 'claude-opus-5' });
+});
+
+test('知らないAIの名前は、config からも書き込めない', async () => {
+  const home = await tempDir();
+  await assert.rejects(
+    run(['set', 'aiProvider', 'gemini', '--global'], { env: { XDG_CONFIG_HOME: home, HOME: home } }),
+    /使えないaiProviderです: gemini/
+  );
+});
+
 function run(argv, { env = {} } = {}) {
   return runConfigCommand(parseConfigArgs(argv), { env: { ...env }, platform: process.platform });
 }

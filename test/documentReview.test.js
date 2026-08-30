@@ -79,7 +79,7 @@ test('a review reads with the chosen skill and as the saved reader, then checks 
       };
     }
   });
-  const service = new AiService(root, { store, codex });
+  const service = new AiService(root, { store, client: codex });
 
   const review = await service.reviewDocument('guide.md', { skillIds: ['ops-review'] });
 
@@ -135,7 +135,7 @@ test('a review needs a skill that exists, and a document with body text', async 
   const { root, store } = await testStore(t);
   await fs.writeFile(path.join(root, 'guide.md'), DOCUMENT, 'utf8');
   await fs.writeFile(path.join(root, 'empty.md'), '\n', 'utf8');
-  const service = new AiService(root, { store, codex: fakeCodex() });
+  const service = new AiService(root, { store, client: fakeCodex() });
 
   await assert.rejects(
     () => service.reviewDocument('guide.md', { skillIds: ['no-such-skill'] }),
@@ -210,7 +210,7 @@ test('several skills read the document once, and each finding says which one it 
       };
     }
   });
-  const service = new AiService(root, { store, codex });
+  const service = new AiService(root, { store, client: codex });
 
   const review = await service.reviewDocument('guide.md', { skillIds: ['ops-review', 'flow-review'] });
 
@@ -327,7 +327,7 @@ test('the second pass drops findings it cannot stand behind, and the rest arrive
     }
   });
 
-  const review = await new AiService(root, { store, codex }).reviewDocument('guide.md', { skillIds: ['ops-review'] });
+  const review = await new AiService(root, { store, client: codex }).reviewDocument('guide.md', { skillIds: ['ops-review'] });
 
   assert.equal(review.refuted, 2, '本文がその通り書いている指摘も、どの原稿にも言える指摘も、レビュアーの前に落とす');
   assert.deepEqual(review.unplaced, [], '箇所を持たない指摘こそ一般論になりやすいので、同じ目で見る');
@@ -358,7 +358,7 @@ test('a review that finds nothing does not run a second pass, and does not repor
     }
   });
 
-  const review = await new AiService(root, { store, codex }).reviewDocument('guide.md', { skillIds: ['ops-review'] });
+  const review = await new AiService(root, { store, client: codex }).reviewDocument('guide.md', { skillIds: ['ops-review'] });
 
   assert.equal(turns.length, 1, '確かめる指摘が無いなら、2周目を回す理由も無い');
   assert.equal(review.verified, true, '検証する対象が無かったことは、検証に失敗したことではない');
@@ -393,7 +393,7 @@ test('a second pass that fails still hands the reviewer the findings from the fi
       return { text: answer(input.prompt) };
     }
   });
-  const review = await new AiService(root, { store, codex: failing }).reviewDocument('guide.md', { skillIds: ['ops-review'] });
+  const review = await new AiService(root, { store, client: failing }).reviewDocument('guide.md', { skillIds: ['ops-review'] });
 
   assert.equal(review.verified, false, '検証できたかどうかは隠さない');
   assert.equal(review.refuted, 0);
@@ -407,7 +407,7 @@ test('a second pass that fails still hands the reviewer the findings from the fi
     }
   });
   await assert.rejects(
-    () => new AiService(root, { store, codex: stopped }).reviewDocument('guide.md', { skillIds: ['ops-review'] }),
+    () => new AiService(root, { store, client: stopped }).reviewDocument('guide.md', { skillIds: ['ops-review'] }),
     /生成を中止しました/
   );
 });
@@ -432,7 +432,7 @@ test('the reviewer\'s notes about the reader are rebuilt into a persona, and sav
       };
     }
   });
-  const service = new AiService(root, { store, codex });
+  const service = new AiService(root, { store, client: codex });
 
   const persona = await service.composePersona('guide.md', '  異動したての運用担当。Linuxは触れる。  ');
 
@@ -465,7 +465,7 @@ test('a reader written by hand is used as written, without asking the AI to rebu
       return { text: JSON.stringify({ summary: '', placements: [], unplaced: [] }) };
     }
   });
-  await new AiService(root, { store, codex }).reviewDocument('guide.md', { skillIds: ['ops-review'] });
+  await new AiService(root, { store, client: codex }).reviewDocument('guide.md', { skillIds: ['ops-review'] });
 
   assert.match(turns[0].prompt, /<reader_persona>\n<notes>\n当番の新人。\nこの製品は初めて。\n<\/notes>/,
     '書いた文章をそのまま渡す');

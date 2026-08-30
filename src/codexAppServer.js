@@ -36,6 +36,16 @@ const SAFE_ITEM_TYPES = new Set(['userMessage', 'agentMessage', 'reasoning', 'pl
 const CLIENT_INFO = { name: 'review_markdown', title: 'Markdown Review', version: '0.1.0' };
 const SERVICE_NAME = 'review_markdown';
 
+/**
+ * Codexが返した失敗を、レビュアーが次に何をすればよいか分かる日本語にします。
+ * 上から順に当てて、最初に一致したものを使います。
+ */
+const ERROR_HINTS = [
+  [/not found|ENOENT/i, 'Codexコマンドが見つかりません'],
+  [/unauthorized|login|authentication/i, 'Codexへログインしてください'],
+  [/usageLimit|usage limit/i, 'Codexの利用上限に達しました']
+];
+
 export class CodexAppServer {
   /**
    * @param {object} options
@@ -44,6 +54,8 @@ export class CodexAppServer {
    *   `{ assistant: { model, effort }, review: { model, effort } }`。省略すれば自動で選びます。
    */
   constructor({ command = 'codex', runtimeDir, spawnProcess, models = {}, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+    /** 設定ファイルの `aiProvider` に書く名前。画面と起動ログはこれで相手を呼びます。 */
+    this.provider = 'codex';
     this.modelOverrides = models;
     this.startPromise = null;
     this.started = false;
@@ -281,6 +293,11 @@ export class CodexAppServer {
   async close() {
     this.started = false;
     this.rpc.close();
+  }
+
+  describeError(error) {
+    const message = String(error?.message || error);
+    return ERROR_HINTS.find(([pattern]) => pattern.test(message))?.[1] || message;
   }
 }
 

@@ -153,8 +153,9 @@ Markdownのレビュー画面では、上部の「コメント」「編集」ま
 翻訳は既定では無効で、`--enable-translation` または設定の `"translation": true` で有効になります。
 AIチャットは翻訳の設定にかかわらず利用できます。
 
-翻訳とチャットには、APIキーではなく端末の `codex` コマンドを使います。
+翻訳とチャットには、既定では端末の `codex` コマンドを使います。
 事前に Codex CLI をインストールし、`codex login` で認証してください。
+設定の `aiProvider` で Claude や LangChain 経由へ切り替えられます（「[どのAIで走らせるか](#どのaiで走らせるか)」）。
 
 コメントモードでは、文章の範囲選択後に表示されるツールバーから「翻訳」または「AIに質問」を選べます。
 段落と見出しへマウスを重ねた場合も同じ操作を選べます。
@@ -169,6 +170,7 @@ Markdown文書全体を対象にする場合は、画面上部のボタンを使
 
 Codex は読み取り専用、承認なし、ネットワーク無効で起動し、ツール実行要求もアプリ側で拒否します。
 Codex 自身がファイルを読み書きすることはありません。
+`aiProvider` を切り替えた場合、この閉じ込めは効きません。代わりに、どのAIへもアプリが道具を一つも渡さず、文章と質問だけを送ります。
 
 AI が書いた文章が原稿へ入るのは「本文の修正」だけで、そこでも入るのはレビュアーが1件ずつ許可したものです。
 許可した修正を書き込むのは、編集モードと同じアプリ側の保存処理です。
@@ -749,7 +751,8 @@ AIの振る舞いを変えたいとき、開く場所は「何を変えたいか
 | 本文の修正案で、どこまで書き換えさせるか | `src/prompts/revise.js` |
 | 指摘の件数、修正案の件数、渡す本文の量、見取り図に載せる見出し数 | `src/aiLimits.js` |
 | 残せるメモの件数と長さ | `src/aiLimits.js` と、画面側の同じ値（`public/js/contextNotes.js`）の両方 |
-| どの機能をどのモデル・推論強度で走らせるか | 設定ファイルの `aiModel` / `aiReviewModel` ほか（下記）、既定の選び方は `src/codexProfiles.js` |
+| そもそもどのAIで走らせるか（Codex / Claude / LangChain経由） | 設定ファイルの `aiProvider`（[どのAIで走らせるか](#どのaiで走らせるか)）、口の実装は `src/aiProviders/` |
+| どの機能をどのモデル・推論強度で走らせるか | 設定ファイルの `aiModel` / `aiReviewModel` ほか（下記）、Codexでの既定の選び方は `src/codexProfiles.js` |
 | レビューの観点そのもの | `skills/<名前>/SKILL.md`（コードではありません） |
 
 `src/prompts/` にはロジックを置いていません。開くと英語の指示文とJSONスキーマだけが並んでいるので、文面の編集にコードを読む必要はありません。
@@ -838,9 +841,12 @@ review-markdown config set open false
 # AIがこのディレクトリの原稿を読むときの前提を決める
 review-markdown config set aiContext '入門者向けの技術書。読者はJavaScriptの基礎を知っている。'
 
-# AIレビューに使うモデルと推論強度を固定する（未設定ならCodexが持つものから自動で選ぶ）
+# AIレビューに使うモデルと推論強度を固定する（未設定なら選んだAIの既定で走る）
 review-markdown config set aiReviewModel gpt-5.6-codex --global
 review-markdown config set aiReviewEffort high --global
+
+# Codex以外のAIで走らせる（--global が要ります。理由は「送り先はプロジェクト設定から決めさせない」）
+review-markdown config set aiProvider claude --global
 ```
 
 設定後は、オプションなしで実行するだけで同じ絞り込みが適用されます。
@@ -879,6 +885,18 @@ review-markdown .
 }
 ```
 
+`aiProvider` と `aiModelProvider` は、ユーザー全体の設定ファイル（`--global`）にだけ書けます。
+
+```json
+{
+  "aiProvider": "claude",
+  "aiModel": "claude-opus-5",
+  "aiEffort": "low",
+  "aiReviewModel": "claude-opus-5",
+  "aiReviewEffort": "high"
+}
+```
+
 | キー | 型 | 内容 |
 | --- | --- | --- |
 | `include` | 文字列の配列 | レビュー対象に含めるパスのパターン |
@@ -888,12 +906,14 @@ review-markdown .
 | `manager` | 真偽値 | 資料の管理者を有効にするかどうか（既定は `false`） |
 | `translation` | 真偽値 | 翻訳機能を有効にするかどうか（既定は `false`） |
 | `aiContext` | 文字列 | AIがこのディレクトリの原稿を読むときの前提（4000文字まで） |
-| `aiModel` | 文字列 | 翻訳・AIチャット・指摘の配置に使うCodexのモデル |
+| `aiProvider` | 文字列 | どのAIで走らせるか（`codex` / `claude` / `langchain`。既定は `codex`）。**`--global` 専用** |
+| `aiModelProvider` | 文字列 | `aiProvider` が `langchain` のときのプロバイダ名（`anthropic` / `openai` / `ollama` など）。**`--global` 専用** |
+| `aiModel` | 文字列 | 翻訳・AIチャット・指摘の配置に使うモデル |
 | `aiEffort` | 文字列 | 同上の推論強度（`none` / `low` / `medium` / `high` など） |
-| `aiReviewModel` | 文字列 | AIレビューと読み手ペルソナに使うCodexのモデル |
+| `aiReviewModel` | 文字列 | AIレビューと読み手ペルソナに使うモデル |
 | `aiReviewEffort` | 文字列 | 同上の推論強度 |
 
-`aiModel` / `aiReviewModel` を書かなければ、Codexが持っているモデルから自動で選びます（速いモデルを翻訳とチャットへ、深く読むモデルをレビューへ）。名指ししたモデルがCodexに無いときは、黙って別のモデルへ落とさずに、使えるモデルを並べて起動を止めます。設定が効いていることは起動時のログで確認できます。
+`aiModel` / `aiReviewModel` を書かなければ、選んだAIの既定で走ります。Codexは持っているモデルから自動で選び（速いモデルを翻訳とチャットへ、深く読むモデルをレビューへ）、名指ししたモデルがCodexに無いときは、黙って別のモデルへ落とさずに、使えるモデルを並べて起動を止めます。設定が効いていることは起動時のログで確認できます。
 
 ```
 review-markdown .
@@ -901,7 +921,62 @@ review-markdown .
 #   ai review model: gpt-5.6-codex / high
 ```
 
-なお、Codexの実行コマンド自体は設定キーにしていません。レビュー対象のリポジトリが自前の `.review-markdown.json` を同梱していることがあり、そこから起動する実行ファイルを選ばせると、原稿を開いただけで任意のコマンドが走ることになるためです。
+なお、AIの実行コマンド自体は設定キーにしていません。レビュー対象のリポジトリが自前の `.review-markdown.json` を同梱していることがあり、そこから起動する実行ファイルを選ばせると、原稿を開いただけで任意のコマンドが走ることになるためです。`aiProvider` と `aiModelProvider` をプロジェクト設定から読まないのも同じ理由です（次節）。
+
+### どのAIで走らせるか
+
+`aiProvider` は、レビューと翻訳を実行するAIを選ぶキーです。既定は `codex` で、これまでどおり `codex app-server` へ繋ぎます。
+
+| `aiProvider` | 繋ぎ先 | 事前に必要なもの |
+| --- | --- | --- |
+| `codex`（既定） | Codex CLI | `codex` へのログイン |
+| `claude` | Anthropic Messages API | `npm install @anthropic-ai/sdk` と資格情報（`ANTHROPIC_API_KEY` など） |
+| `langchain` | LangChainが対応するモデル | `npm install langchain` と、使うプロバイダのパッケージ。`aiModelProvider` と `aiModel` の指定 |
+
+```bash
+# Claudeで走らせる
+review-markdown config set aiProvider claude --global
+
+# LangChain経由でOllamaのモデルを使う
+review-markdown config set aiProvider langchain --global
+review-markdown config set aiModelProvider ollama --global
+review-markdown config set aiModel llama3.1 --global
+review-markdown config set aiReviewModel llama3.1 --global
+```
+
+どれを選んでも、レビューの進み方も、モデルへ渡す立場も、指摘を反証させる2周目も変わりません。差し替わるのは「1ターン投げて答えを受け取る」ところだけで、そこは `src/aiProviders/` に閉じています。会話の続きの扱いだけは違い、Codexは向こう側にスレッドが残りますが、`claude` と `langchain` は毎回まとめて渡し直します。画面から見える振る舞いは同じです。
+
+答えをJSONで受け取る機能（翻訳、レビュー、修正案など）では、`codex` と `claude` はJSONスキーマで形そのものを縛ります。`langchain` の先にいるモデルがその指定を持っているとは限らないので、`langchain` ではスキーマを見せて言葉で頼み、コードフェンスで包まれて返ってきたら包みだけ外します。
+
+選んだAIを使えないときは、AIパネルに何をすればよいかが出ます。パッケージが入っていなければ `npm install` の行が、資格情報が無ければその旨が出て、レビュー自体は頼めないままになります。
+
+### 用途ごとにモデルを分ける
+
+このアプリは、AIを使う機能を2つの用途に分けています。
+
+- **assistant**：翻訳、AIチャット、指摘の配置。待ち時間がそのまま使い心地になります。
+- **review**：AIレビュー、読み手ペルソナ、資料の管理者、本文の修正案。1回の読みで見落としたものは、そのまま結果から抜けます。
+
+`aiModel` / `aiEffort` が assistant を、`aiReviewModel` / `aiReviewEffort` が review を決めます。書かなかった用途は、選んだAIの既定で走ります。Codexは持っているモデルから自動で選び、速いモデルを assistant へ、深く読むモデルを review へ割り当てます。`claude` はどちらも `claude-opus-5` を使い、推論強度を `low` と `high` で分けます。`langchain` は繋ぎ先がモデルによって変わるので既定を持てず、`aiModelProvider` と両方のモデル名が要ります。書いていなければ、どのキーに書けばよいかを示して起動を止めます。
+
+推論強度（`aiEffort` / `aiReviewEffort`）は `codex` と `claude` で効きます。LangChainには全プロバイダ共通の指定が無いので、`langchain` では使いません。
+
+### 送り先はプロジェクト設定から決めさせない
+
+`aiProvider` と `aiModelProvider` は、ユーザー全体の設定ファイル（`--global`）か、`--config` で名指ししたファイルからだけ読みます。対象ディレクトリから遡って見つけた `.review-markdown.json` に書いてあれば、警告を出して無視します。`config set` も、`--global` が無ければこの2つを書き込みません。
+
+レビュー対象のリポジトリは、自前の `.review-markdown.json` を同梱していることがあります。そこから送り先を選べると、原稿を開いただけで、書き手の知らない相手に原稿が渡ります。除外パターンやモデル名はリポジトリごとに決まってよいものですが、原稿がどこへ出ていくかは端末の持ち主が決めることなので、この2つだけ読み込む場所を分けています。書いてある値は読まずに飛ばすので、リポジトリ側が壊れた値を置いても起動は止まりません。
+
+`langchain` で `aiModelProvider` を必須にしているのも、この線引きのためです。LangChainはプロバイダ名を省くとモデル名から繋ぎ先を推測するので、プロジェクト設定に書ける `aiModel` が、そのまま送り先の指定になってしまいます。
+
+```
+review-markdown .
+# Warning: /path/to/project/.review-markdown.json: aiProvider はプロジェクト設定では無視します（…）
+# Markdown / PDF Review is serving /path/to/project
+#   ai provider: claude
+```
+
+繋ぎ先を増やすときは、`src/aiProviders/index.js` の表に1行足します。`aiProvider` に書ける名前も、`config --help` に出る一覧も、その表から作ります。APIを1回叩くだけのAIなら、`src/aiProviders/turnClient.js` を継いで、1ターン分の問い合わせだけを書けば済みます。スレッドの管理、用途ごとのモデル選び、中断、同じスレッドへの二重実行の禁止は、そちらにあります。
 
 ### 優先順位
 
@@ -909,6 +984,8 @@ review-markdown .
 - `port` と `open` は「コマンドライン > 環境変数 `PORT` > プロジェクト設定 > ユーザー全体の設定 > 既定値」の順で決まります。
 - `manager` と `translation` は既定で `false` です。`--enable-manager` と `--enable-translation` で今回の起動だけ有効にでき、`--no-manager` と `--no-translation` で設定ファイルの値を上書きできます。
 - `aiContext` は「コマンドライン（`--ai-context`）> プロジェクト設定 > ユーザー全体の設定」の順で決まります。文書ごとの読み取りコンテキストは、これを置き換えずに足す形でAIへ渡します。
+- `aiProvider` と `aiModelProvider` は、ユーザー全体の設定と `--config` で指定したファイルからだけ読みます。プロジェクト設定に書いてあれば、警告を出して無視します。
+- `aiModel` / `aiEffort` / `aiReviewModel` / `aiReviewEffort` は「プロジェクト設定 > ユーザー全体の設定」の順で決まります。コマンドラインの口はありません。
 - `--config <file>` で設定ファイルを直接指定すると、そのファイルだけを読み込みます。
 - `--no-config` を付けると、設定ファイルを一切読み込みません。
 - 知らないキーは警告を出して無視します。JSONとして壊れている場合や値の型が違う場合は、起動せずにエラーを表示します。
@@ -1064,6 +1141,7 @@ src/documentEdits.js     本文の修正案の材料（ブロックと範囲）�
 src/reviewSkills.js      レビュースキル（SKILL.md）の探索と読み込み
 src/persona.js           読み手ペルソナの検証と正規化
 src/commentContext.js    AIチャットへ渡すレビューコメントの選別
+src/aiProviders/         走らせるAIの一覧と、Codex以外の口（claude / langchain）
 src/codexAppServer.js    Codexのスレッドとターン（読み取り専用に閉じ込める）
 src/codexRpc.js          Codex App Serverとの JSON-RPC 通信
 
