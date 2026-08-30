@@ -25,13 +25,15 @@ export function createAiController({
   async function prepare() {
     if (state.aiStatus?.available) return true;
     if (preparePromise) return preparePromise;
-    refs.aiProviderStatus.textContent = 'Codexを起動中…';
+    refs.aiProviderStatus.textContent = 'AIを起動中…';
     preparePromise = (async () => {
       try {
         state.aiStatus = await api.prepareAi();
+        // どのAIで走っているかはサーバーが決めるので、名前もサーバーが返したものを出します。
+        const label = state.aiStatus.label || 'AI';
         refs.aiProviderStatus.textContent = state.aiStatus.available
-          ? `${state.aiStatus.model || 'Codex'} / ${state.aiStatus.effort || 'default'}`
-          : state.aiStatus.error || 'Codexを利用できません';
+          ? [label, state.aiStatus.model, state.aiStatus.effort].filter(Boolean).join(' / ')
+          : state.aiStatus.error || `${label}を利用できません`;
         refs.aiProviderStatus.dataset.state = state.aiStatus.available ? 'ready' : 'error';
         return state.aiStatus.available;
       } catch (error) {

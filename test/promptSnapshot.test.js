@@ -232,7 +232,7 @@ test('AIへ渡す文面は、書き換えるまで一字も変わらない', asy
 
   const prompts = [];
   const codex = fakeCodex(prompts);
-  const service = new AiService(root, { store, codex, projectContext: 'ディレクトリ全体の前提。' });
+  const service = new AiService(root, { store, client: codex, projectContext: 'ディレクトリ全体の前提。' });
 
   await service.translate('guide.md', TARGET);
   record('prompt:translate(term)', prompts.at(-1));
@@ -263,7 +263,7 @@ test('AIへ渡す文面は、書き換えるまで一字も変わらない', asy
   record('prompt:review(twoSkills,noPersona)', prompts.at(-2));
 
   // 箇所を持たない指摘が1件も出なかったレビュー。反証の指示文が別の一文へ切り替わります。
-  const placedOnly = new AiService(root, { store, codex: fakeCodex(prompts, PLACED_ONLY_ANSWER), projectContext: 'ディレクトリ全体の前提。' });
+  const placedOnly = new AiService(root, { store, client: fakeCodex(prompts, PLACED_ONLY_ANSWER), projectContext: 'ディレクトリ全体の前提。' });
   await placedOnly.reviewDocument('guide.md', { skillIds: ['fixture-skill'] });
   record('prompt:verification(noUnplaced)', prompts.at(-1));
 
@@ -281,7 +281,7 @@ test('AIへ渡す文面は、書き換えるまで一字も変わらない', asy
   await service.sendMessage(conversation.id, '前提が変わりました。');
   record('prompt:chat(followUpContextChanged)', prompts.at(-1));
   await writeReview(root, 'guide.md', [COMMENT], { aiContext: '', persona: null });
-  const cleared = new AiService(root, { store, codex, projectContext: '' });
+  const cleared = new AiService(root, { store, client: codex, projectContext: '' });
   const clearedConversation = await service.store.getConversation(conversation.id);
   await cleared.sendMessage(clearedConversation.id, '前提を消しました。');
   record('prompt:chat(followUpContextCleared)', prompts.at(-1));

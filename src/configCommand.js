@@ -5,6 +5,7 @@
  * ファイル操作以外は副作用を持たないので、そのままテストできる。
  */
 
+import { AI_PROVIDER_HELP } from './aiProviders/index.js';
 import { splitFlag, takeValue } from './argv.js';
 import {
   CONFIG_FILE_NAME,
@@ -12,6 +13,7 @@ import {
   CONFIG_KEY_HELP,
   LIST_KEYS,
   TEXT_KEYS,
+  USER_SCOPED_KEYS,
   defaultProjectConfigPath,
   findProjectConfigPath,
   globalConfigPath,
@@ -65,9 +67,27 @@ aiContext は翻訳・AIチャット・指摘の配置で AI に渡す読み取�
 ここに書いた前提はディレクトリ配下のすべての文書に効きます。
 文書ごとの前提はブラウザのAIパネルから書けて、両方まとめて AI へ渡します。
 
-aiModel / aiReviewModel を書かなければ、Codexが持っているモデルから自動で選びます
-（速いモデルを翻訳とチャットへ、深く読むモデルをレビューへ）。名指ししたモデルが
-Codexに無いときは、黙って別のモデルへ落とさずに起動を止めます。
+aiProvider でどのAIに読ませるかを選べます。
+
+${AI_PROVIDER_HELP}
+
+  review-markdown config set aiProvider claude --global
+  review-markdown config set aiReviewModel claude-opus-5 --global
+
+  # LangChain経由なら、プロバイダ名とモデル名の両方を指定します
+  review-markdown config set aiProvider langchain --global
+  review-markdown config set aiModelProvider ollama --global
+  review-markdown config set aiModel llama3.1 --global
+
+${USER_SCOPED_KEYS.join(' / ')} は --global を付けたときだけ書き込めます。
+レビュー対象のリポジトリが同梱する ${CONFIG_FILE_NAME} から原稿の送り先を
+決められないようにするためで、読み込むときも同じ理由でプロジェクト設定からは無視します。
+
+aiModel / aiReviewModel を書かなければ、選んだAIの既定で走ります。Codexは持っている
+モデルから自動で選び（速いモデルを翻訳とチャットへ、深く読むモデルをレビューへ）、
+claude は同じモデルを推論強度で使い分けます。langchain は既定を持てないので、aiModelProvider と
+あわせて指定が要ります。
+名指ししたモデルをCodexが持っていないときは、黙って別のモデルへ落とさずに起動を止めます。
 
   review-markdown config set aiReviewModel gpt-5.6-codex --global
   review-markdown config set aiReviewEffort high --global`;
@@ -177,7 +197,9 @@ async function runList(parsed, { env, platform, targetPath }) {
 
 async function runGet(parsed, targetPath) {
   assertKnownKey(parsed.key);
-  const { config, warnings } = await readConfigFile(targetPath);
+  // 読み込みと同じ扱いにします。プロジェクト設定に書いてあっても効かないキーを
+  // 「設定済み」と見せると、効いていない設定を追いかけることになります。
+  const { config, warnings } = await readConfigFile(targetPath, { userScoped: parsed.global });
   const value = config[parsed.key];
   if (parsed.json) return output([JSON.stringify(value ?? null, null, 2)], warnings);
   if (value === undefined) return output(['(未設定)'], warnings);
@@ -186,6 +208,7 @@ async function runGet(parsed, targetPath) {
 
 async function runEdit(parsed, targetPath) {
   assertKnownKey(parsed.key);
+  assertWritableHere(parsed);
   const existing = await readConfigFile(targetPath);
   const config = { ...existing.config };
   const isList = LIST_KEYS.includes(parsed.key);
@@ -235,6 +258,19 @@ function assertKnownKey(key) {
   if (!CONFIG_KEYS.includes(key)) {
     throw new Error(`unknown config key: ${key}（使えるキー: ${CONFIG_KEYS.join(', ')}）`);
   }
+}
+
+/**
+ * 原稿の送り先を決めるキーは、プロジェクト設定へは書かせません。書けても読み込みで
+ * 無視するので、書けてしまうほうが分かりにくいからです（`config.js` の `CONFIG_KEY_SPECS`）。
+ */
+function assertWritableHere({ command, key, global }) {
+  // 消すのはいつでも通します。読み込みで無視される値が残っているとき、それを取り除く
+  // 手段まで塞ぐと、設定ファイルを手で開くしかなくなります。
+  if (command === 'unset' || global || !USER_SCOPED_KEYS.includes(key)) return;
+  throw new Error(
+    `${key} はユーザー全体の設定にだけ書けます: review-markdown config set ${key} <値> --global`
+  );
 }
 
 function output(stdout, warnings = []) {

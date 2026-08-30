@@ -26,7 +26,7 @@ test('short contextual translations return multiple meanings and reuse the local
       };
     }
   });
-  const service = new AiService(root, { store, codex });
+  const service = new AiService(root, { store, client: codex });
   const target = {
     type: 'text-selection',
     selectedText: 'run',
@@ -63,7 +63,7 @@ test('chat keeps a local transcript and continues the same Codex thread', async 
       return { text: calls.length === 1 ? 'この文では「プログラムを実行する」です。' : 'はい、その理解で合っています。' };
     }
   });
-  const service = new AiService(root, { store, codex });
+  const service = new AiService(root, { store, client: codex });
   const created = await service.createConversation({ documentPath: 'guide.md', target: { type: 'document' } });
 
   assert.match(created.target.selectedText, /Run the program/);
@@ -95,7 +95,7 @@ test('a corrected chat is what the next turn reads, and the stale Codex thread i
     },
     async deleteThread(id) { deleted.push(id); }
   });
-  const service = new AiService(root, { store, codex });
+  const service = new AiService(root, { store, client: codex });
   const created = await service.createConversation({ documentPath: 'guide.md', target: { type: 'document' } });
   const first = await service.sendMessage(created.id, 'run はどう訳す？');
   const [question, answer] = first.conversation.messages;
@@ -122,7 +122,7 @@ test('a corrected chat is what the next turn reads, and the stale Codex thread i
 
 test('a chat that lost its record is refused rather than silently rebuilt', async (t) => {
   const { root, store } = await testStore(t);
-  const service = new AiService(root, { store, codex: fakeCodex() });
+  const service = new AiService(root, { store, client: fakeCodex() });
   await assert.rejects(
     () => service.updateConversation('11111111-2222-3333-4444-555555555555', { title: 'ない会話' }),
     /会話が見つかりません/
@@ -160,7 +160,7 @@ test('chat hands Codex the review comments written on the document', async (t) =
       return { text: '前提条件は次のとおりです。' };
     }
   });
-  const service = new AiService(root, { store, codex });
+  const service = new AiService(root, { store, client: codex });
   const conversation = await service.createConversation({
     documentPath: 'guide.md',
     target: { type: 'paragraph', selectedText: 'Run the program.', headingPath: ['Guide', '手順'] }
@@ -187,7 +187,7 @@ test('comments written while the conversation is open reach the next turn', asyn
       return { text: '確認しました。' };
     }
   });
-  const service = new AiService(root, { store, codex });
+  const service = new AiService(root, { store, client: codex });
   const conversation = await service.createConversation({ documentPath: 'guide.md', target: { type: 'document' } });
 
   await service.sendMessage(conversation.id, 'この文書の狙いは？');
@@ -228,7 +228,7 @@ test('placing reviewer notes returns proposals only, anchored to the rendered te
       };
     }
   });
-  const service = new AiService(root, { store, codex });
+  const service = new AiService(root, { store, client: codex });
 
   const result = await service.placeComments('guide.md', '- 冗長な説明を削ってほしい\n- 全体的に長い');
 
@@ -252,7 +252,7 @@ test('placing reviewer notes returns proposals only, anchored to the rendered te
 
 test('placing notes refuses empty input and unparsable answers', async (t) => {
   const { root, store } = await testStore(t);
-  const service = new AiService(root, { store, codex: fakeCodex({ async runTurn() { return { text: 'not json' }; } }) });
+  const service = new AiService(root, { store, client: fakeCodex({ async runTurn() { return { text: 'not json' }; } }) });
 
   await assert.rejects(service.placeComments('guide.md', '   '), /指摘コメントを入力してください/);
   await assert.rejects(service.placeComments('guide.md', '見出しを直して'), /解析できませんでした/);
@@ -279,7 +279,7 @@ test('every AI feature reads the document under the reading context the reviewer
   });
   const service = new AiService(root, {
     store,
-    codex,
+    client: codex,
     projectContext: 'Node.js入門書。読者はJavaScriptの基礎を知っている。'
   });
 
@@ -344,7 +344,7 @@ test('what the manager settled reaches every AI feature, and the manager itself 
       return { text: JSON.stringify({ contextualMeaning: '実行する', meanings: [], explanation: '' }) };
     }
   });
-  const service = new AiService(root, { store, codex, managerEnabled: true });
+  const service = new AiService(root, { store, client: codex, managerEnabled: true });
 
   await service.translate('guide.md', { type: 'text-selection', selectedText: 'deploy' });
   await service.placeComments('guide.md', '前提が抜けている');
@@ -398,7 +398,7 @@ test('a disabled manager keeps a saved brief out of AI context', async (t) => {
       return { text: JSON.stringify({ contextualMeaning: '実行する', meanings: [], explanation: '' }) };
     }
   });
-  const service = new AiService(root, { store, codex });
+  const service = new AiService(root, { store, client: codex });
 
   await service.translate('guide.md', { type: 'text-selection', selectedText: 'run' });
 
@@ -416,7 +416,7 @@ test('a conversation catches up when the reading context changes, and stays quie
       return { text: 'はい。' };
     }
   });
-  const service = new AiService(root, { store, codex });
+  const service = new AiService(root, { store, client: codex });
   const conversation = await service.createConversation({ documentPath: 'guide.md', target: { type: 'document' } });
 
   await service.sendMessage(conversation.id, '誰向けの文章？');
@@ -463,7 +463,7 @@ test('what the reviewer kept as a note reaches the review, the chat and the tran
       };
     }
   });
-  const service = new AiService(root, { store, codex });
+  const service = new AiService(root, { store, client: codex });
 
   await service.translate('guide.md', { type: 'text-selection', selectedText: 'run' });
   await service.placeComments('guide.md', '導入が長い');
@@ -489,7 +489,7 @@ test('a conversation catches up when a note is kept, and the note survives the r
       return { text: 'はい。' };
     }
   });
-  const service = new AiService(root, { store, codex });
+  const service = new AiService(root, { store, client: codex });
   const conversation = await service.createConversation({ documentPath: 'guide.md', target: { type: 'document' } });
 
   await service.sendMessage(conversation.id, '誰向けの文章？');
@@ -518,7 +518,7 @@ test('the translation cache separates the same word read under different context
       return { text: JSON.stringify({ contextualMeaning: `訳${turns}`, meanings: [], explanation: '' }) };
     }
   });
-  const service = new AiService(root, { store, codex });
+  const service = new AiService(root, { store, client: codex });
   const target = { type: 'text-selection', selectedText: 'run' };
 
   const first = await service.translate('guide.md', target);

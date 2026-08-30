@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { DEFAULT_AI_PROVIDER } from '../src/aiProviders/index.js';
 import { assertTargetDirectory, parseArgs, USAGE } from '../src/cli.js';
 import { applyConfigToOptions, loadConfig } from '../src/config.js';
 import { CONFIG_USAGE, parseConfigArgs, runConfigCommand } from '../src/configCommand.js';
@@ -15,7 +16,7 @@ if (options.help) {
   process.exit(0);
 }
 
-const { app, rootDir, filter } = createServer(options.targetDir, options);
+const { app, rootDir, filter } = buildServer();
 const { server, port } = await startServer();
 const url = `http://localhost:${port}`;
 
@@ -77,6 +78,19 @@ async function readOptions() {
   }
 }
 
+/**
+ * 設定の食い違いは、ここで止めます。走らせるAIやモデルが決まらないまま起動すると、
+ * レビューを頼んだときになって初めて失敗するので、設定を直す前に一度使わせてしまいます。
+ */
+function buildServer() {
+  try {
+    return createServer(options.targetDir, options);
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+    return process.exit(1);
+  }
+}
+
 async function startServer() {
   try {
     return await listenOnAvailablePort(app, options.port);
@@ -106,8 +120,11 @@ function shutdown() {
  * 設定ファイルでモデルや推論強度を固定したとき、それが効いていることを起動時に見せます。
  * 設定していないものは自動で選ぶので、何も出しません（画面のAIパネルが実際の値を出します）。
  */
-function aiModelLines({ aiModels = {} }) {
+function aiModelLines({ aiProvider, aiModelProvider, aiModels = {} }) {
   return [
+    // 既定のままなら出しません。Codex以外を選んだときだけ、どこへ原稿が行くかを見せます。
+    ...(aiProvider && aiProvider !== DEFAULT_AI_PROVIDER ? [['ai provider', aiProvider]] : []),
+    ...(aiModelProvider ? [['ai model provider', aiModelProvider]] : []),
     ...profileLines('ai model', aiModels.assistant),
     ...profileLines('ai review model', aiModels.review)
   ];

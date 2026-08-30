@@ -43,8 +43,16 @@ Config:
     review-markdown config add exclude 'drafts/**'   # 設定ファイルに除外パターンを追加
     review-markdown config set aiContext '入門者向けの技術書。読者はJavaScriptの基礎を知っている。'
     review-markdown config set aiReviewModel gpt-5.6-codex   # レビューに使うモデルを固定
+    review-markdown config set aiProvider claude --global    # Codex以外のAIで走らせる
     review-markdown config list                      # 適用中の設定を表示
 
+  詳しくは review-markdown config --help を参照してください。
+
+AI provider:
+  どのAIで走らせるかは設定ファイルの aiProvider で選びます（codex / claude / langchain、
+  既定は codex）。モデルは aiModel / aiReviewModel で用途ごとに切り替えられます。
+  aiProvider と aiModelProvider は、レビュー対象のリポジトリが同梱する設定ファイルからは
+  読みません。ユーザー全体の設定（--global）か --config で指定したファイルにだけ書けます。
   詳しくは review-markdown config --help を参照してください。
 
 AI context:

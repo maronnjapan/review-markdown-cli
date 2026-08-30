@@ -91,7 +91,7 @@ test('a revision needs either an instruction or an open comment, and only open c
   const { root, store } = await testRoot(t);
   const prompts = [];
   const codex = fakeCodex(prompts);
-  const service = new AiService(root, { store, codex });
+  const service = new AiService(root, { store, client: codex });
 
   await assert.rejects(
     () => service.proposeEdits('guide.md', '   '),
