@@ -2,7 +2,7 @@ import { createId, escapeHtml } from './util.js';
 
 /** サーバー側の上限と同じです（src/aiLimits.js）。超えて送ると保存時に断られます。 */
 const MAX_CONTEXT_NOTES = 20;
-const MAX_CONTEXT_NOTE_CHARS = 600;
+const MAX_CONTEXT_NOTE_CHARS = 1_000;
 
 /**
  * メモの種類。`src/contextNotes.js` の `CONTEXT_NOTE_KINDS` と同じ並び・同じidです。
