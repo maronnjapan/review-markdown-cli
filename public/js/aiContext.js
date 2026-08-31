@@ -1,6 +1,4 @@
-// `src/aiLimits.js` の同名の値と揃えてあります。片方だけ変えると、画面では書けるのに
-// 保存で断られる、という形でずれます。
-const MAX_AI_CONTEXT_CHARS = 1_000;
+const MAX_AI_CONTEXT_CHARS = 4_000;
 
 const STATUS_MESSAGES = {
   idle: '',

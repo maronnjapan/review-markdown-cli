@@ -1003,10 +1003,6 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     const version = state.commentsVersion;
     const path = state.currentPath;
     const savedContext = state.aiContext;
-    // 前提も、書き換えたときだけ送ります。上限を下げたので、保存済みの前提が上限より
-    // 長いことがあり、触っていないものを毎回送り返すと、その文書はコメントまで
-    // 保存できなくなります（保存は前提とコメントで1回です）。
-    const savingContext = state.aiContextDirty;
     const savedNotes = state.contextNotes;
     // メモは変わったときだけ送るので、状態表示もそのときだけ動かします。
     // 触っていない保存で「保存しました」と出ると、送っていないものを送ったと言うことになります。
@@ -1018,7 +1014,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     // Leaving the comments out keeps the ones on file, which is what edit mode wants.
     const savingComments = state.mode !== 'edit';
     setCommentStatus('saving', '保存中…');
-    if (savingContext) aiContext.setStatus('saving');
+    aiContext.setStatus('saving');
     if (savingBrief) documentBrief.setStatus('saving');
     if (savingNotes) contextNotes.setStatus('saving');
 
@@ -1026,8 +1022,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       const result = await api.saveComments({
         path,
         comments: savingComments ? state.comments : undefined,
-        // 空文字は「前提を消した」なので、未変更の undefined と区別して送ります。
-        ...(savingContext ? { aiContext: savedContext } : {}),
+        aiContext: savedContext,
         // null は「3つを消す」なので、未変更の undefined と区別して送ります。
         ...(savingBrief ? { brief: savedBrief } : {}),
         // 空の配列は「最後の1件を消した」なので、未変更の undefined と区別して送ります。
@@ -1047,14 +1042,14 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
         // Re-rendering here would replace the textarea the reviewer is typing in, so don't.
         setCommentStatus('saved', `自動保存しました ${new Date().toLocaleTimeString()}: ${result.reviewFile}`);
       }
-      if (savingContext) aiContext.setStatus(state.aiContextDirty ? 'dirty' : 'saved');
+      aiContext.setStatus(state.aiContextDirty ? 'dirty' : 'saved');
       if (savingBrief) documentBrief.setStatus(state.briefDirty ? 'dirty' : 'saved');
       if (savingNotes) contextNotes.setStatus(state.contextNotesDirty ? 'dirty' : 'saved');
       return true;
     } catch (error) {
       state.commentSaveFailed = true;
       setCommentStatus('error', `保存できませんでした: ${error.message}`);
-      if (savingContext) aiContext.setStatus('error', `保存できませんでした: ${error.message}`);
+      aiContext.setStatus('error', `保存できませんでした: ${error.message}`);
       if (savingBrief) documentBrief.setStatus('error', `保存できませんでした: ${error.message}`);
       if (savingNotes) contextNotes.setStatus('error', `保存できませんでした: ${error.message}`);
       return false;
@@ -1199,7 +1194,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       path: state.currentPath,
       // Edit mode owns the comments; only the reading context is ours to send.
       comments: savingComments ? state.comments : undefined,
-      ...(state.aiContextDirty ? { aiContext: state.aiContext } : {}),
+      aiContext: state.aiContext,
       ...(state.briefDirty ? { brief: state.brief } : {}),
       ...(state.contextNotesDirty ? { contextNotes: state.contextNotes } : {}),
       ...(state.personaDirty ? { persona: state.persona } : {})
