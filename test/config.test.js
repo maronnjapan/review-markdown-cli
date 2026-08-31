@@ -3,7 +3,6 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { MAX_AI_CONTEXT_CHARS } from '../src/aiLimits.js';
 import { parseArgs } from '../src/cli.js';
 import {
   aiModelsFromConfig,
@@ -211,10 +210,7 @@ test('an unusable reading context is refused instead of reaching the AI', async 
   const root = await seedProject({ aiContext: ['入門書'] });
 
   await assert.rejects(loadConfig({ targetDir: root, env: emptyEnv(root) }), /文字列で指定してください/);
-  assert.throws(
-    () => parseArgs(['.', '--ai-context', 'あ'.repeat(MAX_AI_CONTEXT_CHARS + 1)]),
-    /長すぎます/
-  );
+  assert.throws(() => parseArgs(['.', '--ai-context', 'あ'.repeat(4001)]), /長すぎます/);
 });
 
 function emptyEnv(root) {

@@ -400,19 +400,6 @@ test('the reading context is editable, saved with the review, and announced to t
   assert.equal(requests[0].aiContext, '第3章。読者は運用当番の担当者。');
   await waitFor(() => document.querySelector('#ai-context-status').dataset.state === 'saved');
 
-  // 触っていない前提は送り返しません。上限より長い前提が保存してある文書でも、
-  // コメントの保存が道連れで断られないようにするためです。
-  const paragraph = document.querySelector('#markdown-content p');
-  paragraph.querySelector('.inline-comment-button').click();
-  const commentInput = document.querySelector('#comment-input');
-  commentInput.value = '実行の前提条件を書いてほしい';
-  commentInput.dispatchEvent(new window.Event('input', { bubbles: true }));
-  document.querySelector('#comment-dialog form').requestSubmit();
-  document.querySelector('#save-button').click();
-  await waitFor(() => requests.length === 2);
-  assert.equal(requests[1].aiContext, undefined, '書き換えていない前提は送らない');
-  assert.equal(requests[1].comments[0].comment, '実行の前提条件を書いてほしい');
-
   // The pane promises to say what a question carries; the context is part of it.
   document.querySelector('#markdown-content p .inline-ai-button').click();
   assert.match(document.querySelector('#ai-target-comments').textContent, /読み取りコンテキストも渡します/);

@@ -35,27 +35,14 @@ export function normalizeAiContext(value, source = '読み取りコンテキス�
 }
 
 /**
- * 保存済みの前提を読みます。長さでは断りません。
- *
- * 上限（`MAX_AI_CONTEXT_CHARS`）は下げることがあります。読むときも断ると、下げた日から、
- * 前に書いた前提を持つ文書だけAIが動かなくなります。前提を短くするのはレビュアーが次に
- * 書き換えるときで足りるので、それまでは書いたとおりに渡します。断るのは受け取る側
- * （`reviewStore.js` の保存と、設定ファイル・`--ai-context`）に残します。
- * コンテキストメモや読み手ペルソナを読むときと同じ分け方です。
- */
-export function readAiContext(value) {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-/**
  * Merges the five sources into the object every prompt builder takes.
  * `revision` changes whenever any of them changes, and stays empty while all are unset.
  */
 export function resolveAiContext({ project, document, brief, notes, persona } = {}) {
   const context = {
-    // ここへ来るのはどれも保存済みの値なので、上限では断りません（断るのは受け取る側）。
-    project: readAiContext(project),
-    document: readAiContext(document),
+    project: normalizeAiContext(project, 'aiContext'),
+    document: normalizeAiContext(document, '読み取りコンテキスト'),
+    // ここへ来るのは保存済みの値なので、上限では断りません（断るのは受け取る側）。
     brief: readDocumentBrief(brief),
     notes: readContextNotes(notes),
     persona: normalizePersona(persona)
