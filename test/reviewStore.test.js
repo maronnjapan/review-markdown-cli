@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { MAX_BRIEF_FIELD_CHARS } from '../src/aiLimits.js';
 import { buildReviewMarkdown, findExistingReviewPath, normalizeRelativePath, readReview, writeReview } from '../src/reviewStore.js';
 import { listMarkdownFiles } from '../src/server.js';
 import { renderMarkdown } from '../src/markdown.js';
@@ -294,7 +295,7 @@ test('the document brief lives with the review and survives a comment only save'
   assert.equal(saved.aiContext, '入門書の第3章。', '読み取りコンテキストは据え置く');
 
   await assert.rejects(
-    writeReview(root, 'guide.md', [], { brief: { story: 'あ'.repeat(601) } }),
+    writeReview(root, 'guide.md', [], { brief: { story: 'あ'.repeat(MAX_BRIEF_FIELD_CHARS + 1) } }),
     /「ストーリー」が長すぎます/
   );
 });
