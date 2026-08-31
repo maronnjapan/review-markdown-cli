@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { MAX_AI_CONTEXT_CHARS } from '../src/aiLimits.js';
 import { buildReviewMarkdown, findExistingReviewPath, normalizeRelativePath, readReview, writeReview } from '../src/reviewStore.js';
 import { listMarkdownFiles } from '../src/server.js';
 import { renderMarkdown } from '../src/markdown.js';
@@ -174,7 +175,10 @@ test('the reading context lives with the review and survives a comment only save
   assert.equal((await readReview(root, 'guide.md')).aiContext, '', '空文字は取り消しとして扱う');
   assert.equal(JSON.parse(await fs.readFile(path.join(root, '.review', 'guide.md.review.json'), 'utf8')).aiContext, undefined);
 
-  await assert.rejects(writeReview(root, 'guide.md', [], { aiContext: 'あ'.repeat(4001) }), /長すぎます/);
+  await assert.rejects(
+    writeReview(root, 'guide.md', [], { aiContext: 'あ'.repeat(MAX_AI_CONTEXT_CHARS + 1) }),
+    /長すぎます/
+  );
 });
 
 test('a review without a reading context reads back as an empty one', async () => {
