@@ -2,7 +2,7 @@ import { runAiRequest } from './aiRequest.js';
 import { escapeHtml } from './util.js';
 
 /** サーバー側の上限と同じです（src/aiLimits.js）。超えて送ると保存時に断られます。 */
-const MAX_BRIEF_FIELD_CHARS = 600;
+const MAX_BRIEF_FIELD_CHARS = 1_000;
 const MAX_BRIEF_INPUT_CHARS = 2_000;
 
 /**
