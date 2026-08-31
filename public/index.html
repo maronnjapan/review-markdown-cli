@@ -14,7 +14,10 @@
         <p class="eyebrow">Local Document Review</p>
         <h1>Markdown / PDF Review</h1>
       </div>
-      <a class="header-link" href="#/">ファイル一覧</a>
+      <div class="app-header-actions">
+        <button id="settings-button" type="button">設定</button>
+        <a class="header-link" href="#/">ファイル一覧</a>
+      </div>
     </header>
 
     <main class="layout">
@@ -478,6 +481,61 @@
           <div class="dialog-actions">
             <button value="cancel" type="button" id="cancel-dialog">キャンセル</button>
             <button value="default" type="submit" id="submit-dialog">この対象にコメントを追加</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="settings-dialog" aria-labelledby="settings-title">
+      <form id="settings-form" class="dialog-form settings-form">
+        <header class="dialog-head">
+          <h2 id="settings-title">設定</h2>
+          <span id="settings-provider" class="ai-provider-status">読み込み中…</span>
+        </header>
+
+        <p id="settings-error" class="load-error" hidden></p>
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">翻訳</h3>
+          <label class="settings-check">
+            <input id="settings-translation" type="checkbox">
+            <span>英訳を有効にする</span>
+          </label>
+          <p class="ai-context-hint">段落・選択範囲・文書全体の「翻訳」を出します。無効にすると画面から消えるだけでなく、翻訳のAPIも断ります。</p>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">モデル</h3>
+          <p class="ai-context-hint">用途ごとにモデルを分けられます。空にすると、選んだAIの既定で走ります。</p>
+          <div class="settings-fields">
+            <label class="settings-field">
+              <span class="settings-field-label">翻訳・AIチャット・指摘の配置</span>
+              <input id="settings-ai-model" list="settings-model-options" placeholder="（既定）" autocomplete="off">
+            </label>
+            <label id="settings-ai-effort-field" class="settings-field settings-field-effort">
+              <span class="settings-field-label">推論強度</span>
+              <select id="settings-ai-effort"></select>
+            </label>
+            <label class="settings-field">
+              <span class="settings-field-label">AIレビュー・読み手ペルソナ・管理者・本文の修正</span>
+              <input id="settings-ai-review-model" list="settings-model-options" placeholder="（既定）" autocomplete="off">
+            </label>
+            <label id="settings-ai-review-effort-field" class="settings-field settings-field-effort">
+              <span class="settings-field-label">推論強度</span>
+              <select id="settings-ai-review-effort"></select>
+            </label>
+          </div>
+          <datalist id="settings-model-options"></datalist>
+          <p id="settings-model-hint" class="ai-context-hint"></p>
+        </section>
+
+        <p id="settings-status" class="ai-context-status" aria-live="polite"></p>
+
+        <div class="dialog-footer">
+          <p id="settings-save-target" class="dialog-hint"></p>
+          <div class="dialog-actions">
+            <button type="button" id="settings-cancel">閉じる</button>
+            <button type="submit" id="settings-save">保存する</button>
           </div>
         </div>
       </form>

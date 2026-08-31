@@ -4,6 +4,7 @@ import { assertTargetDirectory, parseArgs, USAGE } from '../src/cli.js';
 import { applyConfigToOptions, loadConfig } from '../src/config.js';
 import { CONFIG_USAGE, parseConfigArgs, runConfigCommand } from '../src/configCommand.js';
 import { createServer, listenOnAvailablePort } from '../src/server.js';
+import { createSettingsFile } from '../src/settings.js';
 
 const argv = process.argv.slice(2);
 // `config` is only a subcommand when written exactly like that; a directory of
@@ -70,12 +71,32 @@ async function readOptions() {
       useConfig: parsed.useConfig
     });
     for (const warning of loaded.warnings) console.warn(`Warning: ${warning}`);
-    return { ...applyConfigToOptions(parsed, loaded.config), configSources: loaded.sources };
+    return {
+      ...applyConfigToOptions(parsed, loaded.config),
+      configSources: loaded.sources,
+      settingsFile: settingsFileFor(parsed)
+    };
   } catch (error) {
     console.error(`Error: ${error.message}`);
     console.error(`\n${USAGE}`);
     return process.exit(1);
   }
+}
+
+/**
+ * 画面から変えた設定の保存先。`config set --global` と同じユーザー全体の設定ファイル
+ * （`--config` で名指ししたときはそのファイル）です。`--no-config` を付けた起動は、
+ * 設定ファイルを読まないと言われているので書きもしません。変更は今回の起動限りになります。
+ */
+function settingsFileFor(parsed) {
+  if (!parsed.useConfig) return null;
+  return createSettingsFile({
+    configPath: parsed.configPath ?? process.env.REVIEW_MARKDOWN_CONFIG,
+    targetDir: parsed.targetDir,
+    // 今回の起動でコマンドラインが決めたものは、保存しても次の起動まで残りません。
+    // 画面で「保存したのに戻る」と見えないよう、保存のたびに知らせます。
+    fixedByCommandLine: parsed.translationSource === 'flag' ? ['translation'] : []
+  });
 }
 
 /**

@@ -41,6 +41,17 @@ export const api = {
     return status;
   },
 
+  /** 画面から変えられる設定と、その選択肢。AIの起動もサーバー側でここまでに済みます。 */
+  async readSettings() {
+    await ensureAiToken();
+    return fetchJson('/api/settings', aiOptions());
+  },
+
+  async saveSettings(payload) {
+    await ensureAiToken();
+    return postJson('/api/settings', payload, aiHeaders());
+  },
+
   async listAiConversations(path) {
     await ensureAiToken();
     return fetchJson(`/api/ai/conversations?path=${encodeURIComponent(path)}`, aiOptions());

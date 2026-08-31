@@ -6,6 +6,7 @@ import { createAiService } from './aiService.js';
 import { sendError } from './http.js';
 import { createPathFilter } from './pathFilter.js';
 import { createRequestHandler } from './routes.js';
+import { createSettings, settingsFromOptions } from './settings.js';
 
 export { listMarkdownFiles } from './markdownFiles.js';
 
@@ -21,7 +22,10 @@ export { listMarkdownFiles } from './markdownFiles.js';
  * @param {string} [options.aiModelProvider] LangChainのプロバイダ名（`aiProvider` が `langchain` のときだけ）。
  * @param {object} [options.aiModels] 用途ごとのモデル指定（`config.js` の `aiModelsFromConfig`）。
  * @param {boolean} [options.manager] 資料の管理者を有効にする。既定は無効。
- * @param {boolean} [options.translation] 翻訳機能を有効にする。既定は無効。
+ * @param {boolean} [options.translation] 翻訳機能を有効にする。既定は無効。既定値であって、
+ *   画面の設定から入り切りできます（`src/settings.js`）。
+ * @param {object} [options.settingsFile] 画面から変えた設定の保存先（`createSettingsFile`）。
+ *   渡さないと、変更は今回の起動のあいだだけ効きます。
  *
  * テストのための差し替え口:
  * @param {object} [options.aiService] AiService そのもの。渡すと下の3つは見ません。
@@ -33,15 +37,21 @@ export { listMarkdownFiles } from './markdownFiles.js';
 export function createServer(targetDir = '.', options = {}) {
   const rootDir = path.resolve(targetDir);
   const filter = createPathFilter(options);
-  const features = Object.freeze({
+  // 起動時の値を起点に、画面から変えられるぶんだけを持ちます。ルートは要求のたびに
+  // ここを読むので、翻訳機能の入り切りは立ち上げ直さなくても次の要求から効きます。
+  const settings = createSettings({
+    values: settingsFromOptions(options),
     manager: options.manager === true,
-    translation: options.translation === true
+    file: options.settingsFile || null
   });
-  const aiService = options.aiService || createAiService(rootDir, { ...options, features });
+  const aiService = options.aiService
+    || createAiService(rootDir, { ...options, features: settings.features });
   const aiToken = options.aiToken || crypto.randomBytes(24).toString('base64url');
   // What every document under this root is read under; a document adds its own.
   const projectAiContext = normalizeAiContext(options.aiContext, 'aiContext');
-  const handleRequest = createRequestHandler({ rootDir, filter, aiService, aiToken, projectAiContext, features });
+  const handleRequest = createRequestHandler({
+    rootDir, filter, aiService, aiToken, projectAiContext, settings
+  });
 
   const app = {
     listen(port, callback) {
@@ -52,7 +62,7 @@ export function createServer(targetDir = '.', options = {}) {
       return server.listen(port, '127.0.0.1', callback);
     }
   };
-  return { app, rootDir, filter, aiService };
+  return { app, rootDir, filter, aiService, settings };
 }
 
 /**

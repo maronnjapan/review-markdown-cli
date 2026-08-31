@@ -68,6 +68,11 @@ export class CodexAppServer {
      * status() が画面へ報告するのもこれです。
      */
     this.profiles = null;
+    /**
+     * Codexが持っているモデル。起動のときに1度だけ引きます。画面の設定へ選択肢として
+     * 出すのと、モデルを選び直したときに「Codexが持っているか」を確かめるのに使います。
+     */
+    this.availableModels = [];
 
     this.rpc = new CodexRpc({
       command,
@@ -120,7 +125,8 @@ export class CodexAppServer {
       await this.rpc.request('initialize', { clientInfo: CLIENT_INFO });
       this.rpc.notify('initialized', {});
       const response = await this.rpc.request('model/list', MODEL_LIST_QUERY);
-      this.profiles = selectProfiles(response.data, this.modelOverrides);
+      this.availableModels = Array.isArray(response.data) ? response.data : [];
+      this.profiles = selectProfiles(this.availableModels, this.modelOverrides);
     } catch (error) {
       // 起動しきれなかったプロセスは残しません。残すと、次に start() を呼んだときに
       // 「モデルを選べていないのに起動済み」の状態から続けることになります。
@@ -129,9 +135,39 @@ export class CodexAppServer {
     }
   }
 
+  /** 推論強度を受け付けるAIかどうか。画面の設定に強度の欄を出すかがこれで決まります。 */
+  get supportsEffort() {
+    return true;
+  }
+
   /** 用途に対応するモデルと推論強度。知らない用途は速い方で読みます。 */
   profileFor(purpose) {
     return this.profiles?.[purpose] || this.profiles?.assistant || {};
+  }
+
+  /**
+   * 使うモデルを選び直します。設定ファイルに書いたときと同じ形で受け取ります。
+   *
+   * 起動済みなら、Codexが持っているモデルかどうかをここで確かめます。持っていなければ
+   * 投げて、いまのモデルはそのままです。まだ起動していなければ指定を控えるだけで、
+   * 確かめるのは起動のときになります。開いているスレッドは畳みません。次のターンを
+   * 始めるときに、そのスレッドの用途のモデルへ戻します（`runTurn` の `turn/start`）。
+   */
+  setModels(models = {}) {
+    const profiles = this.started ? selectProfiles(this.availableModels, models) : null;
+    this.modelOverrides = models;
+    if (profiles) this.profiles = profiles;
+  }
+
+  /** 画面の設定へ出す選択肢。起動するまでは何も分からないので、空で返します。 */
+  listModels() {
+    return this.availableModels
+      .map((entry) => ({
+        id: entry?.id || entry?.model || '',
+        efforts: (entry?.supportedReasoningEfforts || []).map((item) => item.reasoningEffort),
+        isDefault: entry?.isDefault === true
+      }))
+      .filter((entry) => entry.id);
   }
 
   /**

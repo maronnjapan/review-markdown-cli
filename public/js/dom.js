@@ -191,6 +191,25 @@ const SELECTORS = {
   retrySaveButton: '#retry-save-button',
   blockFormat: '#block-format',
 
+  settingsButton: '#settings-button',
+  settingsDialog: '#settings-dialog',
+  settingsForm: '#settings-form',
+  settingsProvider: '#settings-provider',
+  settingsError: '#settings-error',
+  settingsTranslation: '#settings-translation',
+  settingsAiModel: '#settings-ai-model',
+  settingsAiEffort: '#settings-ai-effort',
+  settingsAiEffortField: '#settings-ai-effort-field',
+  settingsAiReviewModel: '#settings-ai-review-model',
+  settingsAiReviewEffort: '#settings-ai-review-effort',
+  settingsAiReviewEffortField: '#settings-ai-review-effort-field',
+  settingsModelOptions: '#settings-model-options',
+  settingsModelHint: '#settings-model-hint',
+  settingsStatus: '#settings-status',
+  settingsSaveTarget: '#settings-save-target',
+  settingsSave: '#settings-save',
+  settingsCancel: '#settings-cancel',
+
   toastRegion: '#toast-region'
 };
 

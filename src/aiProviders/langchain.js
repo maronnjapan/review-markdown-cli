@@ -54,6 +54,10 @@ export class LangChainClient extends TurnClient {
   }
 
   /** 推論強度はLangChain共通の指定が無いので、画面へも出しません。 */
+  get supportsEffort() {
+    return false;
+  }
+
   get effort() {
     return null;
   }

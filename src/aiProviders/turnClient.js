@@ -31,12 +31,19 @@ export class TurnClient {
    */
   constructor({ provider, defaults, models = {} }) {
     this.provider = provider;
+    /** モデルを名指ししなかった用途で使うもの。選び直しのたびに読み直します。 */
+    this.defaults = defaults;
     this.profiles = resolveProfiles(provider, defaults, models);
     /** スレッドID -> `{ purpose, messages }`。使うたびに入れ直すので、末尾ほど新しくなります。 */
     this.threads = new Map();
     /** 返事を作っている最中のスレッド。同じスレッドへ二重に投げないための印です。 */
     this.running = new Set();
     this.startPromise = null;
+  }
+
+  /** 推論強度を受け付けるAIかどうか。画面の設定に強度の欄を出すかがこれで決まります。 */
+  get supportsEffort() {
+    return true;
   }
 
   get model() {
@@ -58,6 +65,29 @@ export class TurnClient {
   /** 用途に対応するモデルと推論強度。知らない用途は速い方で読みます。 */
   profileFor(purpose) {
     return this.profiles[purpose] || this.profiles.assistant;
+  }
+
+  /**
+   * 使うモデルを選び直します。設定ファイルに書いたときと同じ形で受け取ります。
+   *
+   * 受け付けられない指定なら投げて、いまのモデルはそのままです。続いているスレッドも
+   * そのままで、次のターンから新しいモデルへ渡ります。
+   */
+  setModels(models = {}) {
+    const profiles = resolveProfiles(this.provider, this.defaults, models);
+    this.assertProfiles(profiles);
+    this.profiles = profiles;
+  }
+
+  /** 名指しされた指定を受け付けられるか。断りたいAIだけが継ぎ足します。 */
+  assertProfiles() {}
+
+  /**
+   * 画面の設定へ出す、選べるモデルの一覧です。
+   * 一覧を持たないAI（LangChain経由など）は空を返し、画面は自由入力になります。
+   */
+  async listModels() {
+    return [];
   }
 
   /**

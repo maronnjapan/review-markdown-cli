@@ -74,6 +74,54 @@ test('claudeは覚えていないので、やり取りはこちらが持って�
   await assert.rejects(claude.resumeThread(thread), /会話の記録が残っていません/);
 });
 
+test('画面から選び直したモデルは、続いているスレッドの次のターンから使われる', async () => {
+  const { client, calls } = fakeClaude(['はい', 'そうです']);
+  const claude = new ClaudeClient({ createClient: async () => client });
+  const thread = await claude.createThread({ purpose: 'assistant' });
+  await claude.runTurn({ threadId: thread, prompt: '1つ目' });
+
+  claude.setModels({ assistant: { model: 'claude-sonnet-5', effort: 'medium' } });
+  await claude.runTurn({ threadId: thread, prompt: '2つ目' });
+
+  assert.equal(calls[0].model, 'claude-opus-5');
+  assert.equal(calls[1].model, 'claude-sonnet-5', '選び直したモデルへ切り替わる');
+  assert.equal(calls[1].output_config.effort, 'medium');
+  assert.equal(calls[1].messages.length, 3, 'スレッドは畳まれず、やり取りは残る');
+  assert.equal(claude.reviewModel, 'claude-opus-5', '書き換えなかった用途は既定のまま');
+});
+
+test('claudeが受け付けない推論強度は、選び直しのときも断り、いまのモデルを残す', () => {
+  const claude = new ClaudeClient({ createClient: async () => fakeClaude([]).client });
+
+  assert.throws(
+    () => claude.setModels({ assistant: { model: 'claude-opus-5', effort: 'none' } }),
+    /設定したaiEffort をClaudeは受け付けません: none/
+  );
+  assert.deepEqual(claude.profiles.assistant, { model: 'claude-opus-5', effort: 'low' });
+});
+
+test('選べるモデルの一覧は、持っているAIだけが答える', async () => {
+  const { client } = fakeClaude([]);
+  client.models.list = async () => ({ data: [{ id: 'claude-opus-5' }, { id: 'claude-sonnet-5' }] });
+  const claude = new ClaudeClient({ createClient: async () => client });
+
+  assert.deepEqual(await claude.listModels(), [], '起動前は鍵も無いので答えられない');
+  await claude.start();
+  assert.deepEqual(await claude.listModels(), [
+    { id: 'claude-opus-5', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
+    { id: 'claude-sonnet-5', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] }
+  ]);
+
+  // LangChainは繋ぎ先がモデルによって変わるので一覧を持てず、推論強度も共通の指定がありません。
+  const langchain = new LangChainClient({
+    modelProvider: 'ollama',
+    models: { assistant: { model: 'llama3' }, review: { model: 'llama3' } }
+  });
+  assert.deepEqual(await langchain.listModels(), []);
+  assert.equal(langchain.supportsEffort, false);
+  assert.equal(claude.supportsEffort, true);
+});
+
 test('claudeが返した失敗は、次に何をすればよいかが分かる文面になる', () => {
   const claude = new ClaudeClient({});
   assert.match(claude.describeError(new Error('401 authentication_error')), /資格情報を設定してください/);
