@@ -683,12 +683,12 @@ button.danger:hover { background: #9b2116; border-color: #9b2116; color: #fff; }
 }
 .comment-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end; margin-top: 0.6rem; }
 .comment-card[data-status="open"] .status-action { border-color: #75b493; color: #087443; }
-#save-button, #submit-dialog, .wide-button {
+#save-button, #submit-dialog, #settings-save, .wide-button {
   background: var(--primary);
   border-color: var(--primary);
   color: #fff;
 }
-#save-button:hover, #submit-dialog:hover, .wide-button:hover { background: var(--primary-dark); }
+#save-button:hover, #submit-dialog:hover, #settings-save:hover, .wide-button:hover { background: var(--primary-dark); }
 .save-status { color: var(--muted); font-size: 0.85rem; }
 #save-status { margin: 0.8rem 1rem; }
 #save-status {
@@ -1328,7 +1328,20 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   outline-color: var(--primary);
 }
 
-#comment-dialog {
+/* ヘッダーの右側。設定とファイル一覧を、同じ行にそろえて置きます。 */
+.app-header-actions {
+  align-items: center;
+  display: flex;
+  gap: 0.9rem;
+}
+#settings-button {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #fff;
+}
+#settings-button:hover { background: rgba(255, 255, 255, 0.24); border-color: #fff; color: #fff; }
+
+#comment-dialog, #settings-dialog {
   border: 0;
   border-radius: 18px;
   box-shadow: var(--shadow);
@@ -1339,7 +1352,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   padding: 1.5rem;
   width: min(94vw, 620px);
 }
-#comment-dialog::backdrop { background: rgba(15, 23, 42, 0.45); }
+#comment-dialog::backdrop, #settings-dialog::backdrop { background: rgba(15, 23, 42, 0.45); }
 .dialog-form { display: grid; gap: 1rem; }
 .dialog-form h2 { font-size: 1.15rem; margin: 0; }
 .dialog-head { align-items: center; display: flex; flex-wrap: wrap; gap: 0.6rem; }
@@ -1393,6 +1406,43 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .dialog-hint { color: var(--muted); font-size: 0.78rem; margin: 0; }
 .dialog-actions { display: flex; gap: 0.75rem; justify-content: flex-end; }
 #submit-dialog:disabled {
+  background: #b9c4dd;
+  border-color: #b9c4dd;
+  cursor: not-allowed;
+}
+
+/* 設定ダイアログ。上から「翻訳」「モデル」の順に、変える範囲の広い順で並べます。 */
+.settings-form .load-error { margin: 0; }
+.settings-section {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 0.5rem;
+  padding-top: 0.9rem;
+}
+.settings-section-title { font-size: 0.95rem; margin: 0; }
+.settings-check {
+  align-items: center;
+  display: flex;
+  font-weight: 700;
+  gap: 0.5rem;
+}
+.settings-check input { accent-color: var(--primary); height: 1rem; width: 1rem; }
+.settings-fields {
+  display: grid;
+  gap: 0.75rem 1rem;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+}
+.settings-field { display: grid; gap: 0.3rem; min-width: 0; }
+.settings-field-label { font-size: 0.8rem; font-weight: 700; }
+.settings-field input, .settings-field select {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+  padding: 0.45rem 0.55rem;
+  width: 100%;
+}
+.settings-field-effort.hidden { display: none; }
+#settings-save:disabled {
   background: #b9c4dd;
   border-color: #b9c4dd;
   cursor: not-allowed;
@@ -1577,6 +1627,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   .markdown-body { padding-inline: 1rem; }
   .selection-toolbar { border-radius: 14px; }
   .selection-toolbar button { flex: 1; min-width: max-content; }
+  .settings-fields { grid-template-columns: minmax(0, 1fr); }
   .dialog-footer, .dialog-actions { align-items: stretch; flex-direction: column; width: 100%; }
   .dialog-actions button { width: 100%; }
 }

@@ -51,6 +51,8 @@ Config:
 AI provider:
   どのAIで走らせるかは設定ファイルの aiProvider で選びます（codex / claude / langchain、
   既定は codex）。モデルは aiModel / aiReviewModel で用途ごとに切り替えられます。
+  翻訳の有効・無効と、この2つのモデル（と推論強度）は、ブラウザ右上の「設定」からも
+  変えられます。変更はその場で効き、ユーザー全体の設定ファイルへ保存します。
   aiProvider と aiModelProvider は、レビュー対象のリポジトリが同梱する設定ファイルからは
   読みません。ユーザー全体の設定（--global）か --config で指定したファイルにだけ書けます。
   詳しくは review-markdown config --help を参照してください。

@@ -24,6 +24,7 @@ import {
   reviewPathFor,
   writeReview
 } from './reviewStore.js';
+import { createSettings } from './settings.js';
 import { serveStatic } from './staticFiles.js';
 
 /**
@@ -41,6 +42,8 @@ const ROUTES = [
   { methods: ['POST'], pathname: '/api/review', handle: saveReview },
   { methods: ['GET'], pathname: '/api/export', handle: exportReview },
   { methods: ['GET'], pathname: '/api/ai/status', handle: aiStatus },
+  { methods: ['GET'], pathname: '/api/settings', handle: readSettings },
+  { methods: ['POST'], pathname: '/api/settings', handle: updateSettings },
   { methods: ['GET'], pathname: '/api/ai/conversations', handle: listAiConversations },
   { methods: ['POST', 'PATCH', 'DELETE'], pathname: '/api/ai/conversation', handle: aiConversation },
   { methods: ['POST'], pathname: '/api/ai/translate', feature: 'translation', handle: translateWithAi },
@@ -60,20 +63,23 @@ export function createRequestHandler({
   aiService,
   aiToken,
   projectAiContext = '',
-  features = { manager: false, translation: false }
+  settings = createSettings()
 }) {
   return async function handleRequest(request, response) {
     const url = new URL(request.url, 'http://localhost');
     const route = ROUTES.find((candidate) => (
       candidate.pathname === url.pathname && candidate.methods.includes(request.method)
     ));
+    // 有効な機能は要求のたびに読み直します。画面から翻訳を切った直後の要求も、
+    // 立ち上げ直したときと同じ扱いになります。
     const context = {
       rootDir,
       filter,
       aiService,
       aiToken,
       projectAiContext,
-      features,
+      settings,
+      features: settings.features,
       request,
       response,
       url,
@@ -81,7 +87,7 @@ export function createRequestHandler({
     };
 
     if (route) {
-      if (route.feature && !features[route.feature]) throw featureDisabled(route.feature);
+      if (route.feature && !context.features[route.feature]) throw featureDisabled(route.feature);
       return route.handle(context);
     }
     if (request.method === 'GET' || request.method === 'HEAD') {
@@ -95,6 +101,43 @@ async function aiStatus({ aiService, aiToken, request, response }) {
   assertLocalAiRequest(request);
   response.setHeader('Cache-Control', 'no-store');
   return sendJson(response, { token: aiToken, ...await aiService.status() });
+}
+
+/**
+ * 画面から変えられる設定と、その選択肢です。
+ *
+ * AIの起動もここで済ませます。Codexが持っているモデルは起動しないと分からないので、
+ * 起動前に答えると、モデルの欄が空のまま「選べません」に見えます。
+ */
+async function readSettings(context) {
+  authorizeAiRequest(context);
+  return sendJson(context.response, await settingsPayload(context));
+}
+
+/**
+ * 設定の変更です。モデルの指定は当ててから確定するので、そのAIが持っていないモデルを
+ * 送られたときは 400 を返し、走っているモデルも設定も変わりません。
+ */
+async function updateSettings(context) {
+  const { aiService, settings, request, response } = context;
+  authorizeAiRequest(context);
+  const body = await readJsonBody(request);
+  let saved;
+  try {
+    saved = await settings.update(body, { apply: (models) => aiService.applyModels(models) });
+  } catch (error) {
+    throw httpError(error.message, 400);
+  }
+  return sendJson(response, { ...await settingsPayload(context), saved });
+}
+
+async function settingsPayload({ aiService, settings }) {
+  return {
+    settings: settings.values,
+    features: settings.features,
+    configPath: settings.configPath,
+    ai: { ...await aiService.status(), ...await aiService.modelChoices?.() }
+  };
 }
 
 async function listAiConversations(context) {
@@ -478,8 +521,10 @@ function reviewPremiseOf(body) {
 
 /** Disabled features are unavailable through direct API calls as well as hidden in the browser. */
 function featureDisabled(feature) {
-  const label = feature === 'manager' ? '資料の管理者' : '翻訳機能';
-  return httpError(`${label}は無効です。設定または起動オプションで有効にしてください`, 404);
+  const where = feature === 'manager'
+    ? '資料の管理者は無効です。設定または起動オプションで有効にしてください'
+    : '翻訳機能は無効です。画面右上の「設定」、設定ファイル、または起動オプションで有効にしてください';
+  return httpError(where, 404);
 }
 
 function assertManagerUpdateAllowed(body, features) {

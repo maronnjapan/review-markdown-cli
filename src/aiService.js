@@ -129,6 +129,53 @@ export class AiService {
     }
   }
 
+  /**
+   * 画面の設定へ出す、選べるモデルと、いま走っているモデル。
+   *
+   * 一覧を引けなくても投げません。設定の画面はモデルを選ぶだけの場所ではなく、翻訳機能の
+   * 入り切りもここにあります。一覧が引けないだけで、その画面ごと開けなくなるのは行き過ぎです。
+   * 一覧が空のときは、画面がモデル名を手で書く欄に切り替わります。
+   */
+  async modelChoices() {
+    const models = await this.listModels();
+    return {
+      models,
+      // 推論強度の選択肢は、どのモデルにも当たるものだけを並べます。モデルによっては
+      // 受け付けないものが混ざるので、選んだあと当てるときにもう一度確かめます。
+      efforts: [...new Set(models.flatMap((entry) => entry.efforts || []))],
+      supportsEffort: this.ai.supportsEffort !== false,
+      running: {
+        assistant: { model: this.ai.model ?? null, effort: this.ai.effort ?? null },
+        review: { model: this.ai.reviewModel ?? null, effort: this.ai.reviewEffort ?? null }
+      }
+    };
+  }
+
+  async listModels() {
+    try {
+      return (await this.ai.listModels?.()) || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 使うモデルを選び直します。画面の設定から呼びます。
+   *
+   * 名指ししたモデルをそのAIが持っていなければ投げて、走っているモデルはそのままです。
+   * 保存済みの会話はそのまま続きます。差し替わるのは次のターンから使うモデルだけです。
+   */
+  async applyModels(models) {
+    if (typeof this.ai.setModels !== 'function') {
+      throw new Error('このAIは画面からモデルを変えられません');
+    }
+    // 起動していないAIは、名指しされたモデルを持っているかを確かめようがありません。
+    // 確かめられる状態にしてから当てます。起動できなければ、設定ファイルに書いたときと
+    // 同じで、確かめるのは次に起動できたときです。
+    await this.ai.start().catch(() => {});
+    this.ai.setModels(models);
+  }
+
   async translate(documentPath, target, { onDelta, signal } = {}) {
     const normalizedTarget = await this.snapshotTarget(documentPath, target);
     const readingContext = await this.readingContext(documentPath);

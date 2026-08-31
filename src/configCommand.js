@@ -62,6 +62,7 @@ Examples:
 
 manager と translation は既定では無効です。
 使う機能だけ true にすると、次回以降の起動でも有効になります。
+translation は、ブラウザ右上の「設定」からも入り切りできます（その場で効き、ここへ保存します）。
 
 aiContext は翻訳・AIチャット・指摘の配置で AI に渡す読み取りコンテキストです。
 ここに書いた前提はディレクトリ配下のすべての文書に効きます。
@@ -90,7 +91,10 @@ claude は同じモデルを推論強度で使い分けます。langchain は既
 名指ししたモデルをCodexが持っていないときは、黙って別のモデルへ落とさずに起動を止めます。
 
   review-markdown config set aiReviewModel gpt-5.6-codex --global
-  review-markdown config set aiReviewEffort high --global`;
+  review-markdown config set aiReviewEffort high --global
+
+aiModel / aiEffort / aiReviewModel / aiReviewEffort は、ブラウザ右上の「設定」からも
+選び直せます。そのAIが持っているモデルが候補として出て、選んだ時点で確かめます。`;
 
 const COMMANDS = new Set(['init', 'path', 'list', 'get', 'set', 'add', 'remove', 'unset']);
 

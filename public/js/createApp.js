@@ -23,6 +23,7 @@ import { aliasRefs, queryRefs } from './dom.js';
 import { createEditor } from './editor.js';
 import { createFileListView } from './fileListView.js';
 import { createLinkNavigator } from './links.js';
+import { createSettingsController } from './settings.js';
 import { createSidePanes } from './sidePanes.js';
 import { createRangeFor, findTextRange } from './textAnchor.js';
 import { createPdfViewer } from './pdf/viewer.js';
@@ -213,6 +214,15 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     document,
     content,
     onSelectComment: (commentId) => focusCommentCard(commentId)
+  });
+  // 設定は文書に紐づかないので、ファイル一覧でもレビュー画面でも同じヘッダーから開きます。
+  // 開くのはヘッダーのボタンからだけなので、ここでは持ち回りません。
+  createSettingsController({
+    refs,
+    state,
+    api,
+    toaster,
+    onApplied: (payload) => applyFeatureChange(payload.features)
   });
   const contextPage = createContextPageController({
     refs,
@@ -457,6 +467,21 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       state.translation = null;
       refs.translationResult.classList.add('hidden');
     }
+  }
+
+  /**
+   * 設定で翻訳の入り切りが変わったときの反映です。
+   *
+   * 段落ごとの「翻訳」ボタンは本文を描くときに付けているので、印を付け替えるだけでは
+   * 出ません。開いている文書をその場で描き直します（編集中の本文は触りません。
+   * 打ちかけを、設定を変えただけで捨てることになるからです）。
+   */
+  function applyFeatureChange(features) {
+    if (!features) return;
+    adoptFeatures(features);
+    if (!state.currentPath || state.mode === 'edit') return;
+    if (state.documentType === 'pdf') pdfViewer.renderHighlights(state.comments);
+    else renderCommentMode();
   }
 
   /* ---------------------------------------------------------------- *

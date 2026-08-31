@@ -127,6 +127,48 @@ test('設定ファイルで名指ししたモデルと推論強度を、その�
   await client.close();
 });
 
+test('画面から選び直したモデルは、開いているスレッドの次のターンから使われる', async (t) => {
+  const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'review-codex-runtime-'));
+  t.after(() => fs.rm(runtimeDir, { recursive: true, force: true }));
+  const protocol = createFakeProtocol({ models: [FAST_MODEL, DEEP_MODEL] });
+  const client = new CodexAppServer({ runtimeDir, spawnProcess: () => protocol.child });
+
+  const threadId = await client.createThread({ ephemeral: true, purpose: 'assistant' });
+  await client.runTurn({ threadId, prompt: 'Translate this.' });
+  assert.deepEqual(client.listModels(), [
+    { id: 'gpt-5.6-luna', efforts: ['none', 'low'], isDefault: false },
+    { id: 'gpt-5.6-codex', efforts: ['low', 'medium', 'high'], isDefault: true }
+  ], '選べるモデルは、Codexが持っているものから作る');
+
+  client.setModels({ assistant: { model: 'gpt-5.6-codex', effort: 'high' } });
+  await client.runTurn({ threadId, prompt: 'Translate this too.' });
+
+  const turns = protocol.messages.filter(({ method }) => method === 'turn/start');
+  assert.deepEqual(
+    turns.map(({ params }) => [params.model, params.effort]),
+    [['gpt-5.6-luna', 'none'], ['gpt-5.6-codex', 'high']],
+    'スレッドは開いたまま、次のターンから選び直したモデルへ渡る'
+  );
+
+  await client.close();
+});
+
+test('画面からCodexが持っていないモデルを選ぼうとしたら、いまのモデルを残して断る', async (t) => {
+  const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'review-codex-runtime-'));
+  t.after(() => fs.rm(runtimeDir, { recursive: true, force: true }));
+  const protocol = createFakeProtocol({ models: [FAST_MODEL, DEEP_MODEL] });
+  const client = new CodexAppServer({ runtimeDir, spawnProcess: () => protocol.child });
+  await client.start();
+
+  assert.throws(
+    () => client.setModels({ review: { model: 'gpt-9-imaginary' } }),
+    /aiReviewModel がCodexにありません: gpt-9-imaginary/
+  );
+  assert.equal(client.reviewModel, 'gpt-5.6-codex', '断ったので、走っているモデルはそのまま');
+
+  await client.close();
+});
+
 test('Codexが持っていないモデルを設定したら、黙って別のモデルへ落とさずに止まる', async (t) => {
   const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'review-codex-runtime-'));
   t.after(() => fs.rm(runtimeDir, { recursive: true, force: true }));

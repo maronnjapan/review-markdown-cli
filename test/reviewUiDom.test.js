@@ -185,6 +185,147 @@ test('the manager and translation controls stay hidden until the server enables 
   );
 });
 
+test('設定から翻訳を有効にすると、開いている文書の翻訳ボタンがその場で出る', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const requests = [];
+  const settings = {
+    settings: { translation: false, aiReviewEffort: 'high' },
+    features: { manager: false, translation: false },
+    configPath: '/home/reviewer/.config/review-markdown/config.json',
+    ai: {
+      available: true,
+      provider: 'codex',
+      label: 'Codex',
+      supportsEffort: true,
+      efforts: ['none', 'low', 'high'],
+      models: [{ id: 'fast-model' }, { id: 'deep-model' }],
+      running: {
+        assistant: { model: 'fast-model', effort: 'none' },
+        review: { model: 'deep-model', effort: 'high' }
+      }
+    }
+  };
+  const { document, window } = await startApp(t, 'http://localhost/#/review/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'guide.md', comments: [] },
+      features: { manager: false, translation: false },
+      reviewFile: '.review/guide.md.review.json'
+    }),
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: true, provider: 'codex', label: 'Codex' }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/settings': (_input, options) => {
+      if (!options.body) return settings;
+      requests.push([JSON.parse(options.body), options.headers]);
+      return {
+        ...settings,
+        settings: { translation: true, aiReviewModel: 'deep-model', aiReviewEffort: 'high' },
+        features: { manager: false, translation: true },
+        saved: {
+          path: settings.configPath,
+          shadowed: [{ key: 'translation', source: '今回の起動のコマンドライン指定' }],
+          error: null
+        }
+      };
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-ai-button'));
+  assert.equal(document.querySelector('#markdown-content .inline-translate-button'), null);
+
+  document.querySelector('#settings-button').click();
+  await waitFor(() => document.querySelectorAll('#settings-model-options option').length === 2);
+
+  assert.equal(document.querySelector('#settings-dialog').open, true);
+  assert.equal(document.querySelector('#settings-translation').checked, false);
+  assert.equal(document.querySelector('#settings-provider').textContent, 'Codexで実行中');
+  assert.deepEqual(
+    [...document.querySelectorAll('#settings-model-options option')].map((option) => option.value),
+    ['fast-model', 'deep-model'],
+    '選べるモデルは候補として出す。欄は自由入力のままなので、一覧を持たないAIでも書ける'
+  );
+  assert.deepEqual(
+    [...document.querySelectorAll('#settings-ai-effort option')].map((option) => option.value),
+    ['', 'none', 'low', 'high']
+  );
+  assert.equal(document.querySelector('#settings-ai-review-effort').value, 'high', '設定済みの強度が選ばれている');
+  assert.match(document.querySelector('#settings-model-hint').textContent, /いま実行中 — .*fast-model \/ none/);
+  assert.match(document.querySelector('#settings-save-target').textContent, /保存先: .*config\.json/);
+
+  document.querySelector('#settings-translation').checked = true;
+  document.querySelector('#settings-ai-review-model').value = 'deep-model';
+  document.querySelector('#settings-form').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await waitFor(() => requests.length === 1);
+  await waitFor(() => document.querySelector('#markdown-content .inline-translate-button'));
+
+  assert.deepEqual(requests[0][0], {
+    translation: true,
+    aiModel: '',
+    aiEffort: '',
+    aiReviewModel: 'deep-model',
+    aiReviewEffort: 'high'
+  }, '空欄は「設定しない」として送る');
+  assert.equal(requests[0][1]['X-Review-Markdown-Token'], 'ui-ai-token');
+  assert.equal(document.querySelector('#document-translate-button').classList.contains('hidden'), false);
+  assert.equal(document.querySelector('#selection-translate-button').classList.contains('hidden'), false);
+  assert.equal(document.querySelector('#ai-tab-button').textContent.trim(), '翻訳・AI');
+  assert.match(
+    document.querySelector('#settings-status').textContent,
+    /次の起動では次の設定が優先されます: translation（今回の起動のコマンドライン指定）/,
+    '保存しても次の起動で戻る設定は、そう言う'
+  );
+});
+
+test('使えないモデルを選んだら、断られた理由を出したまま直せる', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const { document, window } = await startApp(t, 'http://localhost/#/review/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'guide.md', comments: [] },
+      features: { manager: false, translation: false },
+      reviewFile: '.review/guide.md.review.json'
+    }),
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: true, provider: 'codex', label: 'Codex' }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/settings': (_input, options) => {
+      if (!options.body) {
+        return {
+          settings: { translation: false },
+          features: { manager: false, translation: false },
+          configPath: null,
+          ai: { available: true, provider: 'codex', label: 'Codex', supportsEffort: false, models: [] }
+        };
+      }
+      return new Response(
+        JSON.stringify({ error: '設定したaiModel がCodexにありません: gpt-9-imaginary' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-ai-button'));
+
+  document.querySelector('#settings-button').click();
+  await waitFor(() => document.querySelector('#settings-save-target').textContent.includes('--no-config'));
+  assert.equal(
+    document.querySelector('#settings-ai-effort-field').classList.contains('hidden'),
+    true,
+    '推論強度を持たないAIでは、選べない欄そのものを出さない'
+  );
+  assert.match(document.querySelector('#settings-model-hint').textContent, /モデル名を書いてください/);
+
+  document.querySelector('#settings-ai-model').value = 'gpt-9-imaginary';
+  document.querySelector('#settings-form').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await waitFor(() => document.querySelector('#settings-error').hidden === false);
+
+  assert.match(document.querySelector('#settings-error').textContent, /gpt-9-imaginary/);
+  assert.equal(document.querySelector('#settings-dialog').open, true, '開いたままで直せる');
+  assert.equal(document.querySelector('#settings-ai-model').value, 'gpt-9-imaginary', '書いた値も残る');
+  assert.equal(document.querySelector('#settings-save').disabled, false);
+});
+
 test('paragraph translation and chat use the same read-only target without leaking UI labels', async (t) => {
   const markdown = '# Guide\n\nClick this button to run the program.\n';
   const requests = [];
@@ -2038,10 +2179,11 @@ async function startApp(t, url, responses) {
   const { window } = dom;
 
   installDomGlobals(window);
-  const dialog = window.document.querySelector('#comment-dialog');
   // jsdom has no dialog implementation; the app only needs open/close bookkeeping.
-  dialog.showModal = () => { dialog.open = true; };
-  dialog.close = () => { dialog.open = false; };
+  for (const dialog of window.document.querySelectorAll('dialog')) {
+    dialog.showModal = () => { dialog.open = true; };
+    dialog.close = () => { dialog.open = false; };
+  }
 
   globalThis.fetch = async (input, options = {}) => {
     const requested = String(input).split('?')[0];

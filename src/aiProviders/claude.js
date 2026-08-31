@@ -33,6 +33,9 @@ export const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
  */
 const MAX_OUTPUT_TOKENS = 32_000;
 
+/** 画面の設定へ並べるモデルの件数。選ぶための一覧なので、全件は要りません。 */
+const MODEL_LIST_LIMIT = 100;
+
 /** 答えが返らなかった理由を、レビュアーが次に何をすればよいか分かる日本語にします。 */
 const ERROR_HINTS = [
   [/api[_ ]?key|authentication|401|credential/i, 'Claudeの資格情報を設定してください（ANTHROPIC_API_KEY など）'],
@@ -49,9 +52,14 @@ export class ClaudeClient extends TurnClient {
    */
   constructor({ models, createClient } = {}) {
     super({ provider: 'claude', defaults: CLAUDE_DEFAULTS, models });
-    for (const [purpose, profile] of Object.entries(this.profiles)) assertEffort(purpose, profile.effort);
+    this.assertProfiles(this.profiles);
     this.createClient = createClient || defaultClient;
     this.client = null;
+  }
+
+  /** 名指しした推論強度。Claudeが受け付けないものは、選び直しのときも同じ理由で断ります。 */
+  assertProfiles(profiles) {
+    for (const [purpose, profile] of Object.entries(profiles)) assertEffort(purpose, profile.effort);
   }
 
   /**
@@ -64,6 +72,18 @@ export class ClaudeClient extends TurnClient {
     for (const model of new Set(Object.values(this.profiles).map((profile) => profile.model))) {
       await this.client.models.retrieve(model);
     }
+  }
+
+  /**
+   * 画面の設定へ出す選択肢。Claudeのモデルは推論強度の受け付け方が揃っているので、
+   * どのモデルにも同じ強度を並べます。鍵が無ければ一覧も引けないので、空で返します。
+   */
+  async listModels() {
+    if (!this.client) return [];
+    const page = await this.client.models.list({ limit: MODEL_LIST_LIMIT });
+    return (page?.data || [])
+      .map((entry) => ({ id: entry?.id, efforts: CLAUDE_EFFORTS }))
+      .filter((entry) => entry.id);
   }
 
   async complete({ system, messages, profile, outputSchema, onDelta, signal }) {
