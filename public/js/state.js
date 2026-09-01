@@ -44,6 +44,12 @@ export function createState() {
     // その文書について残したメモ。読み取りコンテキストと同じく前提としてAIへ渡します。
     contextNotes: [],
     contextNotesDirty: false,
+    // 同階層以下から添えたファイルのパス。中身は保存せず、AIへ渡すたびにサーバーが読みます。
+    referenceFiles: [],
+    referenceFilesDirty: false,
+    // 選べるファイルの一覧。文書ごとに引き直すので、開くたびに空へ戻します。
+    referenceCandidates: null,
+    referenceCandidatesLoading: false,
     pendingTarget: null,
     currentSelectionTarget: null,
     commentsDirty: false,
@@ -110,6 +116,10 @@ export function resetDocumentState(state, filePath) {
   state.briefDraft = null;
   state.contextNotes = [];
   state.contextNotesDirty = false;
+  state.referenceFiles = [];
+  state.referenceFilesDirty = false;
+  state.referenceCandidates = null;
+  state.referenceCandidatesLoading = false;
   state.pendingTarget = null;
   state.currentSelectionTarget = null;
   state.commentsDirty = false;

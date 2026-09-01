@@ -193,19 +193,22 @@ export function createContextNotesController({ refs, state, toaster, onChange })
     // AIレビューのパネルは別のタブなので、前提が届くことをそちらでも言います。
     // 出す条件は「指摘の配置」と揃えます（前提が1つでもあれば出す）。
     if (refs.reviewContextHint) {
+      const fileCount = (state.referenceFiles || []).length;
       const hasPremise = Boolean((state.aiContext || '').trim() || (state.projectAiContext || '').trim())
-        || Boolean(state.brief) || notes.length > 0;
+        || Boolean(state.brief) || notes.length > 0 || fileCount > 0;
       refs.reviewContextHint.hidden = !hasPremise;
       // 管理者の3点は「この資料はどうあるべきか」なので、読み方ではなく判定の基準が
       // 変わります。渡ることだけでなく、何が変わるかまで言います。
       const premises = [
         state.brief ? '「管理者」タブで決めた3点' : '',
         'AIパネルの読み取りコンテキスト',
-        notes.length ? 'コンテキストメモ' : ''
+        notes.length ? 'コンテキストメモ' : '',
+        fileCount ? `添えた参照ファイル${fileCount}件` : ''
       ].filter(Boolean);
       refs.reviewContextHint.textContent = `${premises.join('と')}も前提として読ませます。`
         + (state.brief ? '3点から外れた箇所は指摘します。' : '')
-        + (notes.length ? '「決定」と残した論点は蒸し返しません。' : '');
+        + (notes.length ? '「決定」と残した論点は蒸し返しません。' : '')
+        + (fileCount ? '添えたファイルと食い違う箇所は指摘します。' : '');
     }
     refs.contextNotesList.innerHTML = notes.length
       ? notes.map(noteHtml).join('')

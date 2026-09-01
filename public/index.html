@@ -212,6 +212,24 @@
                 <button id="context-notes-open-page" class="context-open-link" type="button">広い画面で編集</button>
                 <div id="context-notes-list" class="context-notes-list"></div>
               </details>
+              <details id="reference-files" class="ai-context">
+                <summary>
+                  参照ファイル
+                  <span id="reference-files-state" class="ai-context-state">未設定</span>
+                </summary>
+                <p class="ai-context-hint">この文書と同じ階層以下にあるファイルを添えると、AIがその中身も読みます。用語集、前の章、元になった仕様書など。翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。</p>
+                <form id="reference-file-form" class="reference-file-form">
+                  <input id="reference-file-filter" type="search" placeholder="パスで絞り込む" aria-label="添えるファイルをパスで絞り込む">
+                  <select id="reference-file-select" aria-label="添えるファイル"></select>
+                  <div class="reference-file-actions">
+                    <button id="reference-file-add" type="submit" disabled>添える</button>
+                  </div>
+                </form>
+                <p id="reference-files-full" class="context-note-full" hidden>参照ファイルが上限に達しました。読ませないものを外してください。</p>
+                <p id="reference-files-status" class="ai-context-status" aria-live="polite"></p>
+                <button id="reference-files-open-page" class="context-open-link" type="button">広い画面で編集</button>
+                <div id="reference-files-list" class="reference-files-list"></div>
+              </details>
               <div class="ai-conversation-controls">
                 <select id="ai-conversation-select" aria-label="保存された会話">
                   <option value="">新しい会話</option>
@@ -418,6 +436,26 @@
                 <p id="workspace-context-notes-status" class="ai-context-status" aria-live="polite"></p>
               </form>
               <div id="workspace-context-notes-list" class="context-notes-list"></div>
+            </div>
+          </section>
+
+          <section id="workspace-reference-files" class="card workspace-card workspace-card-wide">
+            <header class="workspace-card-head">
+              <h3>参照ファイル</h3>
+              <span id="workspace-reference-files-state" class="ai-context-state">未設定</span>
+            </header>
+            <p class="ai-context-hint">この文書と同じ階層以下にあるファイルを添えると、AIがその中身も読みます。添えられるのはこの文書のディレクトリとその下だけで、ファイル一覧から外したファイルも選べます。</p>
+            <div class="workspace-notes-layout">
+              <form id="workspace-reference-file-form" class="reference-file-form">
+                <input id="workspace-reference-file-filter" type="search" placeholder="パスで絞り込む" aria-label="添えるファイルをパスで絞り込む">
+                <select id="workspace-reference-file-select" size="8" aria-label="添えるファイル"></select>
+                <div class="reference-file-actions">
+                  <button id="workspace-reference-file-add" type="submit" disabled>添える</button>
+                </div>
+                <p id="workspace-reference-files-full" class="context-note-full" hidden>参照ファイルが上限に達しました。読ませないものを外してください。</p>
+                <p id="workspace-reference-files-status" class="ai-context-status" aria-live="polite"></p>
+              </form>
+              <div id="workspace-reference-files-list" class="reference-files-list"></div>
             </div>
           </section>
 

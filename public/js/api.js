@@ -96,6 +96,12 @@ export const api = {
     return streamNdjson('/api/ai/place-comments', payload, { ...options, headers: aiHeaders() });
   },
 
+  /** その文書に添えられるファイル（同階層以下）。AIの起動は要りません。 */
+  async listReferenceFiles(path) {
+    await ensureAiToken();
+    return fetchJson(`/api/ai/reference-files?path=${encodeURIComponent(path)}`, aiOptions());
+  },
+
   async listReviewSkills() {
     await ensureAiToken();
     return fetchJson('/api/ai/review-skills', aiOptions());

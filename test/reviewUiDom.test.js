@@ -684,6 +684,96 @@ test('a note kept from a chat answer is saved with the review and travels with t
   assert.equal(document.querySelector('#context-notes-state').textContent.trim(), '1件');
 });
 
+test('添えた参照ファイルは前提として渡り、レビューファイルへ保存される', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const requests = [];
+  const { document, window } = await startApp(t, 'http://localhost/#/review/docs/guide.md', {
+    '/api/file': async () => ({
+      path: 'docs/guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'docs/guide.md', comments: [], referenceFiles: ['docs/glossary.md'] },
+      reviewFile: '.review/docs/guide.md.review.json'
+    }),
+    '/api/review': (_input, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(body);
+      return {
+        review: { targetFile: 'docs/guide.md', comments: body.comments || [], referenceFiles: body.referenceFiles },
+        reviewFile: '.review/docs/guide.md.review.json'
+      };
+    },
+    '/api/ai/status': () => ({
+      token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model', effort: 'low'
+    }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/reference-files': () => ({
+      base: 'docs',
+      total: 3,
+      // サーバーはパスの順に並べて返します（`src/referenceFiles.js`）。
+      files: [
+        { path: 'docs/glossary.md', kind: 'text' },
+        { path: 'docs/notes/history.md', kind: 'text' },
+        { path: 'docs/spec.pdf', kind: 'pdf' }
+      ]
+    })
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-comment-button'));
+
+  // 保存済みの添付は、開いた時点で一覧と要約に出ます。
+  assert.equal(document.querySelector('#reference-files-state').textContent.trim(), '1件');
+  assert.equal(document.querySelector('.reference-file-path').textContent, 'docs/glossary.md');
+
+  // 選択欄は一覧が届いてから埋まります。すでに添えたファイルは出しません。
+  await waitFor(() => document.querySelector('#reference-file-select option[value="docs/spec.pdf"]'));
+  const options = [...document.querySelectorAll('#reference-file-select option')].map((node) => node.value);
+  assert.deepEqual(options, ['docs/notes/history.md', 'docs/spec.pdf'], '添えたものは選択欄から外す');
+  assert.match(
+    document.querySelector('#reference-file-select option[value="docs/spec.pdf"]').textContent,
+    /（PDF）/,
+    'PDFはそうと分かるように出す'
+  );
+  // 一覧はサイドパネルとコンテキスト画面の2か所に出ますが、取りに行くのは1回だけです。
+  assert.equal(
+    document.querySelectorAll('#workspace-reference-file-select option').length,
+    2,
+    'もう一方の画面にも同じ一覧が出る'
+  );
+
+  // 絞り込みは選択欄だけを狭めます。
+  const filter = document.querySelector('#reference-file-filter');
+  filter.value = 'spec';
+  filter.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.deepEqual(
+    [...document.querySelectorAll('#reference-file-select option')].map((node) => node.value),
+    ['docs/spec.pdf']
+  );
+
+  document.querySelector('#reference-file-select').value = 'docs/spec.pdf';
+  document.querySelector('#reference-file-form').requestSubmit();
+
+  assert.equal(document.querySelector('#reference-files-state').textContent.trim(), '2件');
+  const paragraph = document.querySelector('#markdown-content p');
+  paragraph.querySelector('.inline-ai-button').click();
+  assert.match(
+    document.querySelector('#ai-target-comments').textContent,
+    /参照ファイル2件の中身も渡します/,
+    '質問を投げる前に、何が渡るかを言う'
+  );
+
+  document.querySelector('#save-button').click();
+  await waitFor(() => requests.some((body) => Array.isArray(body.referenceFiles)));
+  assert.deepEqual(requests.at(-1).referenceFiles, ['docs/glossary.md', 'docs/spec.pdf']);
+
+  // 外すと次のAI操作からは読ませません。
+  document.querySelector('[data-reference-detach="docs/glossary.md"]').click();
+  assert.equal(document.querySelector('#reference-files-state').textContent.trim(), '1件');
+  assert.deepEqual(
+    [...document.querySelectorAll('#reference-files-list .reference-file-path')].map((node) => node.textContent),
+    ['docs/spec.pdf']
+  );
+});
+
 test('a note written while a save is in flight is still saved', async (t) => {
   const markdown = '# Guide\n\nRun the program.\n';
   const requests = [];

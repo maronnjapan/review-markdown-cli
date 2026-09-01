@@ -44,6 +44,7 @@ import {
 import { followUpChatPrompt, initialChatPrompt } from './prompts/chat.js';
 import { BRIEF_SCHEMA, briefPrompt } from './prompts/manager.js';
 import { PASSAGE_SCHEMA, TERM_SCHEMA, translationPrompt } from './prompts/translate.js';
+import { listReferenceFiles, readReferenceFiles } from './referenceFiles.js';
 import { listReviewSkills, readReviewSkill, readReviewSkills } from './reviewSkills.js';
 import { readReview } from './reviewStore.js';
 
@@ -102,20 +103,34 @@ export class AiService {
   /**
    * What the AI should assume while reading one document: the project wide
    * context, what the document is for, the one saved with that document's
-   * review, the notes the reviewer left on it, and the reader it is written for.
+   * review, the notes the reviewer left on it, the reader it is written for,
+   * and the files the reviewer attached from next to the document.
    *
    * 相談もレビューも翻訳も配置も、前提はこの1本から受け取ります。
-   * 「残したメモの上でレビューする」が別配線ではなく既定の動きなのは、そのためです。
+   * 「残したメモの上でレビューする」「添えた用語集の上でレビューする」が別配線ではなく
+   * 既定の動きなのは、そのためです。
+   *
+   * 参照ファイルはここで毎回読み直します。前提として渡すのは保存したパスではなく
+   * 中身なので、隣のファイルを直したら次のAI操作からその中身で読ませます。
    */
   async readingContext(documentPath) {
-    const { aiContext, brief, contextNotes, persona } = await readReview(this.rootDir, documentPath);
+    const { aiContext, brief, contextNotes, persona, referenceFiles } = await readReview(this.rootDir, documentPath);
     return resolveAiContext({
       project: this.projectContext,
       document: aiContext,
       brief: this.managerEnabled ? brief : null,
       notes: contextNotes,
-      persona
+      persona,
+      files: await readReferenceFiles(this.rootDir, documentPath, referenceFiles)
     });
+  }
+
+  /**
+   * その文書に添えられるファイル。同階層以下だけを返します。
+   * AIは要らないので、起動前でも答えられます（レビュースキルの一覧と同じです）。
+   */
+  listReferenceFiles(documentPath) {
+    return listReferenceFiles(this.rootDir, documentPath);
   }
 
   async status() {
@@ -244,6 +259,8 @@ export class AiService {
     // そのまま目的になります。それは「作る前に目的を決める」の逆で、手段が目的に
     // 化けた状態を追認するだけです。保存済みのブリーフも混ぜません。組み直しの材料は
     // 走り書きだけ、というのは読み手ペルソナと同じです。
+    // 参照ファイルも同じ理由で渡しません。隣に置いてある資料は「すでに書かれているもの」
+    // そのもので、そこから目的を起こすのは本文から起こすのと変わりません。
     const { aiContext, contextNotes, persona } = await readReview(this.rootDir, documentPath);
     const readingContext = resolveAiContext({
       project: this.projectContext,
@@ -270,6 +287,8 @@ export class AiService {
     if (!notes) throw new Error('読み手ペルソナの説明を入力してください');
 
     // 組み直しの材料は走り書きだけです。保存済みのペルソナは前提に混ぜません。
+    // 参照ファイルも渡しません。読み手が誰かは隣の資料ではなく、レビュアーの走り書きと
+    // 決めた3点から決まるもので、添えた章を読ませても入力が重くなるだけです。
     // 読み取りコンテキストと残したメモ、そして管理者が決めた3点は渡します。
     // どんな原稿の読み手なのかが決まるからで、なかでも期待値は「読んだあと何ができれば
     // よいか」なので、読み手そのものの説明に一番近い前提です。

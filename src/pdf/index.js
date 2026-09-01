@@ -6,6 +6,20 @@ import { httpError } from '../http.js';
 import { createPathFilter } from '../pathFilter.js';
 
 const PDF_EXTENSION = '.pdf';
+
+/**
+ * `readPdfText` がPDF.jsへ渡す添付データの置き場です。CJKのPDFから文字を取り出すには
+ * cmap が、埋め込まれていないフォントを持つPDFには標準フォントの実体が要ります。
+ * どちらも `pdfjs-dist` に同梱されているので、そこを指します。
+ *
+ * `file://` のURLではなくディレクトリのパスを渡すのは、Nodeの `fetch` が `file://` を
+ * 扱えないからです。URLで渡すとPDF.jsは読めずに警告だけ出し、埋め込みフォントを持たない
+ * PDFの文字が落ちます。
+ */
+const PDFJS_DATA = {
+  cMapUrl: fileURLToPath(import.meta.resolve('pdfjs-dist/cmaps/')),
+  standardFontDataUrl: fileURLToPath(import.meta.resolve('pdfjs-dist/standard_fonts/'))
+};
 const PDFJS_ASSETS = new Map([
   ['/vendor/pdfjs/pdf.mjs', {
     path: fileURLToPath(import.meta.resolve('pdfjs-dist/build/pdf.mjs')),
@@ -42,6 +56,58 @@ export async function listPdfFiles(rootDir, filter = createPathFilter()) {
 
 export function pdfUrlFor(relativeFile) {
   return `/api/pdf?path=${encodeURIComponent(relativeFile)}`;
+}
+
+/**
+ * PDFの本文を、参照ファイルとしてモデルへ渡せるテキストにします。
+ *
+ * 画面のPDFはブラウザのPDF.jsが描いていて、サーバーはPDF本体を流すだけでした。
+ * 参照ファイルは本文を読ませるものなので、ここだけはNode側でも文字を取り出します。
+ * 使うのは同じ `pdfjs-dist` の、ブラウザAPIに依らない legacy ビルドです。
+ *
+ * 取り出せるのは文字だけで、段組み・表・図の位置関係は落ちます。落ちることは
+ * プロンプト側でモデルへ伝えます（`prompts/readingContext.js` の kind="pdf"）。
+ * 画像だけのPDF（スキャン）からは何も取れません。空文字が返るので、
+ * 呼ぶ側は「読めなかった」と同じ扱いにします。
+ *
+ * @param {number} [maxChars] これだけ取れたら残りのページは開きません。
+ *   1000ページのPDFを添えられても、渡す分より先は読まないためです。
+ */
+export async function readPdfText(filePath, maxChars = Infinity) {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const data = new Uint8Array(await fsp.readFile(filePath));
+  const loadingTask = pdfjs.getDocument({
+    data,
+    // 文字を取り出すだけなので、フォントもJavaScriptも要りません。
+    // `isEvalSupported: false` はPDF側のコードを走らせないための指定です。
+    isEvalSupported: false,
+    useSystemFonts: false,
+    cMapUrl: PDFJS_DATA.cMapUrl,
+    cMapPacked: true,
+    standardFontDataUrl: PDFJS_DATA.standardFontDataUrl
+  });
+  const pdf = await loadingTask.promise;
+  try {
+    const pages = [];
+    let length = 0;
+    for (let pageNumber = 1; pageNumber <= pdf.numPages && length < maxChars; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      // `hasEOL` は元のPDFで行が変わったところです。これを改行に戻さないと、
+      // ページ全体が1行に潰れて、見出しと本文の切れ目が読めなくなります。
+      const text = content.items
+        .map((item) => (item.hasEOL ? `${item.str}\n` : item.str))
+        .join('')
+        .trim();
+      page.cleanup();
+      if (!text) continue;
+      pages.push(text);
+      length += text.length;
+    }
+    return pages.join('\n\n');
+  } finally {
+    await loadingTask.destroy();
+  }
 }
 
 export function assertSupportedPdfAiTarget(relativeFile, target) {

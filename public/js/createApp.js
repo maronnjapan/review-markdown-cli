@@ -19,6 +19,7 @@ import { renderDiagrams } from './diagrams.js';
 import { createDocumentReviewController } from './documentReview.js';
 import { createDocumentReviseController } from './documentRevise.js';
 import { createDocumentTargets } from './documentTargets.js';
+import { createReferenceFilesController } from './referenceFiles.js';
 import { aliasRefs, queryRefs } from './dom.js';
 import { createEditor } from './editor.js';
 import { createFileListView } from './fileListView.js';
@@ -64,6 +65,16 @@ const WORKSPACE_NOTES_REFS = {
   contextNotesStatus: 'workspaceContextNotesStatus',
   contextNotesList: 'workspaceContextNotesList'
 };
+const WORKSPACE_REFERENCE_FILE_REFS = {
+  referenceFilesState: 'workspaceReferenceFilesState',
+  referenceFileForm: 'workspaceReferenceFileForm',
+  referenceFileFilter: 'workspaceReferenceFileFilter',
+  referenceFileSelect: 'workspaceReferenceFileSelect',
+  referenceFileAdd: 'workspaceReferenceFileAdd',
+  referenceFilesFull: 'workspaceReferenceFilesFull',
+  referenceFilesStatus: 'workspaceReferenceFilesStatus',
+  referenceFilesList: 'workspaceReferenceFilesList'
+};
 const WORKSPACE_BRIEF_REFS = {
   briefState: 'workspaceBriefState',
   briefPurpose: 'workspaceBriefPurpose',
@@ -107,6 +118,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     // flush here. The reading context has no other writer, so it always does.
     hasPendingWork: () => (state.mode !== 'edit' && state.commentsDirty)
       || state.aiContextDirty || state.briefDirty || state.contextNotesDirty || state.personaDirty
+      || state.referenceFilesDirty
   });
   // 前提を書く欄は、サイドパネルとコンテキスト画面の2か所に出ます。操作盤を2つ作って
   // 束ね、どちらから書き換えても同じ state を見て両方が描き直すようにしています。
@@ -145,6 +157,25 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     onChange: markContextNotesDirty
   });
   const contextNotes = fanOut([sideContextNotes, workspaceContextNotes]);
+  // 添えたファイルも2か所から選べます。一覧を取りに行くのは先に load() された1つだけで、
+  // 届いたらここで両方を描き直します。
+  const referenceFileOptions = {
+    state,
+    api,
+    toaster,
+    onChange: markReferenceFilesDirty,
+    onCandidatesChanged: (message, status) => {
+      referenceFiles.render();
+      referenceFiles.setStatus(status || (state.referenceFilesDirty ? 'dirty' : 'idle'), message);
+    }
+  };
+  const referenceFiles = fanOut([
+    createReferenceFilesController({ refs, ...referenceFileOptions }),
+    createReferenceFilesController({
+      refs: aliasRefs(refs, WORKSPACE_REFERENCE_FILE_REFS),
+      ...referenceFileOptions
+    })
+  ]);
   const editor = createEditor({
     refs,
     state,
@@ -347,10 +378,11 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       state.briefDirty = false;
       state.contextNotesDirty = false;
       state.personaDirty = false;
+      state.referenceFilesDirty = false;
       return true;
     }
     if (state.commentsDirty || state.aiContextDirty || state.briefDirty || state.contextNotesDirty
-      || state.personaDirty || commentSaves.isBusy()) {
+      || state.personaDirty || state.referenceFilesDirty || commentSaves.isBusy()) {
       if (await commentSaves.flush()) return true;
       if (!window.confirm('コメントを保存できていません。破棄して移動しますか？')) return false;
       state.commentsDirty = false;
@@ -358,6 +390,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       state.briefDirty = false;
       state.contextNotesDirty = false;
       state.personaDirty = false;
+      state.referenceFilesDirty = false;
     }
     return true;
   }
@@ -397,6 +430,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     briefNoticeShown = false;
     documentBrief.load();
     contextNotes.load();
+    referenceFiles.load();
     contextPage.load();
     documentReview.load();
     revise.reset();
@@ -437,10 +471,12 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     if (!state.briefDirty) state.brief = state.features.manager ? (data.review?.brief || null) : null;
     if (!state.contextNotesDirty) state.contextNotes = data.review?.contextNotes || [];
     if (!state.personaDirty) state.persona = data.review?.persona || null;
+    if (!state.referenceFilesDirty) state.referenceFiles = data.review?.referenceFiles || [];
     state.commentsDirty = false;
     aiContext.load();
     documentBrief.refresh();
     contextNotes.render();
+    referenceFiles.render();
     documentReview.refresh();
     contextPage.render();
     bodyCopy.syncControl();
@@ -935,6 +971,23 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
   }
 
   /**
+   * 添えたファイルも、コメントと同じ自動保存でレビューファイルへ入ります。
+   * 添えた直後に相談やレビューを始めても、その回からその中身を読ませられます。
+   */
+  function markReferenceFilesDirty() {
+    state.referenceFilesDirty = true;
+    // Every edit invalidates in-flight saves: their response must not overwrite newer text.
+    state.commentsVersion += 1;
+    // The AI pane promises to say what travels with a question; the files are part of it.
+    ai.refreshTarget();
+    // 添えたファイルも2か所へ出しているので、押していないほうの一覧も描き直します。
+    referenceFiles.render();
+    referenceFiles.setStatus('dirty');
+    if (!state.currentPath) return;
+    commentSaves.schedule();
+  }
+
+  /**
    * 決めた3点も、コメントと同じ自動保存でレビューファイルへ入ります。
    * 決めた直後にレビューを始めても、その回から3点が前提として効きます。
    */
@@ -1022,7 +1075,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
   async function pushComments() {
     if (!state.currentPath) return true;
     if (state.mode === 'edit' && !state.aiContextDirty && !state.briefDirty
-      && !state.contextNotesDirty && !state.personaDirty) {
+      && !state.contextNotesDirty && !state.personaDirty && !state.referenceFilesDirty) {
       return true;
     }
     const version = state.commentsVersion;
@@ -1036,12 +1089,16 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     const savedBrief = state.brief;
     const savingBrief = state.briefDirty;
     const savedPersona = state.persona;
+    // 添えたファイルも、変わったときだけ送ります。状態表示を動かす条件もメモと同じです。
+    const savedReferenceFiles = state.referenceFiles;
+    const savingReferenceFiles = state.referenceFilesDirty;
     // Leaving the comments out keeps the ones on file, which is what edit mode wants.
     const savingComments = state.mode !== 'edit';
     setCommentStatus('saving', '保存中…');
     aiContext.setStatus('saving');
     if (savingBrief) documentBrief.setStatus('saving');
     if (savingNotes) contextNotes.setStatus('saving');
+    if (savingReferenceFiles) referenceFiles.setStatus('saving');
 
     try {
       const result = await api.saveComments({
@@ -1053,13 +1110,18 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
         // 空の配列は「最後の1件を消した」なので、未変更の undefined と区別して送ります。
         ...(savingNotes ? { contextNotes: savedNotes } : {}),
         // null は「ペルソナを消す」なので、未変更の undefined と区別して送ります。
-        ...(state.personaDirty ? { persona: savedPersona } : {})
+        ...(state.personaDirty ? { persona: savedPersona } : {}),
+        // 空の配列は「最後の1件を外した」なので、未変更の undefined と区別して送ります。
+        ...(savingReferenceFiles ? { referenceFiles: savedReferenceFiles } : {})
       });
       state.commentSaveFailed = false;
       if (state.currentPath === path && state.aiContext === savedContext) state.aiContextDirty = false;
       if (state.currentPath === path && state.brief === savedBrief) state.briefDirty = false;
       if (state.currentPath === path && state.contextNotes === savedNotes) state.contextNotesDirty = false;
       if (state.currentPath === path && state.persona === savedPersona) state.personaDirty = false;
+      if (state.currentPath === path && state.referenceFiles === savedReferenceFiles) {
+        state.referenceFilesDirty = false;
+      }
       if (state.commentsVersion !== version || state.currentPath !== path) return true;
       if (savingComments) {
         adoptSavedCommentIds(result.review.comments);
@@ -1070,6 +1132,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       aiContext.setStatus(state.aiContextDirty ? 'dirty' : 'saved');
       if (savingBrief) documentBrief.setStatus(state.briefDirty ? 'dirty' : 'saved');
       if (savingNotes) contextNotes.setStatus(state.contextNotesDirty ? 'dirty' : 'saved');
+      if (savingReferenceFiles) referenceFiles.setStatus(state.referenceFilesDirty ? 'dirty' : 'saved');
       return true;
     } catch (error) {
       state.commentSaveFailed = true;
@@ -1077,6 +1140,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       aiContext.setStatus('error', `保存できませんでした: ${error.message}`);
       if (savingBrief) documentBrief.setStatus('error', `保存できませんでした: ${error.message}`);
       if (savingNotes) contextNotes.setStatus('error', `保存できませんでした: ${error.message}`);
+      if (savingReferenceFiles) referenceFiles.setStatus('error', `保存できませんでした: ${error.message}`);
       return false;
     }
   }
@@ -1206,6 +1270,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       || state.briefDirty
       || state.contextNotesDirty
       || state.personaDirty
+      || state.referenceFilesDirty
       || state.commentSaveFailed
       || commentSaves.isBusy();
   }
@@ -1214,7 +1279,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     if (!state.currentPath) return;
     const savingComments = state.mode === 'comment' && state.commentsDirty;
     if (!savingComments && !state.aiContextDirty && !state.briefDirty
-      && !state.contextNotesDirty && !state.personaDirty) return;
+      && !state.contextNotesDirty && !state.personaDirty && !state.referenceFilesDirty) return;
     api.beaconComments({
       path: state.currentPath,
       // Edit mode owns the comments; only the reading context is ours to send.
@@ -1222,7 +1287,8 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       aiContext: state.aiContext,
       ...(state.briefDirty ? { brief: state.brief } : {}),
       ...(state.contextNotesDirty ? { contextNotes: state.contextNotes } : {}),
-      ...(state.personaDirty ? { persona: state.persona } : {})
+      ...(state.personaDirty ? { persona: state.persona } : {}),
+      ...(state.referenceFilesDirty ? { referenceFiles: state.referenceFiles } : {})
     });
   }
 
@@ -1291,6 +1357,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     refs.contextOpenButton.addEventListener('click', openContextPage);
     refs.aiContextOpenPage.addEventListener('click', openContextPage);
     refs.contextNotesOpenPage.addEventListener('click', openContextPage);
+    refs.referenceFilesOpenPage.addEventListener('click', openContextPage);
     refs.workspaceBackButton.addEventListener('click', () => {
       if (state.currentPath) window.location.hash = `#/review/${encodeURIComponent(state.currentPath)}`;
     });

@@ -49,6 +49,7 @@ const ROUTES = [
   { methods: ['POST'], pathname: '/api/ai/translate', feature: 'translation', handle: translateWithAi },
   { methods: ['POST'], pathname: '/api/ai/message', handle: sendAiMessage },
   { methods: ['POST'], pathname: '/api/ai/place-comments', handle: placeAiComments },
+  { methods: ['GET'], pathname: '/api/ai/reference-files', handle: listAiReferenceFiles },
   { methods: ['GET'], pathname: '/api/ai/review-skills', handle: listAiReviewSkills },
   { methods: ['GET'], pathname: '/api/ai/review-skill', handle: readAiReviewSkill },
   { methods: ['POST'], pathname: '/api/ai/brief', feature: 'manager', handle: composeAiDocumentBrief },
@@ -285,6 +286,20 @@ function sendAiMessage(context) {
   });
 }
 
+/**
+ * その文書に添えられるファイル。同階層以下だけを返します。
+ *
+ * `reviewTarget` を通さずに読むのは、参照ファイルに --include / --exclude を効かせて
+ * いないからです。一覧から隠したファイルも前提としては渡せます（`referenceFiles.js`）。
+ * レビュー対象ディレクトリの外へ出ないことは `normalizeRelativePath` が見ています。
+ */
+async function listAiReferenceFiles(context) {
+  const { rootDir, aiService, response, url } = context;
+  authorizeAiRequest(context);
+  const relativeFile = normalizeRelativePath(rootDir, url.searchParams.get('path'));
+  return sendJson(response, await aiService.listReferenceFiles(relativeFile));
+}
+
 /** 選べるレビュースキル。Codexを起動しないので、レビュー実行前でも一覧できます。 */
 async function listAiReviewSkills(context) {
   const { aiService, response } = context;
@@ -505,17 +520,19 @@ async function commentsFor(rootDir, relativeFile, body) {
 
 /**
  * A request that says nothing about the reading context, the document brief, the
- * context notes or the reader persona keeps the saved ones: the page beacon on
- * the way out carries comments only. `persona: null` and `brief: null` are how
- * the reviewer clears those, and an empty `contextNotes` array is how they clear
- * the last note.
+ * context notes, the reader persona or the attached files keeps the saved ones:
+ * the page beacon on the way out carries comments only. `persona: null` and
+ * `brief: null` are how the reviewer clears those, and an empty `contextNotes`
+ * or `referenceFiles` array is how they clear the last note or detach the last
+ * file.
  */
 function reviewPremiseOf(body) {
   return {
     ...(typeof body.aiContext === 'string' ? { aiContext: body.aiContext } : {}),
     ...(body.brief !== undefined ? { brief: body.brief } : {}),
     ...(Array.isArray(body.contextNotes) ? { contextNotes: body.contextNotes } : {}),
-    ...(body.persona !== undefined ? { persona: body.persona } : {})
+    ...(body.persona !== undefined ? { persona: body.persona } : {}),
+    ...(Array.isArray(body.referenceFiles) ? { referenceFiles: body.referenceFiles } : {})
   };
 }
 

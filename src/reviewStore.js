@@ -5,6 +5,7 @@ import { SEVERITY_LABELS } from './aiVocabulary.js';
 import { CONTEXT_NOTE_LABELS, normalizeContextNotes, readContextNotes } from './contextNotes.js';
 import { BRIEF_FIELDS, normalizeDocumentBrief, readDocumentBrief } from './documentBrief.js';
 import { PERSONA_FIELD_LABELS, normalizePersona } from './persona.js';
+import { normalizeReferenceFiles, readReferenceFilePaths } from './referenceFiles.js';
 
 export const REVIEW_DIR = '.review';
 
@@ -46,35 +47,54 @@ export async function readReview(rootDir, relativeFile) {
       // 壊れた値でも投げません。ここで投げると、その文書は画面から開けなくなります。
       contextNotes: readContextNotes(parsed.contextNotes),
       persona: normalizePersona(parsed.persona),
+      // 添えた参照ファイルも、壊れた値や同階層以下から外れたパスでは投げません。
+      // 落とす理由はメモと同じで、レビューファイルの1行でその文書が開けなくなるのを避けるためです。
+      referenceFiles: readReferenceFilePaths(parsed.referenceFiles, targetFile),
       updatedAt: parsed.updatedAt
     };
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
-    return { targetFile, comments: [], aiContext: '', brief: null, contextNotes: [], persona: null };
+    return {
+      targetFile, comments: [], aiContext: '', brief: null, contextNotes: [], persona: null, referenceFiles: []
+    };
   }
 }
 
 /**
  * Replaces the comments of one review.
  *
- * 本文以外の4つ、読み取りコンテキスト（`aiContext`）・資料の管理者（`brief`）・
- * コンテキストメモ（`contextNotes`）・読み手ペルソナ（`persona`）は、渡さなければ
- * ファイルにあるものを据え置きます。コメントだけを保存するとき（画面を離れるときの
- * ビーコンもそうです）に、書いた前提が黙って消えないようにするためです。
+ * 本文以外の5つ、読み取りコンテキスト（`aiContext`）・資料の管理者（`brief`）・
+ * コンテキストメモ（`contextNotes`）・読み手ペルソナ（`persona`）・参照ファイル
+ * （`referenceFiles`）は、渡さなければファイルにあるものを据え置きます。コメントだけを
+ * 保存するとき（画面を離れるときのビーコンもそうです）に、書いた前提が黙って消えない
+ * ようにするためです。
  */
-export async function writeReview(rootDir, relativeFile, comments, { aiContext, brief, contextNotes, persona } = {}) {
+export async function writeReview(
+  rootDir,
+  relativeFile,
+  comments,
+  { aiContext, brief, contextNotes, persona, referenceFiles } = {}
+) {
   const requestedTargetFile = relativeFile.split(path.sep).join('/');
   const { filePath, targetFile } = await findExistingReviewLocation(rootDir, requestedTargetFile);
   // 1つでも省かれていれば、据え置く値を知るために現在の中身を読みます。
   // 条件を `a === undefined || b === undefined` と書き足していくと、項目が増えたときに
   // 足し忘れて、保存のたびに前提が消えるようになります。
-  const saved = [aiContext, brief, contextNotes, persona].some((value) => value === undefined)
+  const saved = [aiContext, brief, contextNotes, persona, referenceFiles].some((value) => value === undefined)
     ? await readReview(rootDir, requestedTargetFile)
     : null;
   const nextAiContext = aiContext === undefined ? saved.aiContext : normalizeAiContext(aiContext);
   const nextBrief = brief === undefined ? saved.brief : normalizeDocumentBrief(brief);
   const nextNotes = contextNotes === undefined ? saved.contextNotes : normalizeContextNotes(contextNotes);
   const nextPersona = persona === undefined ? saved.persona : normalizePersona(persona);
+  // 「同階層以下」を測る起点は `targetFile` ではなく、頼まれたパスのほうです。
+  // レビューファイルが対象ディレクトリより上にあると `targetFile` はその上からの
+  // パスになり（`docs/guide.md`）、画面が送ってくる対象ディレクトリからのパス
+  // （`glossary.md`）を、隣にあるのに同階層の外だと断ってしまいます。
+  // 読むとき（`readReview`）が見ているのも、同じく頼まれたパスです。
+  const nextReferenceFiles = referenceFiles === undefined
+    ? saved.referenceFiles
+    : normalizeReferenceFiles(referenceFiles, requestedTargetFile);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const payload = {
     targetFile,
@@ -83,6 +103,7 @@ export async function writeReview(rootDir, relativeFile, comments, { aiContext, 
     ...(nextBrief ? { brief: nextBrief } : {}),
     ...(nextNotes.length ? { contextNotes: nextNotes.map(withNoteTimestamp) } : {}),
     ...(nextPersona ? { persona: nextPersona } : {}),
+    ...(nextReferenceFiles.length ? { referenceFiles: nextReferenceFiles } : {}),
     comments: comments.map((comment) => ({
       ...withCommentStatus(comment),
       id: comment.id || createCommentId(),
@@ -174,6 +195,7 @@ export function buildReviewMarkdown(review) {
   if (review.aiContext) lines.push('## 読み取りコンテキスト', '', review.aiContext, '');
   appendContextNotes(lines, review.contextNotes);
   appendPersona(lines, review.persona);
+  appendReferenceFiles(lines, review.referenceFiles);
   for (const group of [...COMMENT_GROUPS, OTHER_GROUP]) {
     appendCommentGroup(lines, group.title, grouped.get(group) || [], group.render, statusLabels);
   }
@@ -244,6 +266,22 @@ function appendPersona(lines, persona) {
     }
   }
   if (persona.assumptions?.length) lines.push(`- AIが補った前提: ${persona.assumptions.join(' / ')}`);
+  lines.push('');
+}
+
+/**
+ * 添えた参照ファイル。中身ではなくパスだけを書き出します。
+ *
+ * レビュー結果を渡す相手には「この指摘は何を読んだうえでの指摘か」が要りますが、
+ * 隣にあるファイルは相手も開けます。中身まで写すと、レビューMarkdownがリポジトリの
+ * 写しになり、しかも写した時点で古くなります。
+ */
+function appendReferenceFiles(lines, referenceFiles) {
+  if (!referenceFiles?.length) return;
+  lines.push('## 参照ファイル', '');
+  lines.push('この文書と一緒にAIへ読ませたファイルです。');
+  lines.push('');
+  for (const referenceFile of referenceFiles) lines.push(`- ${referenceFile}`);
   lines.push('');
 }
 

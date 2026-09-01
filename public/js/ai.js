@@ -308,6 +308,7 @@ export function createAiController({
   function renderSharedComments() {
     const count = state.comments.length;
     const noteCount = (state.contextNotes || []).length;
+    const fileCount = (state.referenceFiles || []).length;
     const hasContext = Boolean((state.aiContext || '').trim() || (state.projectAiContext || '').trim());
     const shared = [
       count ? `この文書のコメント${count}件` : '',
@@ -318,7 +319,10 @@ export function createAiController({
       // 渡っていないことに、質問を投げる前に気づけるようにするためです。
       noteCount ? `コンテキストメモ${noteCount}件` : '',
       // 読み手ペルソナも前提の一部なので、翻訳やチャットにも一緒に渡します。
-      state.persona ? '読み手ペルソナ' : ''
+      state.persona ? '読み手ペルソナ' : '',
+      // 添えたファイルは中身ごと渡ります。件数を出すのはメモと同じ理由で、
+      // 添えたはずのファイルが渡っていないことに質問の前に気づけるようにするためです。
+      fileCount ? `参照ファイル${fileCount}件の中身` : ''
     ].filter(Boolean);
     refs.aiTargetComments.textContent = shared.length ? `${shared.join('と')}も渡します。` : '';
     refs.aiTargetComments.hidden = shared.length === 0;
