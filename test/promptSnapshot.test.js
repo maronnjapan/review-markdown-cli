@@ -14,6 +14,7 @@ import { collectCommentContext, commentContextBlock } from '../src/commentContex
 import { contextNotesBlock, normalizeContextNotes } from '../src/contextNotes.js';
 import { documentBriefBlock, readDocumentBrief } from '../src/documentBrief.js';
 import { personaBlock } from '../src/persona.js';
+import { referenceFilesBlock } from '../src/referenceFiles.js';
 import { writeReview } from '../src/reviewStore.js';
 
 /**
@@ -84,6 +85,16 @@ const CONTEXT_NOTES = [
   }
 ];
 
+/**
+ * 添えた参照ファイル。読めたもの・切れたもの・読めなかったものを1件ずつ並べます。
+ * 3つとも入れてあるのは、種類ごとの読み方の説明が全部この枠に出るようにするためです。
+ */
+const REFERENCE_FILES = [
+  { n: 1, path: 'ops/glossary.md', text: '# 用語集\n\n当番: その日の担当者。' },
+  { n: 2, path: 'ops/spec.pdf', kind: 'pdf', text: '再起動は手順書に従うこと。', truncated: true },
+  { n: 3, path: 'ops/missing.md', unreadable: true }
+];
+
 const COMMENT = {
   id: 'comment-fixed-1',
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -140,6 +151,10 @@ const EXPECTED = {
   'block:documentBrief(settled)': '6e22b5ca4958a0ac40b126bc6373fe8c0364e6a0da69622646fbfa48505225ac',
   'block:documentBrief(purposeOnly)': '72266f101ac329a0a7e330c531bbebb7348222c0e7b9bbdbc6dc00b6086fca6d',
   'block:contextNotes(kinds)': 'ec66165825c5638c0d8fb36800a95c3ec6de967840fc431e5707e003f53c87b7',
+  'block:readingContext(filesOnly)': '18e2f071e2747cf9cc4c95241b6a21c73660fc45c198485e65935cbb965dc01b',
+  'block:readingContext(document+files)': '45a4c13bb43cfbfbf8acf8b73b9a36720903ded2258e764addeaa9422ac5b42c',
+  'block:referenceFiles(kinds)': '18e2f071e2747cf9cc4c95241b6a21c73660fc45c198485e65935cbb965dc01b',
+  'block:referenceFiles(readableOnly)': '52be6eeade0dbcf190d24695e58ea2e53addb5d1ff1cf300be2ca6a04d38904c',
   'block:persona(ai)': '23fb353a8c9e17eb35bf275869a4acdfe1983a907b08c3d19fa97c9309513113',
   'block:persona(manual)': '91367577d26fcb16e2d1ed21d839e8b27d8ad5f4b51fb138c1499d2d84fa791b',
   'block:commentContext(some)': 'bd8844700f7878e71d277d2903d9f6dda7b142d9ab6511ac4d77b0cc4d4cb1ff',
@@ -214,6 +229,17 @@ test('AIへ渡す文面は、書き換えるまで一字も変わらない', asy
   // 決めていない項目の説明は出しません。宛先のない指示が毎回混ざるだけだからです。
   record('block:documentBrief(purposeOnly)', documentBriefBlock(readDocumentBrief({ purpose: BRIEF.purpose })));
   record('block:contextNotes(kinds)', contextNotesBlock(normalizeContextNotes(CONTEXT_NOTES)));
+  // 添えた参照ファイルは、書いた前提より後ろの別の枠で渡します。1件も添えていない文書では
+  // 枠ごと出ないので、この機能より前に書かれた文書の文面は一字も変わりません。
+  record('block:readingContext(filesOnly)', aiContextBlock(resolveAiContext({ files: REFERENCE_FILES })));
+  record('block:readingContext(document+files)', aiContextBlock(resolveAiContext({
+    document: 'この文書の前提。',
+    files: REFERENCE_FILES
+  })));
+  record('block:referenceFiles(kinds)', referenceFilesBlock(REFERENCE_FILES));
+  // 種類ごとの説明は、当てはまるファイルがあるぶんだけ出します。読めて切れていない
+  // ファイルだけを添えた文書に、切れたときの読み方まで並べても宛先がありません。
+  record('block:referenceFiles(readableOnly)', referenceFilesBlock([REFERENCE_FILES[0]]));
   record('block:persona(ai)', personaBlock(PERSONA));
   record('block:persona(manual)', personaBlock(MANUAL_PERSONA));
 

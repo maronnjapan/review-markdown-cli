@@ -846,6 +846,65 @@ button.danger:hover { background: #9b2116; border-color: #9b2116; color: #fff; }
 }
 .context-note-item-actions button { font-size: 0.7rem; padding: 0.15rem 0.45rem; }
 .context-note-confirm { color: #b42318; font-size: 0.7rem; margin-right: auto; }
+
+/* 参照ファイル（同階層以下から添えるファイル） */
+.reference-file-form {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+.reference-file-form input[type="search"],
+.reference-file-form select {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font: inherit;
+  font-size: 0.78rem;
+  max-width: 100%;
+  padding: 0.3rem 0.45rem;
+}
+.reference-file-actions {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
+.reference-file-actions button { font-size: 0.75rem; padding: 0.3rem 0.7rem; }
+#reference-file-add, #workspace-reference-file-add {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+#reference-file-add:disabled, #workspace-reference-file-add:disabled {
+  background: var(--border);
+  border-color: var(--border);
+  color: var(--muted);
+}
+.reference-files-list { display: grid; gap: 0.4rem; margin-top: 0.5rem; }
+.reference-files-list > .muted { font-size: 0.75rem; margin: 0; }
+.reference-file {
+  align-items: center;
+  background: #f7f9fc;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.4rem 0.6rem;
+}
+.reference-file-path {
+  font-size: 0.78rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.reference-file-kind {
+  background: #e7ecf5;
+  border-radius: 999px;
+  color: #344054;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+}
+.reference-file-item-actions { margin-left: auto; }
+.reference-file-item-actions button { font-size: 0.7rem; padding: 0.15rem 0.45rem; }
 .ai-context-project { margin-top: 0.6rem; }
 .ai-context-project-label {
   color: var(--muted);
@@ -1716,6 +1775,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 .workspace-notes-layout .context-note-form { margin-top: 0; }
 .workspace-notes-layout .context-notes-list { margin-top: 0; }
+.workspace-notes-layout .reference-file-form { margin-top: 0; }
+.workspace-notes-layout .reference-files-list { margin-top: 0; }
 .workspace-conversations {
   display: grid;
   gap: 1rem;

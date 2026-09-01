@@ -39,13 +39,15 @@ export function createAiContextController({ refs, state, onChange }) {
       ? '設定済み'
       : hasProjectContext ? 'ディレクトリ全体の前提のみ' : '未設定';
     refs.aiContextState.dataset.state = hasDocumentContext || hasProjectContext ? 'set' : 'unset';
-    // 「指摘の配置にも前提が渡る」の判定は、書いた前提・管理者の3点・メモをまとめて見ます。
+    // 「指摘の配置にも前提が渡る」の判定は、書いた前提・管理者の3点・メモ・
+    // 添えたファイルをまとめて見ます。
     // 出す・出さないを1か所で決めるため、どれが増えたときもここを呼び直します。
     if (refs.placementContextHint) {
       refs.placementContextHint.hidden = !hasProjectContext
         && !hasDocumentContext
         && !state.brief
-        && (state.contextNotes || []).length === 0;
+        && (state.contextNotes || []).length === 0
+        && (state.referenceFiles || []).length === 0;
     }
   }
 
