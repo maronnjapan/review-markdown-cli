@@ -4,6 +4,7 @@ import { serveAsset } from './assets.js';
 import { documentRevision } from './documentEdits.js';
 import { applyBlockEdits } from './editorMarkdown.js';
 import { httpError, readJsonBody, sendBuffer, sendJson, startNdjson } from './http.js';
+import { appendCaptionEntry, normalizeCaptionEntry } from './liveCaptions.js';
 import { assetUrlFor, isMarkdownPath, isTextDocumentPath, resolveDocumentLink } from './links.js';
 import { renderMarkdown } from './markdown.js';
 import { listMarkdownFiles } from './markdownFiles.js';
@@ -55,19 +56,38 @@ const ROUTES = [
   { methods: ['POST'], pathname: '/api/ai/brief', feature: 'manager', handle: composeAiDocumentBrief },
   { methods: ['POST'], pathname: '/api/ai/persona', handle: composeAiPersona },
   { methods: ['POST'], pathname: '/api/ai/review', handle: reviewWithAi },
-  { methods: ['POST'], pathname: '/api/ai/revise', handle: reviseWithAi }
+  { methods: ['POST'], pathname: '/api/ai/revise', handle: reviseWithAi },
+  { methods: ['GET'], pathname: '/api/live-captions/token', handle: liveCaptionsTokenInfo },
+  { methods: ['POST'], pathname: '/api/live-captions/append', handle: appendLiveCaption }
 ];
+
+/**
+ * Meet Captions Memo（Google Meetの字幕をローカルに記録するChrome拡張機能）が
+ * 字幕の1行を送るのに使うヘッダー名です。`liveCaptionsToken` と合わせて、
+ * この拡張機能以外からの書き込みを断ります。
+ */
+const LIVE_CAPTIONS_TOKEN_HEADER = 'x-review-markdown-live-captions-token';
 
 export function createRequestHandler({
   rootDir,
   filter,
   aiService,
   aiToken,
+  liveCaptionsToken,
   projectAiContext = '',
   settings = createSettings()
 }) {
   return async function handleRequest(request, response) {
     const url = new URL(request.url, 'http://localhost');
+
+    // 字幕の追記だけは拡張機能（別オリジンの chrome-extension://）から呼ばれるので、
+    // ブラウザが送るプリフライトにはルート一覧を通さずここで直接答えます。
+    if (request.method === 'OPTIONS' && url.pathname === '/api/live-captions/append') {
+      applyLiveCaptionsCors(request, response);
+      response.writeHead(204);
+      return response.end();
+    }
+
     const route = ROUTES.find((candidate) => (
       candidate.pathname === url.pathname && candidate.methods.includes(request.method)
     ));
@@ -78,6 +98,7 @@ export function createRequestHandler({
       filter,
       aiService,
       aiToken,
+      liveCaptionsToken,
       projectAiContext,
       settings,
       features: settings.features,
@@ -361,6 +382,75 @@ function assertLocalAiRequest(request) {
     }
     if (originUrl.host !== host) throw httpError('Cross-origin AI requests are not allowed', 403);
   }
+}
+
+/**
+ * トークンを表示するだけの窓口です。この画面（同一オリジン）から呼べば、
+ * Meet Captions Memoの設定へ貼り付けるトークンとエンドポイントを返します。
+ * `assertLocalAiRequest` と同じ「localhost かつ同一オリジンのみ」を使うのは、
+ * 別サイトに埋め込まれたページからこのトークンを読み取らせないためです。
+ */
+async function liveCaptionsTokenInfo({ request, response, liveCaptionsToken }) {
+  assertLocalAiRequest(request);
+  response.setHeader('Cache-Control', 'no-store');
+  return sendJson(response, {
+    token: liveCaptionsToken,
+    header: LIVE_CAPTIONS_TOKEN_HEADER,
+    endpoint: '/api/live-captions/append'
+  });
+}
+
+/**
+ * Meet Captions Memoの拡張機能から届いた字幕1行を、指定したMarkdownファイルへ追記します。
+ *
+ * 呼び出し元はこのアプリの画面ではなく `chrome-extension://` オリジンなので、
+ * 他のAIエンドポイントが使う「同一オリジンのみ」は使えません。代わりに、
+ * ホストがlocalhostであることと、起動のたびに変わるトークン（`liveCaptionsToken`）が
+ * 一致することの2つで、この拡張機能以外からの書き込みを断ります。
+ */
+async function appendLiveCaption(context) {
+  const { rootDir, request, response, liveCaptionsToken } = context;
+  applyLiveCaptionsCors(request, response);
+  assertLiveCaptionsHost(request);
+  if (!liveCaptionsToken || request.headers[LIVE_CAPTIONS_TOKEN_HEADER] !== liveCaptionsToken) {
+    throw httpError('Invalid live captions token', 403);
+  }
+  const body = await readJsonBody(request);
+  const relativeFile = normalizeRelativePath(rootDir, body.path);
+  if (!isMarkdownPath(relativeFile)) throw httpError('Only Markdown files can receive live captions', 400);
+
+  const entry = normalizeCaptionEntry(body);
+  const result = await appendCaptionEntry(rootDir, relativeFile, entry);
+  response.setHeader('Cache-Control', 'no-store');
+  return sendJson(response, { ok: true, ...result });
+}
+
+function assertLiveCaptionsHost(request) {
+  const host = request.headers.host;
+  let hostUrl;
+  try {
+    hostUrl = new URL(`http://${host}`);
+  } catch {
+    throw httpError('Invalid host', 403);
+  }
+  if (!['localhost', '127.0.0.1', '[::1]', '::1'].includes(hostUrl.hostname)) {
+    throw httpError('This endpoint is available on localhost only', 403);
+  }
+}
+
+/**
+ * ブラウザは拡張機能からの要求もオリジンをチェックするので、CORSヘッダーを
+ * 付けます。反射するのは `chrome-extension://` オリジンだけです
+ * （それ以外のWebサイトから読み書きさせないための最低限の一致条件です。
+ * 本当の防御は `liveCaptionsToken` の一致で、これはその補助です）。
+ */
+function applyLiveCaptionsCors(request, response) {
+  const origin = request.headers.origin;
+  if (typeof origin !== 'string' || !origin.startsWith('chrome-extension://')) return;
+  response.setHeader('Access-Control-Allow-Origin', origin);
+  response.setHeader('Vary', 'Origin');
+  response.setHeader('Access-Control-Allow-Headers', `content-type, ${LIVE_CAPTIONS_TOKEN_HEADER}`);
+  response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
 }
 
 async function listFiles({ rootDir, filter, features, response }) {

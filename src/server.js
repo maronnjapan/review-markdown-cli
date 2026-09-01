@@ -47,10 +47,14 @@ export function createServer(targetDir = '.', options = {}) {
   const aiService = options.aiService
     || createAiService(rootDir, { ...options, features: settings.features });
   const aiToken = options.aiToken || crypto.randomBytes(24).toString('base64url');
+  // Meet Captions Memoなど、この画面と同一オリジンではない呼び出し元向けの別トークン。
+  // aiTokenと分けているのは、AI機能のオリジン制限（同一オリジンのみ）をこの用途には
+  // 適用できないためです（`src/routes.js` の `appendLiveCaption` を参照）。
+  const liveCaptionsToken = options.liveCaptionsToken || crypto.randomBytes(24).toString('base64url');
   // What every document under this root is read under; a document adds its own.
   const projectAiContext = normalizeAiContext(options.aiContext, 'aiContext');
   const handleRequest = createRequestHandler({
-    rootDir, filter, aiService, aiToken, projectAiContext, settings
+    rootDir, filter, aiService, aiToken, liveCaptionsToken, projectAiContext, settings
   });
 
   const app = {
@@ -62,7 +66,7 @@ export function createServer(targetDir = '.', options = {}) {
       return server.listen(port, '127.0.0.1', callback);
     }
   };
-  return { app, rootDir, filter, aiService, settings };
+  return { app, rootDir, filter, aiService, settings, liveCaptionsToken };
 }
 
 /**
