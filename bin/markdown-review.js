@@ -17,7 +17,7 @@ if (options.help) {
   process.exit(0);
 }
 
-const { app, rootDir, filter } = buildServer();
+const { app, rootDir, filter, liveCaptionsToken } = buildServer();
 const { server, port } = await startServer();
 const url = `http://localhost:${port}`;
 
@@ -33,6 +33,7 @@ for (const [label, value] of aiModelLines(options)) console.log(`  ${label}: ${v
 if (port !== options.port) {
   console.log(`Port ${options.port} is already in use; using ${port} instead.`);
 }
+console.log(`  live captions token (Meet Captions Memo拡張機能の設定用): ${liveCaptionsToken}`);
 console.log(`Open ${url}`);
 if (options.open) openBrowser(url);
 
