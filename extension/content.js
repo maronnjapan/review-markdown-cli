@@ -23,10 +23,19 @@
   const STABLE_MS = 1300; // この時間だけテキストが変化しなければ「確定」として記録する
 
   let currentMemoId = null;
-  // speaker -> { text, lastChangedAt, committed }
+  // rowId -> { speaker, text, lastChangedAt, committed }
   const activeEntries = new Map();
   let recording = true;
   let badgeEl = null;
+  let rowIdCounter = 0;
+
+  // Google Meetの内部クラス名(難読化されており、Meet側のUI変更で
+  // 変わることがある)。複数のバージョン/ロールアウトに対応するため、
+  // 候補を並べて順に試す。これらが見つからない場合は、より一般的な
+  // ヒューリスティック(アバター画像や要素構造からの推測)にフォールバックする。
+  const ROW_SELECTOR = '.nMcdL';
+  const TEXT_SELECTOR = '.ygicle, .iTTPOb';
+  const SPEAKER_SELECTOR = '.NWpY1d, .zs7s8d.jxFHg';
   let syncSettings = null; // 未読み込みの間はnull。読み込み後は { enabled, serverUrl, token, path, autoPath }
   let lastSyncFailed = false;
   // 直し方が違うので、トークン切れ（403）だけは分けて覚えます。
@@ -52,6 +61,17 @@
     return new Date().toLocaleTimeString('ja-JP', { hour12: false });
   }
 
+  // 字幕の行要素(DOM要素)に安定したIDを付与する。
+  // 話者名をキーにすると、同じ話者が短時間に連続して発言した場合に
+  // 前の行がまだ確定していないうちに新しい行のテキストで上書きされ、
+  // 発言が失われてしまう。行要素そのものをキーにすることでこれを防ぐ。
+  function getRowId(el) {
+    if (!el.dataset.mcmRowId) {
+      el.dataset.mcmRowId = String(++rowIdCounter);
+    }
+    return el.dataset.mcmRowId;
+  }
+
   // ---------- 字幕領域の検出 ----------
   // Meetの内部クラス名は難読化されており変わりやすいため、
   // 1) セマンティックなaria属性 → 2) 構造的なヒューリスティック の順で探す。
@@ -61,6 +81,13 @@
       '[role="region"][aria-label*="Captions" i], [role="region"][aria-label*="字幕"]'
     );
     if (byRole) return byRole;
+
+    // 既知のクラス名(難読化・変更されやすいが、他の字幕取得ツールでも
+    // 広く確認されている)が画面のどこかに存在すれば、documentを
+    // そのまま「領域」として返す。実際の絞り込みはparseRows側で行う。
+    if (document.querySelector(ROW_SELECTOR) || document.querySelector(TEXT_SELECTOR)) {
+      return document.body;
+    }
 
     // アバター画像(googleusercontent.com)を手掛かりに、
     // 発言者アイコン+テキストの行がまとまっている祖先要素を推測する
@@ -80,7 +107,47 @@
   }
 
   function parseRows(region) {
-    // 1行 = アバター画像を含む最小の祖先div、とみなして切り出す
+    // 1) 既知の行クラス(.nMcdL)があれば最優先で使う。
+    //    話者名・テキストとも専用要素から取得できるため、
+    //    テキストが複数のspanに分割されていても正しく結合できる。
+    const knownRows = Array.from(region.querySelectorAll(ROW_SELECTOR));
+    if (knownRows.length > 0) {
+      return knownRows
+        .map((container) => {
+          const speakerEl = container.querySelector(SPEAKER_SELECTOR);
+          const textEl = container.querySelector(TEXT_SELECTOR);
+          const speaker = speakerEl ? speakerEl.textContent.trim() : '';
+          const text = textEl ? textEl.textContent.trim() : '';
+          return { el: container, speaker: speaker || '話者', text };
+        })
+        .filter((row) => row.text);
+    }
+
+    // 2) 行クラスは見つからないが、既知のテキストクラスは見つかる場合。
+    //    テキスト要素から祖先を辿り、話者名要素も含む行コンテナを推測する。
+    const knownTextEls = Array.from(region.querySelectorAll(TEXT_SELECTOR));
+    if (knownTextEls.length > 0) {
+      const rows = [];
+      const seenContainers = new Set();
+      for (const textEl of knownTextEls) {
+        let container = textEl.parentElement;
+        for (let depth = 0; depth < 4 && container; depth++) {
+          if (container.querySelector(SPEAKER_SELECTOR)) break;
+          container = container.parentElement;
+        }
+        container = container || textEl.parentElement || textEl;
+        if (seenContainers.has(container)) continue;
+        seenContainers.add(container);
+
+        const speakerEl = container.querySelector(SPEAKER_SELECTOR);
+        const speaker = speakerEl ? speakerEl.textContent.trim() : '話者';
+        const text = textEl.textContent.trim();
+        if (text) rows.push({ el: container, speaker, text });
+      }
+      return rows;
+    }
+
+    // 3) 最終フォールバック: アバター画像を含む最小の祖先divを1行とみなす
     const imgs = Array.from(region.querySelectorAll('img'));
     const containers = new Set();
     imgs.forEach((img) => {
@@ -113,7 +180,7 @@
       if (speaker && text.startsWith(speaker)) {
         text = text.slice(speaker.length).trim();
       }
-      if (text) rows.push({ speaker, text });
+      if (text) rows.push({ el: container, speaker, text });
     });
     return rows;
   }
@@ -223,9 +290,9 @@
   }
 
   async function flushActive() {
-    for (const [speaker, entry] of activeEntries) {
+    for (const entry of activeEntries.values()) {
       if (!entry.committed && entry.text.trim()) {
-        await commitLine(speaker, entry.text.trim());
+        await commitLine(entry.speaker, entry.text.trim());
         entry.committed = true;
       }
     }
@@ -247,27 +314,29 @@
     const rows = parseRows(region);
     const seen = new Set();
 
-    for (const { speaker, text } of rows) {
-      seen.add(speaker);
-      const existing = activeEntries.get(speaker);
+    for (const { el, speaker, text } of rows) {
+      const rowId = getRowId(el);
+      seen.add(rowId);
+      const existing = activeEntries.get(rowId);
       if (!existing) {
-        activeEntries.set(speaker, { text, lastChangedAt: Date.now(), committed: false });
-      } else if (existing.text !== text) {
+        activeEntries.set(rowId, { speaker, text, lastChangedAt: Date.now(), committed: false });
+      } else if (existing.text !== text || existing.speaker !== speaker) {
+        existing.speaker = speaker;
         existing.text = text;
         existing.lastChangedAt = Date.now();
         existing.committed = false;
       } else if (!existing.committed && Date.now() - existing.lastChangedAt >= STABLE_MS) {
-        await commitLine(speaker, existing.text.trim());
+        await commitLine(existing.speaker, existing.text.trim());
         existing.committed = true;
       }
     }
 
-    for (const [speaker, entry] of Array.from(activeEntries.entries())) {
-      if (!seen.has(speaker)) {
+    for (const [rowId, entry] of Array.from(activeEntries.entries())) {
+      if (!seen.has(rowId)) {
         if (!entry.committed && entry.text.trim()) {
-          await commitLine(speaker, entry.text.trim());
+          await commitLine(entry.speaker, entry.text.trim());
         }
-        activeEntries.delete(speaker);
+        activeEntries.delete(rowId);
       }
     }
   }

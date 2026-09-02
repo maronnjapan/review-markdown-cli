@@ -123,10 +123,13 @@ Google Meetの内部DOM構造は公開されておらず、UI変更で読み取�
 
 1. Meet画面でF12(開発者ツール)を開き、字幕が表示されている要素を右クリック
    →「検証」でDOM構造を確認する
-2. `content.js` 内の `findCaptionsRegion()` 関数を、実際のDOM構造に合わせて
-   セレクタを調整する(現状は `role="region"` かつ `aria-label` に
-   "Captions"/"字幕" を含む要素を優先し、見つからない場合はアバター画像を
-   手掛かりに推測しています)
+2. `content.js` 内の `findCaptionsRegion()` / `parseRows()` を、実際のDOM構造に
+   合わせて調整する。現状は次の順でフォールバックしている:
+   1. `role="region"` かつ `aria-label` に "Captions"/"字幕" を含む要素
+   2. 既知のクラス名(`.nMcdL` などの行コンテナ、`.ygicle`/`.iTTPOb` などの
+      テキスト要素、`.NWpY1d`/`.zs7s8d.jxFHg` などの話者名要素。いずれも
+      難読化された名前でGoogle側の変更で失効しうる)
+   3. アバター画像(`googleusercontent.com`)を手掛かりにした構造的な推測
 3. `chrome://extensions` でこの拡張機能の「再読み込み」ボタンを押してから
    Meetのタブをリロードする
 
