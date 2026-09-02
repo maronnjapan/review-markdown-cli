@@ -90,6 +90,24 @@ test('保存済みの設定は、貼ったコードの形に戻して見せる',
   );
 });
 
+test('初回は会議ごとのファイルを選び、空の手動パスでは連携を開始しない', async () => {
+  const code = encodePairingCode({ url: 'http://localhost:3210', token: 'captions-token' });
+  const { document, stored } = await openPopup();
+
+  assert.equal(document.getElementById('syncAutoPath').checked, true,
+    '書き込み先が空になる初期状態を作らない');
+
+  document.getElementById('syncCode').value = code;
+  document.getElementById('syncEnabled').checked = true;
+  document.getElementById('syncAutoPath').checked = false;
+  document.getElementById('syncAutoPath').dispatchEvent(new document.defaultView.Event('change'));
+  document.getElementById('syncForm').dispatchEvent(new document.defaultView.Event('submit', { cancelable: true }));
+  await waitFor(() => document.getElementById('syncStatus').dataset.state === 'error');
+
+  assert.match(document.getElementById('syncStatus').textContent, /書き込み先ファイル/);
+  assert.equal(stored[SYNC_SETTINGS_KEY], undefined, '送信不能な設定を連携中として保存しない');
+});
+
 /* ---------------------------------------------------------------- *
  * 差し替え口
  * ---------------------------------------------------------------- */
