@@ -17,7 +17,6 @@
   const SETTINGS_KEY = 'meetCaptionsMemo_settings';
   // review-markdown-cli(ローカルCLI)と連携するときの設定。ポップアップから保存する。
   const SYNC_SETTINGS_KEY = 'meetCaptionsMemo_liveSync';
-  const SYNC_TOKEN_HEADER = 'X-Review-Markdown-Live-Captions-Token';
 
   const POLL_INTERVAL_MS = 400;
   const STABLE_MS = 1300; // この時間だけテキストが変化しなければ「確定」として記録する
@@ -253,10 +252,13 @@
     }
 
     try {
-      const response = await fetch(`${serverUrl}/api/live-captions/append`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', [SYNC_TOKEN_HEADER]: token },
-        body: JSON.stringify({
+      // content scriptからlocalhostへ直接fetchすると、Meetページ側のCORS制約で止まります。
+      // host_permissionsを持つbackground service workerへ通信を委譲します。
+      const response = await sendRuntimeMessage({
+        type: 'APPEND_LIVE_CAPTION',
+        serverUrl,
+        token,
+        body: {
           path: targetPath,
           speaker,
           text,
@@ -264,17 +266,26 @@
           title: memo.title,
           meetingCode: memo.meetingCode,
           startedAt: memo.startedAt
-        })
+        }
       });
-      lastSyncFailed = !response.ok;
+      lastSyncFailed = !response?.ok;
       // 403だけは直し方が違います（コードの貼り直し）。同じ「連携エラー」に混ぜると、
       // 立ち上げ直したせいでトークンが変わっただけなのに、原因を探すことになります。
-      lastSyncStale = response.status === 403;
+      lastSyncStale = response?.status === 403;
     } catch {
       lastSyncFailed = true;
       lastSyncStale = false;
     }
     updateBadge();
+  }
+
+  function sendRuntimeMessage(message) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(message, (response) => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve(response);
+      });
+    });
   }
 
   /**
