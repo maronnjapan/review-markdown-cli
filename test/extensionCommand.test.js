@@ -11,6 +11,7 @@ test('拡張機能フォルダは同梱されていて、manifestを持ってい
   assert.match(manifest.name, /Meet Captions Memo/);
   // ポップアップは連携コードを読むので、その実装も一緒に入っている必要があります。
   await fs.access(path.join(directory, 'pairing.js'));
+  await fs.access(path.join(directory, 'background.js'));
 });
 
 test('review-markdown extension は読み込ませ方まで出す', () => {
