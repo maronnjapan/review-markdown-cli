@@ -81,6 +81,34 @@ export async function readReviewSkill(rootDir, skillId) {
   throw new Error(`レビュースキルが見つかりません: ${id}`);
 }
 
+/** 画面から管理するスキルはプロジェクトの `.agents/skills` に保存します。 */
+export async function saveReviewSkill(rootDir, input = {}) {
+  const id = String(input.id || '').trim();
+  if (!SKILL_ID_PATTERN.test(id)) throw new Error('スキルIDは英数字・ピリオド・ハイフン・アンダースコアで指定してください');
+  const name = String(input.name || '').trim();
+  const description = String(input.description || '').trim();
+  const instructions = String(input.instructions || '').trim();
+  if (!name || !instructions) throw new Error('スキル名と手順を入力してください');
+  if (instructions.length > MAX_SKILL_INSTRUCTION_CHARS) throw new Error('スキルの手順が長すぎます');
+  const dir = path.join(path.resolve(rootDir), '.agents', 'skills', id);
+  await fs.mkdir(dir, { recursive: true });
+  const quote = (value) => JSON.stringify(value);
+  await fs.writeFile(path.join(dir, SKILL_FILE_NAME), `---\nname: ${quote(name)}\ndescription: ${quote(description)}\n---\n\n${instructions}\n`, 'utf8');
+  return readReviewSkill(rootDir, id);
+}
+
+export async function deleteReviewSkill(rootDir, skillId) {
+  const id = String(skillId || '').trim();
+  if (!SKILL_ID_PATTERN.test(id)) throw new Error('削除するスキルが見つかりません');
+  const dir = path.join(path.resolve(rootDir), '.agents', 'skills', id);
+  try {
+    await fs.rm(dir, { recursive: true, force: false });
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new Error('組み込みスキルは削除できません。プロジェクトのスキルだけを削除できます');
+    throw error;
+  }
+}
+
 /**
  * `SKILL.md` の前書き（`---` で挟んだ `key: value`）と本文を分けます。
  * 使うのは title / name / description だけなので、YAMLは1行値だけを読みます。

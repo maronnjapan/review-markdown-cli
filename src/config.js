@@ -67,6 +67,15 @@ const CONFIG_KEY_SPECS = {
     parse: (value, source) => parseBoolean(value, source),
     help: '翻訳機能を有効にするかどうか（既定: false）'
   },
+  aiEmptyTarget: {
+    kind: 'scalar',
+    parse: (value, source) => {
+      const normalized = String(value || '').trim();
+      if (!['document', 'none'].includes(normalized)) throw new Error(`${source}: document または none を指定してください`);
+      return normalized;
+    },
+    help: '未選択でAIチャットを始めるときの対象（document / none。既定: document）'
+  },
   aiContext: {
     kind: 'text',
     parse: (value, source) => normalizeAiContext(value, source),

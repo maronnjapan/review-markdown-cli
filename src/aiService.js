@@ -50,7 +50,7 @@ import { followUpChatPrompt, initialChatPrompt } from './prompts/chat.js';
 import { BRIEF_SCHEMA, briefPrompt } from './prompts/manager.js';
 import { PASSAGE_SCHEMA, TERM_SCHEMA, translationPrompt } from './prompts/translate.js';
 import { listReferenceFiles, readReferenceFiles } from './referenceFiles.js';
-import { listReviewSkills, readReviewSkill, readReviewSkills } from './reviewSkills.js';
+import { deleteReviewSkill, listReviewSkills, readReviewSkill, readReviewSkills, saveReviewSkill } from './reviewSkills.js';
 import { readReview } from './reviewStore.js';
 
 /**
@@ -271,6 +271,9 @@ export class AiService {
     return readReviewSkill(this.rootDir, skillId);
   }
 
+  saveReviewSkill(input) { return saveReviewSkill(this.rootDir, input); }
+  deleteReviewSkill(skillId) { return deleteReviewSkill(this.rootDir, skillId); }
+
   /**
    * レビュアーの走り書きから、資料の管理者に目的・ストーリー・期待値を組み立てさせます。
    * 保存はしません。組み立てた結果と、埋まらなかった項目への問いを返します。
@@ -448,7 +451,7 @@ export class AiService {
     return this.store.listConversations(documentPath);
   }
 
-  async createConversation({ documentPath, target }) {
+  async createConversation({ documentPath, target, context, skillIds }) {
     const normalizedTarget = await this.snapshotTarget(documentPath, target);
     const now = new Date().toISOString();
     const conversation = {
@@ -456,6 +459,10 @@ export class AiService {
       documentPath,
       documentRevision: normalizedTarget.documentRevision,
       target: normalizedTarget,
+      context: normalizeConversationContext(context),
+      skills: skillIds?.length
+        ? (await readReviewSkills(this.rootDir, skillIds)).map(({ id, name, instructions, references }) => ({ id, name, instructions, references }))
+        : [],
       codexThreadId: null,
       title: conversationTitle(normalizedTarget),
       messages: [],
@@ -477,8 +484,11 @@ export class AiService {
 
     try {
       const { threadId, firstTurn } = await this.openConversationThread(conversation);
-      const comments = await collectCommentContext(this.rootDir, conversation.documentPath, conversation.target);
-      const readingContext = await this.readingContext(conversation.documentPath);
+      const enabled = new Set(conversation.context || DEFAULT_CONVERSATION_CONTEXT);
+      const comments = enabled.has('comments')
+        ? await collectCommentContext(this.rootDir, conversation.documentPath, conversation.target)
+        : { entries: [], revision: '' };
+      const readingContext = filterReadingContext(await this.readingContext(conversation.documentPath), enabled);
       const { text } = await this.ai.runTurn({
         threadId,
         prompt: chatPrompt(conversation, content, comments, readingContext, firstTurn),
@@ -627,6 +637,24 @@ export class AiService {
   }
 }
 
+const DEFAULT_CONVERSATION_CONTEXT = ['comments', 'reading', 'brief', 'notes', 'persona', 'files'];
+
+function normalizeConversationContext(value) {
+  if (!Array.isArray(value)) return [...DEFAULT_CONVERSATION_CONTEXT];
+  return [...new Set(value.map(String).filter((entry) => DEFAULT_CONVERSATION_CONTEXT.includes(entry)))];
+}
+
+function filterReadingContext(context, enabled) {
+  return resolveAiContext({
+    project: enabled.has('reading') ? context.project : '',
+    document: enabled.has('reading') ? context.document : '',
+    brief: enabled.has('brief') ? context.brief : null,
+    notes: enabled.has('notes') ? context.notes : [],
+    persona: enabled.has('persona') ? context.persona : null,
+    files: enabled.has('files') ? context.files : []
+  });
+}
+
 /**
  * 1回目は読ませたいものを全部並べ、2回目以降はスレッドに任せます。
  * ただしコメントと前提だけは、会話中に書き換わっていれば添え直します。
@@ -662,10 +690,10 @@ function contextChanged(conversation, readingContext) {
 
 function normalizeTarget(target) {
   const selectedText = String(target?.selectedText || target?.targetText || '').trim();
-  if (!selectedText && target?.type !== 'document') throw new Error('翻訳・相談の対象がありません');
+  if (!selectedText && !['document', 'none'].includes(target?.type)) throw new Error('翻訳・相談の対象がありません');
   if (selectedText.length > MAX_TARGET_CHARS) throw new Error('対象文章が長すぎます');
   return {
-    type: ['text-selection', 'paragraph', 'section', 'document'].includes(target?.type)
+    type: ['text-selection', 'paragraph', 'section', 'document', 'none'].includes(target?.type)
       ? target.type
       : 'text-selection',
     ...(target?.documentType === 'pdf' ? {
@@ -693,6 +721,7 @@ function isTerm(text) {
 
 function conversationTitle(target) {
   if (target.type === 'document') return '文書全体についての会話';
+  if (target.type === 'none') return '対象を指定しない会話';
   const text = target.selectedText.replace(/\s+/g, ' ').trim();
   return text.length > CONVERSATION_TITLE_CHARS ? `${text.slice(0, CONVERSATION_TITLE_CHARS)}…` : text;
 }

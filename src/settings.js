@@ -27,7 +27,7 @@ import {
 } from './config.js';
 
 /** 画面から変えられる設定キー。ここに無いキーは、画面からは読むことも書くこともしません。 */
-export const UI_SETTING_KEYS = ['translation', 'aiModel', 'aiEffort', 'aiReviewModel', 'aiReviewEffort'];
+export const UI_SETTING_KEYS = ['translation', 'aiEmptyTarget', 'aiModel', 'aiEffort', 'aiReviewModel', 'aiReviewEffort'];
 
 /**
  * 空にすると「設定しない」に戻るキー。モデルと推論強度は、外すと選んだAIの既定へ戻ります。

@@ -115,6 +115,7 @@ const PDF_STATUS_LABELS = {
   resolveAction: '確認済みにする',
   reopenAction: '未確認に戻す'
 };
+const SCROLL_RESTORE_KEY = 'review-markdown:scroll-position';
 
 /**
  * Wires the controllers together and owns the routing between the file list and
@@ -475,11 +476,34 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
         renderCommentMode();
       }
       ai.loadDocument();
+      restoreScrollPosition(filePath);
     } catch (error) {
       if (state.currentPath !== filePath) return;
       content.innerHTML = `<p class="load-error">このファイルを開けませんでした: ${escapeText(error.message)}</p>`;
       toaster.error(`このファイルを開けませんでした: ${error.message}`);
     }
+  }
+
+  function rememberScrollPosition() {
+    if (!state.currentPath) return;
+    const pane = refs.markdownContent.closest('.document-pane');
+    window.sessionStorage?.setItem(SCROLL_RESTORE_KEY, JSON.stringify({
+      path: state.currentPath,
+      windowY: window.scrollY,
+      paneY: pane?.scrollTop || 0
+    }));
+  }
+
+  function restoreScrollPosition(filePath) {
+    let saved;
+    try { saved = JSON.parse(window.sessionStorage?.getItem(SCROLL_RESTORE_KEY) || 'null'); } catch { saved = null; }
+    if (!saved || saved.path !== filePath) return;
+    window.sessionStorage.removeItem(SCROLL_RESTORE_KEY);
+    window.requestAnimationFrame(() => {
+      window.scrollTo?.(0, saved.windowY || 0);
+      const pane = refs.markdownContent.closest('.document-pane');
+      if (pane) pane.scrollTop = saved.paneY || 0;
+    });
   }
 
   function adoptSavedDocument(data) {
@@ -1366,6 +1390,17 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     });
 
     refs.backButton.addEventListener('click', navigateBack);
+    refs.refreshButton.addEventListener('click', () => {
+      rememberScrollPosition();
+      window.location.reload();
+    });
+    window.addEventListener('beforeunload', rememberScrollPosition);
+    document.addEventListener('keydown', (event) => {
+      if (event.key.toLowerCase() !== 'r' || !event.shiftKey || !(event.ctrlKey || event.metaKey)) return;
+      event.preventDefault();
+      rememberScrollPosition();
+      window.location.reload();
+    });
     refs.headerLink.addEventListener('click', (event) => {
       if (!hasUnsavedWork()) return;
       event.preventDefault();

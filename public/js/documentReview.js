@@ -150,6 +150,39 @@ export function createDocumentReviewController({
     if (state.openReviewSkillIds.has(id)) renderSkills();
   }
 
+  async function editSkill(existing = null) {
+    const window = refs.reviewPanel.ownerDocument.defaultView;
+    let detail = existing ? state.reviewSkillDetails.get(existing.id) : null;
+    if (existing && !detail) detail = (await api.readReviewSkill(existing.id)).skill;
+    const id = window.prompt('スキルID（英数字・ハイフン）', existing?.id || 'my-skill');
+    if (!id) return;
+    const name = window.prompt('スキル名', existing?.name || '');
+    if (!name) return;
+    const description = window.prompt('説明', existing?.description || '') ?? '';
+    const instructions = window.prompt('AIへの手順（Markdown）', detail?.instructions || '');
+    if (!instructions) return;
+    try {
+      await api.saveReviewSkill({ id, name, description, instructions });
+      state.reviewSkills = [];
+      state.reviewSkillDetails.delete(id);
+      await loadSkills();
+      toaster.success('スキルを保存しました。');
+    } catch (error) { toaster.error(`スキルを保存できませんでした: ${error.message}`); }
+  }
+
+  async function deleteSelectedSkill() {
+    const skill = state.reviewSkills.find((entry) => entry.id === state.reviewSkillIds[0]);
+    const window = refs.reviewPanel.ownerDocument.defaultView;
+    if (!skill || !window.confirm(`「${skill.name}」を削除しますか？`)) return;
+    try {
+      await api.deleteReviewSkill(skill.id);
+      state.reviewSkillIds = state.reviewSkillIds.filter((id) => id !== skill.id);
+      state.reviewSkills = [];
+      await loadSkills();
+      toaster.info('スキルを削除しました。');
+    } catch (error) { toaster.error(`スキルを削除できませんでした: ${error.message}`); }
+  }
+
   function renderSkills() {
     const skills = state.reviewSkills;
     refs.reviewSkillList.innerHTML = skills.map(skillHtml).join('');
@@ -401,6 +434,12 @@ export function createDocumentReviewController({
   }
 
   function bindEvents() {
+    refs.reviewSkillAdd.addEventListener('click', () => editSkill());
+    refs.reviewSkillEdit.addEventListener('click', () => {
+      const skill = state.reviewSkills.find((entry) => entry.id === state.reviewSkillIds[0]);
+      if (skill) editSkill(skill);
+    });
+    refs.reviewSkillDelete.addEventListener('click', deleteSelectedSkill);
     refs.reviewSkillList.addEventListener('change', (event) => {
       const input = event.target.closest('input[data-skill-id]');
       if (input) toggleSkill(input.dataset.skillId, input.checked);
