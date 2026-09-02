@@ -194,7 +194,9 @@ async function loadSyncSettings() {
     ? MeetCaptionsPairing.encodePairingCode({ url: sync.serverUrl, token: sync.token })
     : '';
   document.getElementById('syncPath').value = sync.path || '';
-  document.getElementById('syncAutoPath').checked = sync.autoPath === true;
+  // 初回は必ず有効な書き込み先を持たせます。以前は初期値が「手動」なのにパスが空で、
+  // そのまま保存できたため、画面には「連携中」と出ても1件も送信されませんでした。
+  document.getElementById('syncAutoPath').checked = sync.autoPath ?? true;
   renderPairing();
   renderPathField();
 }
@@ -262,20 +264,28 @@ function bindSyncSettingsForm() {
     event.preventDefault();
     const { url, token, error } = readPairing();
     const enabled = document.getElementById('syncEnabled').checked;
+    const path = document.getElementById('syncPath').value.trim();
+    const autoPath = document.getElementById('syncAutoPath').checked;
     // 有効にしたのに繋ぎ先が読めないままだと、記録が始まってから初めて気づくことになります。
     if (enabled && (error || !url)) {
       setSyncStatus(error || '連携を有効にするには、連携コードが要ります', 'error');
+      return;
+    }
+    if (enabled && !autoPath && !path) {
+      setSyncStatus('書き込み先ファイルを選ぶか、「会議ごとにファイルを自動で作る」を有効にしてください', 'error');
       return;
     }
     const sync = {
       enabled,
       serverUrl: url,
       token,
-      path: document.getElementById('syncPath').value.trim(),
-      autoPath: document.getElementById('syncAutoPath').checked
+      path,
+      autoPath
     };
     await storageSet({ [SYNC_SETTINGS_KEY]: sync });
-    setSyncStatus('');
+    setSyncStatus(enabled
+      ? (autoPath ? '連携を開始しました。会議ごとのファイルへ書き込みます' : `連携を開始しました: ${path}`)
+      : '連携を無効にしました', 'ok');
     savedLabel.hidden = false;
     setTimeout(() => (savedLabel.hidden = true), 1500);
   });

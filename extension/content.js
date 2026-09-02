@@ -243,7 +243,14 @@
     if (!syncSettings || !syncSettings.enabled) return;
     const { serverUrl, token } = syncSettings;
     const targetPath = resolveTargetPath(memo);
-    if (!serverUrl || !token || !targetPath) return;
+    // 有効なのに設定が不完全な場合を「連携中」と表示しないでください。旧版では空の
+    // 手動パスを保存でき、このreturnによって通信せず、成功したように見えていました。
+    if (!serverUrl || !token || !targetPath) {
+      lastSyncFailed = true;
+      lastSyncStale = false;
+      updateBadge();
+      return;
+    }
 
     try {
       const response = await fetch(`${serverUrl}/api/live-captions/append`, {
