@@ -105,7 +105,10 @@ export function createSettingsController({ refs, state, api, toaster, onApplied 
   /** 画面の欄からいまの指定を読みます。「自動で選ぶ」は「設定しない」として送ります。 */
   function readForm() {
     const supportsEffort = state.settings?.ai?.supportsEffort !== false;
-    const patch = { translation: refs.settingsTranslation.checked };
+    const patch = {
+      translation: refs.settingsTranslation.checked,
+      aiEmptyTarget: refs.settingsAiEmptyTarget.value
+    };
     for (const field of MODEL_FIELDS) {
       patch[field.settingKey] = readModelField(field);
       // 出していない欄は送りません。推論強度を持たないAIで開いただけで、設定ファイルに
@@ -125,6 +128,7 @@ export function createSettingsController({ refs, state, api, toaster, onApplied 
     state.settings = payload;
     const { settings = {}, ai = {} } = payload;
     refs.settingsTranslation.checked = settings.translation === true;
+    refs.settingsAiEmptyTarget.value = settings.aiEmptyTarget === 'none' ? 'none' : 'document';
     renderProvider(ai);
     renderProviderChoices(ai);
     for (const field of MODEL_FIELDS) renderModelField(field, ai, settings);
@@ -319,6 +323,7 @@ export function createSettingsController({ refs, state, api, toaster, onApplied 
   function setBusy(busy) {
     refs.settingsSave.disabled = busy;
     refs.settingsTranslation.disabled = busy;
+    refs.settingsAiEmptyTarget.disabled = busy;
   }
 
   function setStatus(text) {

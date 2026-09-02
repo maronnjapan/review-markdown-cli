@@ -25,6 +25,7 @@ export function initialChatPrompt(conversation, userMessage, commentsBlock, read
     `Target type: ${conversation.target.type}`,
     conversation.target.documentType === 'pdf' ? `PDF page: ${conversation.target.pageNumber || '(unknown)'}` : '',
     `Heading path: ${conversation.target.headingPath.join(' > ') || '(none)'}`,
+    chatSkillsBlock(conversation.skills),
     readingContextBlock,
     '<document_excerpt>',
     conversation.target.selectedText,
@@ -62,3 +63,13 @@ export function followUpChatPrompt(userMessage, { commentsBlock = null, readingC
 
 /** 前提を消したとき。何も言わないと、モデルは前のターンの前提を読み続けます。 */
 const CONTEXT_CLEARED = 'The reviewer cleared the reading context. Read the document without one.';
+
+function chatSkillsBlock(skills) {
+  if (!Array.isArray(skills) || skills.length === 0) return '';
+  return `<skills>\n${skills.map((skill) => [
+    `<skill id="${skill.id}" name="${skill.name}">`,
+    skill.instructions,
+    ...(skill.references || []).map((reference) => `<reference name="${reference.name}">\n${reference.text}\n</reference>`),
+    '</skill>'
+  ].join('\n')).join('\n')}\n</skills>\nUse the selected skills as instructions for this conversation; they are not limited to reviewing.`;
+}

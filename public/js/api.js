@@ -119,6 +119,18 @@ export const api = {
     return fetchJson(`/api/ai/review-skill?id=${encodeURIComponent(id)}`, aiOptions());
   },
 
+  async saveReviewSkill(skill) {
+    await ensureAiToken();
+    return postJson('/api/ai/review-skill', skill, aiHeaders());
+  },
+
+  async deleteReviewSkill(id) {
+    await ensureAiToken();
+    return fetchJson('/api/ai/review-skill', {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json', ...aiHeaders() }, body: JSON.stringify({ id })
+    });
+  },
+
   async composeAiBrief(payload, options = {}) {
     await ensureAiToken();
     return streamNdjson('/api/ai/brief', payload, { ...options, headers: aiHeaders() });

@@ -1888,3 +1888,17 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   .workspace-notes-layout, .workspace-conversations { grid-template-columns: minmax(0, 1fr); }
   .workspace-conversation-list { max-height: 14rem; }
 }
+
+.ai-context-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: .45rem .8rem;
+  margin-top: .65rem;
+}
+
+.ai-context-options label {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  font-size: .88rem;
+}

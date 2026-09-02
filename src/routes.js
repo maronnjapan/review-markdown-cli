@@ -54,7 +54,7 @@ const ROUTES = [
   { methods: ['POST'], pathname: '/api/ai/place-comments', handle: placeAiComments },
   { methods: ['GET'], pathname: '/api/ai/reference-files', handle: listAiReferenceFiles },
   { methods: ['GET'], pathname: '/api/ai/review-skills', handle: listAiReviewSkills },
-  { methods: ['GET'], pathname: '/api/ai/review-skill', handle: readAiReviewSkill },
+  { methods: ['GET', 'POST', 'DELETE'], pathname: '/api/ai/review-skill', handle: aiReviewSkill },
   { methods: ['POST'], pathname: '/api/ai/brief', feature: 'manager', handle: composeAiDocumentBrief },
   { methods: ['POST'], pathname: '/api/ai/persona', handle: composeAiPersona },
   { methods: ['POST'], pathname: '/api/ai/review', handle: reviewWithAi },
@@ -193,7 +193,9 @@ async function aiConversation(context) {
   const relativeFile = reviewTarget(rootDir, filter, body.path);
   assertSupportedPdfAiTarget(relativeFile, body.target);
   return sendJson(response, {
-    conversation: await aiService.createConversation({ documentPath: relativeFile, target: body.target })
+    conversation: await aiService.createConversation({
+      documentPath: relativeFile, target: body.target, context: body.context, skillIds: body.skillIds
+    })
   });
 }
 
@@ -335,9 +337,19 @@ async function listAiReviewSkills(context) {
 }
 
 /** 1つのスキルの中身。選ぶ前に何を見るスキルかを画面で読めるようにします。 */
-async function readAiReviewSkill(context) {
-  const { aiService, response, url } = context;
+async function aiReviewSkill(context) {
+  const { aiService, request, response, url } = context;
   authorizeAiRequest(context);
+  if (request.method === 'POST') {
+    try { return sendJson(response, { skill: await aiService.saveReviewSkill(await readJsonBody(request)) }); }
+    catch (error) { throw httpError(error.message, 400); }
+  }
+  if (request.method === 'DELETE') {
+    const body = await readJsonBody(request);
+    try { await aiService.deleteReviewSkill(body.id); }
+    catch (error) { throw httpError(error.message, 400); }
+    return sendJson(response, { deleted: true });
+  }
   return sendJson(response, { skill: await aiService.readReviewSkill(url.searchParams.get('id')) });
 }
 

@@ -15,6 +15,7 @@
         <h1>Markdown / PDF Review</h1>
       </div>
       <div class="app-header-actions">
+        <button id="refresh-button" type="button" aria-keyshortcuts="Control+Shift+R Meta+Shift+R" title="位置を保って更新（Ctrl/⌘+Shift+R）">↻ 更新</button>
         <button id="live-captions-button" type="button">Meet連携</button>
         <button id="settings-button" type="button">設定</button>
         <a class="header-link" href="#/">ファイル一覧</a>
@@ -238,6 +239,22 @@
                 <button id="ai-new-conversation" type="button">新規</button>
                 <button id="ai-delete-conversation" type="button" disabled>削除</button>
               </div>
+              <details class="ai-context" open>
+                <summary>AIに渡すコンテキスト <span class="ai-context-state">すべて選択</span></summary>
+                <p class="ai-context-hint">会話ごとに必要な前提だけを選べます。新しい会話ではすべて選択されています。</p>
+                <div id="ai-context-options" class="ai-context-options">
+                  <label><input type="checkbox" value="comments" checked> レビューコメント</label>
+                  <label><input type="checkbox" value="reading" checked> 読み取りコンテキスト</label>
+                  <label><input type="checkbox" value="brief" checked> 目的・ストーリー・期待値</label>
+                  <label><input type="checkbox" value="notes" checked> コンテキストメモ</label>
+                  <label><input type="checkbox" value="persona" checked> 読み手ペルソナ</label>
+                  <label><input type="checkbox" value="files" checked> 参照ファイル</label>
+                </div>
+              </details>
+              <label class="settings-field ai-chat-skills">
+                <span class="settings-field-label">使うスキル（任意・複数選択）</span>
+                <select id="ai-skill-select" multiple size="3" aria-label="AIチャットで使うスキル"></select>
+              </label>
               <section id="ai-target" class="ai-target hidden">
                 <span id="ai-target-type" class="target-badge"></span>
                 <p id="ai-target-path" class="ai-target-path"></p>
@@ -294,6 +311,11 @@
                   <span id="review-skill-state" class="ai-context-state">未選択</span>
                 </div>
                 <p class="review-skill-hint">複数選べます。選んだ観点をすべて持った1人として読ませ、指摘ごとにどの観点から出たかを表示します。</p>
+                <div class="review-skill-manage-actions">
+                  <button id="review-skill-add" type="button">スキルを追加</button>
+                  <button id="review-skill-edit" type="button">選択中を編集</button>
+                  <button id="review-skill-delete" type="button" class="danger">選択中を削除</button>
+                </div>
                 <div id="review-skill-list" class="review-skill-list" role="group" aria-label="レビュースキル"></div>
                 <p id="review-skill-status" class="review-skill-status" aria-live="polite"></p>
               </section>
@@ -552,6 +574,18 @@
         </header>
 
         <p id="settings-error" class="load-error" hidden></p>
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">AIチャットの新規会話</h3>
+          <label class="settings-field">
+            <span class="settings-field-label">文章を選択していないときの対象</span>
+            <select id="settings-ai-empty-target">
+              <option value="document">ファイルの内容すべて</option>
+              <option value="none">テキストを設定しない</option>
+            </select>
+          </label>
+          <p class="ai-context-hint">「新規」を押した場合は、直前に選択していた範囲を引き継ぎません。</p>
+        </section>
 
         <section class="settings-section">
           <h3 class="settings-section-title">翻訳</h3>

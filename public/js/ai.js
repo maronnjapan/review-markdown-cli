@@ -55,6 +55,10 @@ export function createAiController({
       const result = await api.listAiConversations(documentPath);
       if (state.currentPath !== documentPath) return;
       state.aiConversations = result.conversations || [];
+      const skillResult = await api.listReviewSkills();
+      refs.aiSkillSelect.innerHTML = (skillResult.skills || []).map((skill) => (
+        `<option value="${escapeHtml(skill.id)}">${escapeHtml(skill.name)}</option>`
+      )).join('');
       renderConversationOptions();
     } catch {
       // Codex is optional until the reviewer opens the AI pane.
@@ -67,6 +71,23 @@ export function createAiController({
     state.translation = null;
     panes.show('ai');
     onPaneRequested();
+    renderTarget();
+    renderTranslation();
+    renderMessages();
+    renderConversationOptions();
+    refs.aiChatInput.focus();
+  }
+
+  function startNewConversation() {
+    state.activeConversationId = null;
+    state.translation = null;
+    // 「新規」は直前の範囲選択を会話へ持ち越さない、明示的なリセットです。
+    state.aiTarget = state.documentType === 'pdf'
+      ? null
+      : ((state.settings?.settings?.aiEmptyTarget || 'document') === 'none' ? { type: 'none' } : { type: 'document' });
+    refs.aiPanel.ownerDocument.defaultView.getSelection()?.removeAllRanges();
+    state.currentSelectionTarget = null;
+    refs.aiContextOptions?.querySelectorAll('input').forEach((input) => { input.checked = true; });
     renderTarget();
     renderTranslation();
     renderMessages();
@@ -189,7 +210,9 @@ export function createAiController({
         toaster.error('PDFでは文章を選択してからAIに質問してください。');
         return;
       }
-      state.aiTarget = { type: 'document' };
+      state.aiTarget = (state.settings?.settings?.aiEmptyTarget || 'document') === 'none'
+        ? { type: 'none' }
+        : { type: 'document' };
       renderTarget();
     }
 
@@ -198,7 +221,9 @@ export function createAiController({
       // The AI reads the saved review, so hand it whatever is on screen first.
       await flushComments();
       if (!conversation) {
-        const created = await api.createAiConversation({ path: state.currentPath, target: state.aiTarget });
+        const context = [...(refs.aiContextOptions?.querySelectorAll('input:checked') || [])].map((input) => input.value);
+        const skillIds = [...refs.aiSkillSelect.selectedOptions].map((option) => option.value);
+        const created = await api.createAiConversation({ path: state.currentPath, target: state.aiTarget, context, skillIds });
         conversation = created.conversation;
         state.aiConversations.unshift(conversation);
         state.activeConversationId = conversation.id;
@@ -298,7 +323,9 @@ export function createAiController({
       ? `ページ ${target.pageNumber}`
       : (target.headingPath || []).join(' › ');
     refs.aiTargetPath.hidden = !refs.aiTargetPath.textContent;
-    refs.aiTargetText.textContent = target.type === 'document'
+    refs.aiTargetText.textContent = target.type === 'none'
+      ? '対象テキストを設定せずに会話を始めます。'
+      : target.type === 'document'
       ? '現在の文書全体を会話開始時のスナップショットとして使用します。'
       : target.selectedText || target.targetText || '';
     renderSharedComments();
@@ -376,7 +403,7 @@ export function createAiController({
 
   function bindEvents() {
     refs.aiConversationSelect.addEventListener('change', () => selectConversation(refs.aiConversationSelect.value));
-    refs.aiNewConversation.addEventListener('click', () => selectConversation(''));
+    refs.aiNewConversation.addEventListener('click', startNewConversation);
     refs.aiDeleteConversation.addEventListener('click', deleteConversation);
     refs.aiChatForm.addEventListener('submit', (event) => {
       event.preventDefault();
