@@ -14,7 +14,12 @@ import {
   TERM_MAX_WORDS
 } from './aiLimits.js';
 import { AiStore, defaultAiDataDir, translationCacheKey } from './aiStore.js';
-import { createAiClient, providerLabel } from './aiProviders/index.js';
+import {
+  DEFAULT_AI_PROVIDER,
+  createAiClient,
+  listProviderChoices,
+  providerLabel
+} from './aiProviders/index.js';
 import { purposeFor } from './codexProfiles.js';
 import { collectCommentContext, commentContextBlock } from './commentContext.js';
 import { applyConversationEdits } from './conversationEdits.js';
@@ -145,20 +150,35 @@ export class AiService {
   }
 
   /**
-   * 画面の設定へ出す、選べるモデルと、いま走っているモデル。
+   * 画面の設定へ出す、選べるものと、いま走っているもの。
    *
    * 一覧を引けなくても投げません。設定の画面はモデルを選ぶだけの場所ではなく、翻訳機能の
    * 入り切りもここにあります。一覧が引けないだけで、その画面ごと開けなくなるのは行き過ぎです。
-   * 一覧が空のときは、画面がモデル名を手で書く欄に切り替わります。
+   *
+   * 引けなかったときも、空の一覧だけを返して黙るのはやめました。選べるものが1つも無い画面は、
+   * 「このAIには選択肢が無い」のか「取りに行けなかった」のかを見分けられないからです。
+   * 代わりに、選べない理由（`modelsUnavailable` / `effortsUnavailable`）を一緒に返します。
+   * 走らせていないAIも `providers` に残します。どれも画面では非アクティブな選択肢として並び、
+   * 選べるようにするための1行（`command`）が添えられます。
    */
   async modelChoices() {
-    const models = await this.listModels();
+    const { models, error } = await this.listModels();
+    const supportsEffort = this.ai.supportsEffort !== false;
     return {
+      providers: listProviderChoices(this.ai.provider || DEFAULT_AI_PROVIDER),
       models,
+      // 一覧が空でも欄は消しません。理由が読めれば、モデル名を手で書けば済むのか、
+      // AIの側を直すのかを、画面を離れずに選び分けられます。
+      modelsUnavailable: models.length
+        ? null
+        : (error || 'このAIは選べるモデルの一覧を持っていないので、モデル名を書いてください。'),
       // 推論強度の選択肢は、どのモデルにも当たるものだけを並べます。モデルによっては
       // 受け付けないものが混ざるので、選んだあと当てるときにもう一度確かめます。
       efforts: [...new Set(models.flatMap((entry) => entry.efforts || []))],
-      supportsEffort: this.ai.supportsEffort !== false,
+      supportsEffort,
+      effortsUnavailable: supportsEffort
+        ? null
+        : `${providerLabel(this.ai.provider || DEFAULT_AI_PROVIDER)} は共通の推論強度を受け付けません。`,
       running: {
         assistant: { model: this.ai.model ?? null, effort: this.ai.effort ?? null },
         review: { model: this.ai.reviewModel ?? null, effort: this.ai.reviewEffort ?? null }
@@ -166,11 +186,15 @@ export class AiService {
     };
   }
 
+  /**
+   * 選べるモデルの一覧。引けなかった理由も一緒に返します。
+   * 投げないのは `modelChoices` の説明のとおりですが、握り潰しもしません。
+   */
   async listModels() {
     try {
-      return (await this.ai.listModels?.()) || [];
-    } catch {
-      return [];
+      return { models: (await this.ai.listModels?.()) || [], error: null };
+    } catch (error) {
+      return { models: [], error: this.describeError(error) };
     }
   }
 

@@ -52,6 +52,13 @@ export const api = {
     return postJson('/api/settings', payload, aiHeaders());
   },
 
+  /**
+   * Meet Captions Memo拡張機能へ渡す連携コードと、その内訳。
+   * AIのトークンは要りません。この窓口はlocalhostの同一オリジンからだけ答えます
+   * （`src/routes.js` の `liveCaptionsTokenInfo`）。
+   */
+  readLiveCaptions: () => fetchJson('/api/live-captions/token'),
+
   async listAiConversations(path) {
     await ensureAiToken();
     return fetchJson(`/api/ai/conversations?path=${encodeURIComponent(path)}`, aiOptions());

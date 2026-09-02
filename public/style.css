@@ -1393,14 +1393,30 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   display: flex;
   gap: 0.9rem;
 }
-#settings-button {
+#settings-button, #live-captions-button {
   background: rgba(255, 255, 255, 0.14);
   border-color: rgba(255, 255, 255, 0.4);
   color: #fff;
 }
-#settings-button:hover { background: rgba(255, 255, 255, 0.24); border-color: #fff; color: #fff; }
+#settings-button:hover, #live-captions-button:hover { background: rgba(255, 255, 255, 0.24); border-color: #fff; color: #fff; }
 
-#comment-dialog, #settings-dialog {
+.copy-field {
+  align-items: center;
+  display: flex;
+  gap: 0.4rem;
+}
+.copy-field input {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.8rem;
+  min-width: 0;
+  padding: 0.45rem 0.55rem;
+  width: 100%;
+}
+.copy-field button { flex: none; }
+
+#comment-dialog, #settings-dialog, #live-captions-dialog {
   border: 0;
   border-radius: 18px;
   box-shadow: var(--shadow);
@@ -1411,7 +1427,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   padding: 1.5rem;
   width: min(94vw, 620px);
 }
-#comment-dialog::backdrop, #settings-dialog::backdrop { background: rgba(15, 23, 42, 0.45); }
+#comment-dialog::backdrop, #settings-dialog::backdrop, #live-captions-dialog::backdrop { background: rgba(15, 23, 42, 0.45); }
 .dialog-form { display: grid; gap: 1rem; }
 .dialog-form h2 { font-size: 1.15rem; margin: 0; }
 .dialog-head { align-items: center; display: flex; flex-wrap: wrap; gap: 0.6rem; }
@@ -1501,6 +1517,21 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   width: 100%;
 }
 .settings-field-effort.hidden { display: none; }
+/* 選べない選択肢は消さずに残すので、選べないことが色でも分かるようにします。 */
+.settings-field select:disabled,
+.settings-field input:disabled {
+  background: #f1f4fa;
+  color: #5b6478;
+  cursor: not-allowed;
+}
+.settings-field option:disabled { color: #98a2b8; }
+.settings-field-custom { margin-top: 0.1rem; }
+.settings-field-running {
+  color: var(--muted);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.settings-field-running:empty { display: none; }
 #settings-save:disabled {
   background: #b9c4dd;
   border-color: #b9c4dd;

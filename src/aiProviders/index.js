@@ -20,16 +20,20 @@ const PROVIDERS = {
   codex: {
     label: 'Codex',
     summary: 'Codex CLI（既定。`codex` へログインしていれば追加のインストールは要りません）',
+    /** 選ぶ前に済ませておくこと。画面はこれを、選べない理由としてそのまま出します。 */
+    requires: '`codex` コマンドが入っていて、ログインが済んでいること',
     create: ({ runtimeDir, models }) => new CodexAppServer({ runtimeDir, models })
   },
   claude: {
     label: 'Claude',
     summary: 'Anthropic Messages API（`npm install @anthropic-ai/sdk` が要ります）',
+    requires: '`npm install @anthropic-ai/sdk` と、ANTHROPIC_API_KEY などの資格情報',
     create: ({ models }) => new ClaudeClient({ models })
   },
   langchain: {
     label: 'LangChain',
     summary: 'LangChain経由で任意のモデル（`npm install langchain` と各プロバイダのパッケージが要ります）',
+    requires: '`npm install langchain` と各プロバイダのパッケージ、設定ファイルの aiModelProvider / aiModel / aiReviewModel',
     create: ({ models, modelProvider }) => new LangChainClient({ models, modelProvider })
   }
 };
@@ -54,6 +58,33 @@ export function createAiClient({ provider = DEFAULT_AI_PROVIDER, ...options } = 
   const entry = PROVIDERS[provider];
   if (!entry) throw new Error(unknownProviderMessage(provider));
   return entry.create(options);
+}
+
+/**
+ * 画面の設定へ並べる、AIの選択肢です。
+ *
+ * いま走っていないAIも落とさずに返します。画面はそれを選べない形（非アクティブ）で
+ * 出し、選べない理由と、選べるようにするための1行を一緒に見せます。一覧から消すと、
+ * このアプリが他のAIでも走ることも、走らせるのに何が要るかも、画面からは分かりません。
+ *
+ * 走っているAIを画面から差し替えないのは、AIの組み立てが起動時の1回きりだからです
+ * （`createAiClient` を呼ぶのは `createAiService` だけ）。途中で差し替えると、
+ * 開いている会話が、記録の残っていない相手へ続きを聞くことになります。
+ *
+ * @param {string} [current] いま走っているAI（`aiProvider`）。
+ * @returns {Array<{id: string, label: string, summary: string, requires: string,
+ *   active: boolean, command: string}>}
+ */
+export function listProviderChoices(current = DEFAULT_AI_PROVIDER) {
+  return AI_PROVIDERS.map((provider) => ({
+    id: provider,
+    label: PROVIDERS[provider].label,
+    summary: PROVIDERS[provider].summary,
+    requires: PROVIDERS[provider].requires,
+    active: provider === current,
+    // 切り替えは設定ファイルへ書いて立ち上げ直す道しかないので、その1行をそのまま渡します。
+    command: `review-markdown config set aiProvider ${provider} --global`
+  }));
 }
 
 /** 画面と起動ログに出す名前。設定に書く名前（小文字）とは別です。 */

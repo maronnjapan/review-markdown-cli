@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Meet Captions Memo",
-  "version": "1.1.0",
-  "description": "Google Meetの字幕(Captions)を自動でメモとしてローカル保存する個人用拡張機能",
+  "version": "1.2.0",
+  "description": "Google Meetの字幕(Captions)をローカルに記録し、review-markdownへ流し込む個人用拡張機能",
   "permissions": ["storage", "downloads", "unlimitedStorage"],
   "host_permissions": [
     "https://meet.google.com/*",

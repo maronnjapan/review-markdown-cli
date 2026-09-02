@@ -96,6 +96,17 @@ h1 { font-size: 14px; margin: 0 0 4px; font-weight: 700; }
   font-size: 11px;
   color: var(--muted);
 }
+.sync-settings__note,
+.sync-settings__status {
+  font-size: 11px;
+  margin: 4px 0 6px;
+  word-break: break-all;
+}
+.sync-settings__note { color: var(--muted); }
+.sync-settings__status { color: var(--muted); }
+.sync-settings__status[data-state="ok"] { color: #0b6b3a; }
+.sync-settings__status[data-state="error"] { color: #a11212; }
+.sync-settings__field[hidden] { display: none; }
 
 .memo-item__body {
   white-space: pre-wrap;

@@ -24,6 +24,7 @@ import { aliasRefs, queryRefs } from './dom.js';
 import { createEditor } from './editor.js';
 import { createFileListView } from './fileListView.js';
 import { createLinkNavigator } from './links.js';
+import { createLiveCaptionsController } from './liveCaptions.js';
 import { createSettingsController } from './settings.js';
 import { createSidePanes } from './sidePanes.js';
 import { createRangeFor, findTextRange } from './textAnchor.js';
@@ -65,6 +66,23 @@ const WORKSPACE_NOTES_REFS = {
   contextNotesStatus: 'workspaceContextNotesStatus',
   contextNotesList: 'workspaceContextNotesList'
 };
+/**
+ * AIレビューの操作盤へ出す、参照ファイル欄の読み替え表です。
+ *
+ * レビューを実行するのはこのパネルなので、何を読ませるかもここで決められるようにします。
+ * 中身はサイドパネルやコンテキスト画面と同じ state なので、どこで添えても同じ1組です。
+ */
+const REVIEW_REFERENCE_FILE_REFS = {
+  referenceFilesState: 'reviewReferenceFilesState',
+  referenceFileForm: 'reviewReferenceFileForm',
+  referenceFileFilter: 'reviewReferenceFileFilter',
+  referenceFileSelect: 'reviewReferenceFileSelect',
+  referenceFileAdd: 'reviewReferenceFileAdd',
+  referenceFilesFull: 'reviewReferenceFilesFull',
+  referenceFilesStatus: 'reviewReferenceFilesStatus',
+  referenceFilesList: 'reviewReferenceFilesList'
+};
+
 const WORKSPACE_REFERENCE_FILE_REFS = {
   referenceFilesState: 'workspaceReferenceFilesState',
   referenceFileForm: 'workspaceReferenceFileForm',
@@ -174,6 +192,10 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     createReferenceFilesController({
       refs: aliasRefs(refs, WORKSPACE_REFERENCE_FILE_REFS),
       ...referenceFileOptions
+    }),
+    createReferenceFilesController({
+      refs: aliasRefs(refs, REVIEW_REFERENCE_FILE_REFS),
+      ...referenceFileOptions
     })
   ]);
   const editor = createEditor({
@@ -255,6 +277,9 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     toaster,
     onApplied: (payload) => applyFeatureChange(payload.features)
   });
+  // Meet連携も文書に紐づかないので、同じヘッダーから開きます。中身は起動ごとに変わる
+  // 連携コードなので、開くたびに取りに行きます（`liveCaptions.js`）。
+  createLiveCaptionsController({ refs, api, toaster });
   const contextPage = createContextPageController({
     refs,
     state,
@@ -1358,6 +1383,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     refs.aiContextOpenPage.addEventListener('click', openContextPage);
     refs.contextNotesOpenPage.addEventListener('click', openContextPage);
     refs.referenceFilesOpenPage.addEventListener('click', openContextPage);
+    refs.reviewReferenceFilesOpenPage.addEventListener('click', openContextPage);
     refs.workspaceBackButton.addEventListener('click', () => {
       if (state.currentPath) window.location.hash = `#/review/${encodeURIComponent(state.currentPath)}`;
     });

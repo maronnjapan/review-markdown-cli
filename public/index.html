@@ -15,6 +15,7 @@
         <h1>Markdown / PDF Review</h1>
       </div>
       <div class="app-header-actions">
+        <button id="live-captions-button" type="button">Meet連携</button>
         <button id="settings-button" type="button">設定</button>
         <a class="header-link" href="#/">ファイル一覧</a>
       </div>
@@ -315,6 +316,25 @@
                 <div id="persona-result" class="persona-result"></div>
               </details>
 
+              <details id="review-reference-files" class="ai-context">
+                <summary>
+                  参照ファイル
+                  <span id="review-reference-files-state" class="ai-context-state">未設定</span>
+                </summary>
+                <p class="ai-context-hint">この文書と同じ階層以下にあるファイルを添えると、レビューのときAIがその中身も読みます。用語集、前の章、元になった仕様書、隣に置いたコードなど。ここで添えたものは、AIチャットや翻訳にも同じ前提として渡ります。</p>
+                <form id="review-reference-file-form" class="reference-file-form">
+                  <input id="review-reference-file-filter" type="search" placeholder="パスで絞り込む" aria-label="レビューに添えるファイルをパスで絞り込む">
+                  <select id="review-reference-file-select" aria-label="レビューに添えるファイル"></select>
+                  <div class="reference-file-actions">
+                    <button id="review-reference-file-add" type="submit" disabled>添える</button>
+                  </div>
+                </form>
+                <p id="review-reference-files-full" class="context-note-full" hidden>参照ファイルが上限に達しました。読ませないものを外してください。</p>
+                <p id="review-reference-files-status" class="ai-context-status" aria-live="polite"></p>
+                <button id="review-reference-files-open-page" class="context-open-link" type="button">広い画面で編集</button>
+                <div id="review-reference-files-list" class="reference-files-list"></div>
+              </details>
+
               <form id="review-form" class="placement-form">
                 <p id="review-brief-hint" class="review-brief-hint" hidden></p>
                 <p id="review-run-hint" class="review-run-hint hidden">読み手が未設定です。決めておくと、指摘が「この読み手に何が起きるか」まで書かれます。</p>
@@ -543,12 +563,24 @@
         </section>
 
         <section class="settings-section">
+          <h3 class="settings-section-title">使うAI</h3>
+          <p class="ai-context-hint">走らせるAIは起動のときに決まります。ここでは切り替えられないので、いま走っているものだけが選べる状態で出ます。ほかのAIも、選べない理由と一緒に並べてあります。</p>
+          <label class="settings-field">
+            <span class="settings-field-label">AI</span>
+            <select id="settings-ai-provider" disabled></select>
+          </label>
+          <p id="settings-provider-hint" class="ai-context-hint"></p>
+        </section>
+
+        <section class="settings-section">
           <h3 class="settings-section-title">モデル</h3>
-          <p class="ai-context-hint">用途ごとにモデルを分けられます。空にすると、選んだAIの既定で走ります。</p>
+          <p class="ai-context-hint">用途ごとにモデルを分けられます。名指ししないときは「自動で選ぶ」で、いま何が選ばれているかは選択肢と「実行中」の行に出ます。</p>
           <div class="settings-fields">
             <label class="settings-field">
               <span class="settings-field-label">翻訳・AIチャット・指摘の配置</span>
-              <input id="settings-ai-model" list="settings-model-options" placeholder="（既定）" autocomplete="off">
+              <select id="settings-ai-model"></select>
+              <input id="settings-ai-model-custom" class="settings-field-custom" type="text" placeholder="モデル名を書く" autocomplete="off" aria-label="翻訳・AIチャット・指摘の配置に使うモデル名" hidden>
+              <span id="settings-ai-model-running" class="settings-field-running"></span>
             </label>
             <label id="settings-ai-effort-field" class="settings-field settings-field-effort">
               <span class="settings-field-label">推論強度</span>
@@ -556,14 +588,15 @@
             </label>
             <label class="settings-field">
               <span class="settings-field-label">AIレビュー・読み手ペルソナ・管理者・本文の修正</span>
-              <input id="settings-ai-review-model" list="settings-model-options" placeholder="（既定）" autocomplete="off">
+              <select id="settings-ai-review-model"></select>
+              <input id="settings-ai-review-model-custom" class="settings-field-custom" type="text" placeholder="モデル名を書く" autocomplete="off" aria-label="AIレビューに使うモデル名" hidden>
+              <span id="settings-ai-review-model-running" class="settings-field-running"></span>
             </label>
             <label id="settings-ai-review-effort-field" class="settings-field settings-field-effort">
               <span class="settings-field-label">推論強度</span>
               <select id="settings-ai-review-effort"></select>
             </label>
           </div>
-          <datalist id="settings-model-options"></datalist>
           <p id="settings-model-hint" class="ai-context-hint"></p>
         </section>
 
@@ -574,6 +607,45 @@
           <div class="dialog-actions">
             <button type="button" id="settings-cancel">閉じる</button>
             <button type="submit" id="settings-save">保存する</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="live-captions-dialog" aria-labelledby="live-captions-title">
+      <form id="live-captions-form" class="dialog-form settings-form" method="dialog">
+        <header class="dialog-head">
+          <h2 id="live-captions-title">Meet連携</h2>
+          <span id="live-captions-state" class="ai-provider-status">読み込み中…</span>
+        </header>
+
+        <p id="live-captions-error" class="load-error" hidden></p>
+
+        <p class="ai-context-hint">Google Meetの字幕を、このディレクトリのMarkdownへ1行ずつ書き足すChrome拡張機能を同梱しています。下の連携コードを拡張機能へ貼れば繋がります。コードはトークンと同じ扱いで、同じ端末の自分の拡張機能にだけ渡してください。</p>
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">1. 拡張機能を読み込む</h3>
+          <p class="ai-context-hint"><code>chrome://extensions</code> でデベロッパーモードをオンにし、「パッケージ化されていない拡張機能を読み込む」で次のフォルダを選びます。</p>
+          <div class="copy-field">
+            <input id="live-captions-extension-dir" type="text" readonly aria-label="拡張機能フォルダ">
+            <button id="live-captions-copy-dir" type="button">コピー</button>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">2. 連携コードを貼る</h3>
+          <p class="ai-context-hint">拡張機能のアイコンを開き、「review-markdown連携」の連携コード欄へ貼って保存します。トークンは起動のたびに変わるので、立ち上げ直したら貼り直してください。</p>
+          <div class="copy-field">
+            <input id="live-captions-code" type="text" readonly aria-label="連携コード">
+            <button id="live-captions-copy-code" type="button">コピー</button>
+          </div>
+          <p id="live-captions-detail" class="ai-context-hint"></p>
+        </section>
+
+        <div class="dialog-footer">
+          <p class="dialog-hint">書き込み先のファイルは拡張機能側で選びます。このディレクトリのMarkdownが候補として出ます。</p>
+          <div class="dialog-actions">
+            <button type="button" id="live-captions-close">閉じる</button>
           </div>
         </div>
       </form>

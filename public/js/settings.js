@@ -11,10 +11,46 @@ import { escapeHtml } from './util.js';
  * 保存はサーバーが引き受けます（`src/settings.js`）。画面がするのは、いまの値を出して、
  * 変えた値を送って、返ってきた結果を出すことだけです。断られた理由もサーバーの文面を
  * そのまま出します。使えるモデルの名前を知っているのはサーバー側だからです。
+ *
+ * ── 選べないものを消さない ────────────────────────────────
+ * 使えない選択肢は、一覧から落とさずに非アクティブで並べます。走らせていないAI、
+ * 一覧を引けなかったときのモデル欄、そのモデルが受け付けない推論強度。どれも消すと、
+ * 画面には「そういう選択肢は無い」と映ります。無いのではなく、まだ設定していないだけ
+ * なので、選べない理由と、選べるようにする方法を選択肢そのものに書いて残します。
+ *
+ * ── 「既定」と書かない ────────────────────────────────────
+ * 名指ししていない用途も、実際には決まったモデルで走っています。欄を「（既定）」と
+ * だけ書くと、何で走っているのかが画面のどこにも出ません。名指ししていないことは
+ * 「自動で選ぶ」と書き、そのとき選ばれているモデル名を必ず添えます。
  */
 
-/** 推論強度の「指定しない」。選んだAIの既定で走ります。 */
-const DEFAULT_EFFORT_LABEL = '（既定）';
+/** 一覧に無いモデル名を手で書くための、選択肢としての印。設定値にはなりません。 */
+const CUSTOM_MODEL_VALUE = '__custom__';
+
+/** 選べない理由をその場に残しておくための、選べない選択肢の印。設定値にはなりません。 */
+const UNAVAILABLE_VALUE = '__unavailable__';
+
+/** 用途ごとの欄。1つの用途はモデル・手入力・実行中表示・推論強度の4つでできています。 */
+const MODEL_FIELDS = [
+  {
+    purpose: 'assistant',
+    settingKey: 'aiModel',
+    effortKey: 'aiEffort',
+    select: 'settingsAiModel',
+    custom: 'settingsAiModelCustom',
+    running: 'settingsAiModelRunning',
+    effort: 'settingsAiEffort'
+  },
+  {
+    purpose: 'review',
+    settingKey: 'aiReviewModel',
+    effortKey: 'aiReviewEffort',
+    select: 'settingsAiReviewModel',
+    custom: 'settingsAiReviewModelCustom',
+    running: 'settingsAiReviewModelRunning',
+    effort: 'settingsAiReviewEffort'
+  }
+];
 
 export function createSettingsController({ refs, state, api, toaster, onApplied = () => {} }) {
   let saving = false;
@@ -66,30 +102,33 @@ export function createSettingsController({ refs, state, api, toaster, onApplied 
     }
   }
 
-  /** 画面の欄からいまの指定を読みます。空欄は「設定しない」として送ります。 */
+  /** 画面の欄からいまの指定を読みます。「自動で選ぶ」は「設定しない」として送ります。 */
   function readForm() {
-    return {
-      translation: refs.settingsTranslation.checked,
-      aiModel: refs.settingsAiModel.value.trim(),
-      aiReviewModel: refs.settingsAiReviewModel.value.trim(),
+    const supportsEffort = state.settings?.ai?.supportsEffort !== false;
+    const patch = { translation: refs.settingsTranslation.checked };
+    for (const field of MODEL_FIELDS) {
+      patch[field.settingKey] = readModelField(field);
       // 出していない欄は送りません。推論強度を持たないAIで開いただけで、設定ファイルに
       // 書いてある強度が消えることのないようにです。
-      ...(state.settings?.ai?.supportsEffort === false ? {} : {
-        aiEffort: refs.settingsAiEffort.value,
-        aiReviewEffort: refs.settingsAiReviewEffort.value
-      })
-    };
+      if (supportsEffort) patch[field.effortKey] = refs[field.effort].value;
+    }
+    return patch;
+  }
+
+  /** 1つの用途のモデル指定。手入力を選んでいるときだけ、書いた名前を読みます。 */
+  function readModelField(field) {
+    const chosen = refs[field.select].value;
+    return chosen === CUSTOM_MODEL_VALUE ? refs[field.custom].value.trim() : chosen;
   }
 
   function render(payload) {
     state.settings = payload;
     const { settings = {}, ai = {} } = payload;
     refs.settingsTranslation.checked = settings.translation === true;
-    refs.settingsAiModel.value = settings.aiModel || '';
-    refs.settingsAiReviewModel.value = settings.aiReviewModel || '';
     renderProvider(ai);
-    renderModelOptions(ai);
-    renderEfforts(ai, settings);
+    renderProviderChoices(ai);
+    for (const field of MODEL_FIELDS) renderModelField(field, ai, settings);
+    refs.settingsModelHint.textContent = modelHint(ai);
     renderSaveTarget(payload.configPath);
   }
 
@@ -102,59 +141,158 @@ export function createSettingsController({ refs, state, api, toaster, onApplied 
   }
 
   /**
-   * 選べるモデルは候補として出すだけで、欄そのものは自由入力のままにします。
-   * 一覧を持たないAI（LangChain経由）でもモデル名を書けるようにするためです。
+   * 走らせるAIの一覧です。欄そのものは操作できません。AIの組み立ては起動の1回きりで、
+   * 画面から差し替えると、開いている会話が記録の無い相手へ続きを聞くことになるからです。
+   * それでも一覧は出します。ほかにどんなAIで走らせられるのかと、走らせるのに何が要るかは、
+   * 切り替えられないことと同じくらい知りたいことだからです。
    */
-  function renderModelOptions(ai) {
+  function renderProviderChoices(ai) {
+    const providers = ai.providers || [];
+    if (providers.length === 0) {
+      refs.settingsAiProvider.innerHTML = `<option>${escapeHtml(ai.label || 'AI')}</option>`;
+      refs.settingsProviderHint.textContent = '';
+      return;
+    }
+    refs.settingsAiProvider.innerHTML = providers.map((provider) => {
+      const suffix = provider.active ? '（実行中）' : `（いまは選べません: ${provider.requires}）`;
+      return `<option value="${escapeHtml(provider.id)}"${provider.active ? ' selected' : ' disabled'}`
+        + ` title="${escapeHtml(provider.summary)}">${escapeHtml(provider.label)}${escapeHtml(suffix)}</option>`;
+    }).join('');
+    const others = providers.filter((provider) => !provider.active);
+    refs.settingsProviderHint.textContent = others.length === 0
+      ? ''
+      : `切り替えるには、設定ファイルへ書いて立ち上げ直してください: ${
+        others.map((provider) => provider.command).join(' / ')}`;
+  }
+
+  /**
+   * 1つの用途の欄です。モデルの一覧、手で書く欄、いま走っているモデル、推論強度の4つを
+   * 同じ材料から出します。
+   */
+  function renderModelField(field, ai, settings) {
+    const configured = settings[field.settingKey] || '';
+    renderModelOptions(field, ai, configured);
+    renderRunning(field, ai);
+    renderEffort(field, ai, settings, selectedModelId(field, ai, configured));
+  }
+
+  /**
+   * 選べるモデル。名指ししていない用途は「自動で選ぶ」を選んだ状態にし、そこにいま
+   * 選ばれているモデル名を書きます。一覧を引けなかったAIでも欄は残し、引けなかった理由を
+   * 非アクティブな選択肢として出したうえで、手で書く欄へ切り替えます。
+   */
+  function renderModelOptions(field, ai, configured) {
     const models = ai.models || [];
-    refs.settingsModelOptions.innerHTML = models
-      .map((model) => `<option value="${escapeHtml(model.id)}"></option>`)
-      .join('');
-    refs.settingsModelHint.textContent = modelHint(ai, models);
+    const known = models.map((model) => model.id);
+    const custom = Boolean(configured) && !known.includes(configured);
+    const options = [
+      `<option value="">${escapeHtml(autoModelLabel(ai, field.purpose))}</option>`,
+      // 「自動で選ぶ」と同じ空の値にはしません。同じにすると、指定なしを選び直したときに
+      // どちらが選ばれるかがブラウザ任せになります。
+      ...(models.length
+        ? []
+        : [`<option value="${UNAVAILABLE_VALUE}" disabled>${escapeHtml(unavailableReason(ai))}</option>`]),
+      ...models.map((model) => (
+        `<option value="${escapeHtml(model.id)}">${escapeHtml(model.id)}`
+        + `${model.isDefault ? '（このAIの既定）' : ''}</option>`
+      )),
+      `<option value="${CUSTOM_MODEL_VALUE}">一覧にないモデル名を書く…</option>`
+    ];
+    refs[field.select].innerHTML = options.join('');
+    refs[field.select].value = custom ? CUSTOM_MODEL_VALUE : configured;
+    refs[field.custom].value = custom ? configured : '';
+    showCustomInput(field, custom);
   }
 
-  function modelHint(ai, models) {
-    const running = ai.running || {};
-    const inUse = [
-      profileText('翻訳・AIチャット・指摘の配置', running.assistant, ai.supportsEffort),
-      profileText('AIレビューほか', running.review, ai.supportsEffort)
-    ].filter(Boolean).join(' / ');
-    const choices = models.length
-      ? `選べるモデル: ${models.map((model) => model.id).join(', ')}`
-      : 'このAIは選べるモデルの一覧を持っていないので、モデル名を書いてください。';
-    return inUse ? `いま実行中 — ${inUse}。${choices}` : choices;
+  /** 名指ししていないときの選択肢。何で走るかを括弧の中に必ず書きます。 */
+  function autoModelLabel(ai, purpose) {
+    const running = ai.running?.[purpose]?.model;
+    return running ? `自動で選ぶ（いまは ${running}）` : '自動で選ぶ';
   }
 
-  function profileText(label, profile, supportsEffort) {
-    if (!profile?.model) return '';
-    const effort = supportsEffort && profile.effort ? ` / ${profile.effort}` : '';
-    return `${label}: ${profile.model}${effort}`;
+  /** いま実際に走っているモデルと推論強度。名指しの有無にかかわらず、必ず出します。 */
+  function renderRunning(field, ai) {
+    const running = ai.running?.[field.purpose] || {};
+    if (!running.model) {
+      refs[field.running].textContent = ai.available === false
+        ? '実行中のモデルは、AIを利用できるようになってから分かります'
+        : '';
+      return;
+    }
+    const effort = ai.supportsEffort !== false && running.effort ? ` / ${running.effort}` : '';
+    refs[field.running].textContent = `実行中: ${running.model}${effort}`;
+  }
+
+  /** 手入力の欄は、選んだときだけ出します。出しっぱなしだと、どちらが効くのか読めません。 */
+  function showCustomInput(field, show) {
+    refs[field.custom].hidden = !show;
+  }
+
+  /** いま欄が指しているモデル。推論強度の選択肢は、このモデルが受け付けるかで決まります。 */
+  function selectedModelId(field, ai, configured) {
+    const chosen = refs[field.select]?.value;
+    if (chosen === CUSTOM_MODEL_VALUE) return refs[field.custom].value.trim() || configured;
+    return chosen || ai.running?.[field.purpose]?.model || '';
   }
 
   /**
-   * 推論強度は、そのAIが受け付けるものだけを並べます。共通の指定を持たないAIでは
-   * 欄ごと隠します。選べない指定を出しておいて、保存のときに断るのは遠回りです。
+   * 推論強度です。共通の指定を持たないAIでも欄は残し、受け付けないことを非アクティブな
+   * 選択肢として書きます。受け付けるAIでは、いま選んでいるモデルが持たない強度も残し、
+   * そのモデルでは選べないことを添えます。選べない理由を保存のときまで伏せません。
    */
-  function renderEfforts(ai, settings) {
-    const supported = ai.supportsEffort !== false;
-    refs.settingsAiEffortField.classList.toggle('hidden', !supported);
-    refs.settingsAiReviewEffortField.classList.toggle('hidden', !supported);
-    if (!supported) return;
-    fillEffortSelect(refs.settingsAiEffort, ai.efforts || [], settings.aiEffort);
-    fillEffortSelect(refs.settingsAiReviewEffort, ai.efforts || [], settings.aiReviewEffort);
-  }
-
-  /**
-   * 設定済みの強度は、一覧に無くても選択肢へ足します。モデルごとに受け付ける強度が
-   * 違うことがあり、落とすと、開いただけで設定が消えたように見えるからです。
-   */
-  function fillEffortSelect(select, efforts, current) {
-    const values = [...new Set([...efforts, ...(current ? [current] : [])])];
+  function renderEffort(field, ai, settings, modelId) {
+    const select = refs[field.effort];
+    const current = settings[field.effortKey] || '';
+    if (ai.supportsEffort === false) {
+      select.innerHTML = `<option value="">${escapeHtml(
+        ai.effortsUnavailable || 'このAIは推論強度を受け付けません'
+      )}</option>`;
+      select.value = '';
+      select.disabled = true;
+      return;
+    }
+    select.disabled = false;
+    const accepted = effortsOfModel(ai, modelId);
+    const values = [...new Set([...(ai.efforts || []), ...(current ? [current] : [])])];
     select.innerHTML = [
-      `<option value="">${DEFAULT_EFFORT_LABEL}</option>`,
-      ...values.map((effort) => `<option value="${escapeHtml(effort)}">${escapeHtml(effort)}</option>`)
+      `<option value="">${escapeHtml(autoEffortLabel(ai, field.purpose))}</option>`,
+      ...values.map((effort) => {
+        // 設定済みの強度は、そのモデルが受け付けなくても選べるままにします。外すと、
+        // 開いただけで設定が消えたように見えるからです。
+        const usable = !accepted || accepted.includes(effort) || effort === current;
+        const suffix = usable ? '' : `（${modelId} は受け付けません）`;
+        return `<option value="${escapeHtml(effort)}"${usable ? '' : ' disabled'}>`
+          + `${escapeHtml(effort)}${escapeHtml(suffix)}</option>`;
+      })
     ].join('');
-    select.value = current || '';
+    select.value = current;
+  }
+
+  /** そのモデルが受け付ける強度。申告していないモデルでは null（確かめようがない）です。 */
+  function effortsOfModel(ai, modelId) {
+    const model = (ai.models || []).find((entry) => entry.id === modelId);
+    return model?.efforts?.length ? model.efforts : null;
+  }
+
+  function autoEffortLabel(ai, purpose) {
+    const running = ai.running?.[purpose]?.effort;
+    return running ? `自動で選ぶ（いまは ${running}）` : '自動で選ぶ';
+  }
+
+  /** モデル欄の下の1行。選べるモデルが何かを、一覧を開かなくても読めるようにします。 */
+  function modelHint(ai) {
+    const models = ai.models || [];
+    if (models.length) return `選べるモデル: ${models.map((model) => model.id).join(', ')}`;
+    return unavailableReason(ai);
+  }
+
+  /**
+   * 一覧が空のときに書く理由。サーバーが理由を添えてこなかったときも、空欄のままには
+   * しません。選択肢が無いことと、一覧を持たないAIであることは、別のことだからです。
+   */
+  function unavailableReason(ai) {
+    return ai.modelsUnavailable
+      || 'このAIは選べるモデルの一覧を持っていないので、モデル名を書いてください。';
   }
 
   function renderSaveTarget(configPath) {
@@ -192,10 +330,26 @@ export function createSettingsController({ refs, state, api, toaster, onApplied 
     refs.settingsError.hidden = !text;
   }
 
+  /**
+   * モデルを選び直したら、その用途の推論強度を並べ直します。モデルによって受け付ける
+   * 強度が違うので、選んだあとも古いモデルの並びのままだと、選べないものが選べる顔で
+   * 残ります。
+   */
+  function refreshEffort(field) {
+    if (!state.settings) return;
+    const { ai = {}, settings = {} } = state.settings;
+    showCustomInput(field, refs[field.select].value === CUSTOM_MODEL_VALUE);
+    renderEffort(field, ai, settings, selectedModelId(field, ai, settings[field.settingKey] || ''));
+  }
+
   function bindEvents() {
     refs.settingsButton.addEventListener('click', open);
     refs.settingsForm.addEventListener('submit', save);
     refs.settingsCancel.addEventListener('click', close);
+    for (const field of MODEL_FIELDS) {
+      refs[field.select].addEventListener('change', () => refreshEffort(field));
+      refs[field.custom].addEventListener('change', () => refreshEffort(field));
+    }
   }
 
   return { open, close };

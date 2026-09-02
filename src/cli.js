@@ -6,6 +6,7 @@ import { normalizePatterns } from './pathFilter.js';
 
 export const USAGE = `Usage: review-markdown [targetDir] [options]
        review-markdown config <command> [options]
+       review-markdown extension [--path]
 
 Options:
   -p, --port <number>   ローカルサーバーのポート番号（既定: 3000）
@@ -47,6 +48,11 @@ Config:
     review-markdown config list                      # 適用中の設定を表示
 
   詳しくは review-markdown config --help を参照してください。
+
+Meet Captions Memo:
+  Google Meetの字幕をレビュー対象のMarkdownへ流し込むChrome拡張機能を同梱しています。
+  フォルダの場所と読み込ませ方は review-markdown extension で出ます。起動すると
+  「連携コード」を1行で出すので、それを拡張機能の設定へ貼れば繋がります。
 
 AI provider:
   どのAIで走らせるかは設定ファイルの aiProvider で選びます（codex / claude / langchain、

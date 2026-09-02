@@ -199,6 +199,10 @@ test('設定から翻訳を有効にすると、開いている文書の翻訳�
       supportsEffort: true,
       efforts: ['none', 'low', 'high'],
       models: [{ id: 'fast-model' }, { id: 'deep-model' }],
+      providers: [
+        { id: 'codex', label: 'Codex', summary: 'Codex CLI', requires: 'codexへのログイン', active: true, command: 'review-markdown config set aiProvider codex --global' },
+        { id: 'claude', label: 'Claude', summary: 'Anthropic Messages API', requires: '@anthropic-ai/sdk と資格情報', active: false, command: 'review-markdown config set aiProvider claude --global' }
+      ],
       running: {
         assistant: { model: 'fast-model', effort: 'none' },
         review: { model: 'deep-model', effort: 'high' }
@@ -235,22 +239,52 @@ test('設定から翻訳を有効にすると、開いている文書の翻訳�
   assert.equal(document.querySelector('#markdown-content .inline-translate-button'), null);
 
   document.querySelector('#settings-button').click();
-  await waitFor(() => document.querySelectorAll('#settings-model-options option').length === 2);
+  await waitFor(() => document.querySelectorAll('#settings-ai-model option').length === 4);
 
   assert.equal(document.querySelector('#settings-dialog').open, true);
   assert.equal(document.querySelector('#settings-translation').checked, false);
   assert.equal(document.querySelector('#settings-provider').textContent, 'Codexで実行中');
   assert.deepEqual(
-    [...document.querySelectorAll('#settings-model-options option')].map((option) => option.value),
-    ['fast-model', 'deep-model'],
-    '選べるモデルは候補として出す。欄は自由入力のままなので、一覧を持たないAIでも書ける'
+    [...document.querySelectorAll('#settings-ai-provider option')].map(
+      (option) => [option.value, option.disabled]
+    ),
+    [['codex', false], ['claude', true]],
+    '走らせていないAIも一覧に残し、選べない状態で出す'
+  );
+  assert.match(
+    document.querySelector('#settings-ai-provider option[value="claude"]').textContent,
+    /いまは選べません: @anthropic-ai\/sdk と資格情報/,
+    '選べない理由は、その選択肢そのものに書く'
+  );
+  assert.match(
+    document.querySelector('#settings-provider-hint').textContent,
+    /config set aiProvider claude --global/,
+    '選べるようにするための1行も出す'
+  );
+  assert.deepEqual(
+    [...document.querySelectorAll('#settings-ai-model option')].map((option) => option.value),
+    ['', 'fast-model', 'deep-model', '__custom__'],
+    '選べるモデルを並べ、一覧に無い名前を書く道も残す'
+  );
+  assert.match(
+    document.querySelector('#settings-ai-model option[value=""]').textContent,
+    /自動で選ぶ（いまは fast-model）/,
+    '名指ししていない用途でも、いま何で走っているかを書く'
+  );
+  assert.equal(
+    document.querySelector('#settings-ai-model-running').textContent,
+    '実行中: fast-model / none'
+  );
+  assert.equal(
+    document.querySelector('#settings-ai-review-model-running').textContent,
+    '実行中: deep-model / high'
   );
   assert.deepEqual(
     [...document.querySelectorAll('#settings-ai-effort option')].map((option) => option.value),
     ['', 'none', 'low', 'high']
   );
   assert.equal(document.querySelector('#settings-ai-review-effort').value, 'high', '設定済みの強度が選ばれている');
-  assert.match(document.querySelector('#settings-model-hint').textContent, /いま実行中 — .*fast-model \/ none/);
+  assert.match(document.querySelector('#settings-model-hint').textContent, /選べるモデル: fast-model, deep-model/);
   assert.match(document.querySelector('#settings-save-target').textContent, /保存先: .*config\.json/);
 
   document.querySelector('#settings-translation').checked = true;
@@ -265,7 +299,7 @@ test('設定から翻訳を有効にすると、開いている文書の翻訳�
     aiEffort: '',
     aiReviewModel: 'deep-model',
     aiReviewEffort: 'high'
-  }, '空欄は「設定しない」として送る');
+  }, '「自動で選ぶ」は「設定しない」として送る');
   assert.equal(requests[0][1]['X-Review-Markdown-Token'], 'ui-ai-token');
   assert.equal(document.querySelector('#document-translate-button').classList.contains('hidden'), false);
   assert.equal(document.querySelector('#selection-translate-button').classList.contains('hidden'), false);
@@ -311,18 +345,41 @@ test('使えないモデルを選んだら、断られた理由を出したま�
   await waitFor(() => document.querySelector('#settings-save-target').textContent.includes('--no-config'));
   assert.equal(
     document.querySelector('#settings-ai-effort-field').classList.contains('hidden'),
+    false,
+    '推論強度を持たないAIでも、欄そのものは残す'
+  );
+  assert.equal(
+    document.querySelector('#settings-ai-effort').disabled,
     true,
-    '推論強度を持たないAIでは、選べない欄そのものを出さない'
+    '残したうえで、選べない状態にする'
+  );
+  assert.match(
+    document.querySelector('#settings-ai-effort').textContent,
+    /推論強度を受け付けません/,
+    '選べない理由を欄の中に書く'
   );
   assert.match(document.querySelector('#settings-model-hint').textContent, /モデル名を書いてください/);
+  assert.match(
+    document.querySelector('#settings-ai-model option[disabled]').textContent,
+    /モデル名を書いてください/,
+    '一覧が空でも欄は残し、空である理由を選べない選択肢として出す'
+  );
 
-  document.querySelector('#settings-ai-model').value = 'gpt-9-imaginary';
+  const modelSelect = document.querySelector('#settings-ai-model');
+  modelSelect.value = '__custom__';
+  modelSelect.dispatchEvent(new window.Event('change'));
+  assert.equal(document.querySelector('#settings-ai-model-custom').hidden, false, '選んだときだけ手入力が出る');
+  document.querySelector('#settings-ai-model-custom').value = 'gpt-9-imaginary';
   document.querySelector('#settings-form').dispatchEvent(new window.Event('submit', { cancelable: true }));
   await waitFor(() => document.querySelector('#settings-error').hidden === false);
 
   assert.match(document.querySelector('#settings-error').textContent, /gpt-9-imaginary/);
   assert.equal(document.querySelector('#settings-dialog').open, true, '開いたままで直せる');
-  assert.equal(document.querySelector('#settings-ai-model').value, 'gpt-9-imaginary', '書いた値も残る');
+  assert.equal(
+    document.querySelector('#settings-ai-model-custom').value,
+    'gpt-9-imaginary',
+    '書いた値も残る'
+  );
   assert.equal(document.querySelector('#settings-save').disabled, false);
 });
 
@@ -733,11 +790,21 @@ test('添えた参照ファイルは前提として渡り、レビューファ�
     /（PDF）/,
     'PDFはそうと分かるように出す'
   );
-  // 一覧はサイドパネルとコンテキスト画面の2か所に出ますが、取りに行くのは1回だけです。
+  // 一覧はサイドパネル・コンテキスト画面・AIレビューの3か所に出ますが、取りに行くのは1回だけです。
   assert.equal(
     document.querySelectorAll('#workspace-reference-file-select option').length,
     2,
     'もう一方の画面にも同じ一覧が出る'
+  );
+  assert.equal(
+    document.querySelectorAll('#review-reference-file-select option').length,
+    2,
+    'AIレビューのパネルからも、同じ一覧から添えられる'
+  );
+  assert.equal(
+    document.querySelector('#review-reference-files-state').textContent.trim(),
+    '1件',
+    '添えてあるものは、レビューを実行する画面にも出る'
   );
 
   // 絞り込みは選択欄だけを狭めます。
@@ -749,10 +816,17 @@ test('添えた参照ファイルは前提として渡り、レビューファ�
     ['docs/spec.pdf']
   );
 
-  document.querySelector('#reference-file-select').value = 'docs/spec.pdf';
-  document.querySelector('#reference-file-form').requestSubmit();
+  // 添えるのはAIレビューのパネルからでもできます。決めた1組はどの画面でも同じです。
+  document.querySelector('#review-reference-file-select').value = 'docs/spec.pdf';
+  document.querySelector('#review-reference-file-form').requestSubmit();
 
   assert.equal(document.querySelector('#reference-files-state').textContent.trim(), '2件');
+  assert.equal(document.querySelector('#review-reference-files-state').textContent.trim(), '2件');
+  assert.deepEqual(
+    [...document.querySelectorAll('#review-reference-files-list .reference-file-path')]
+      .map((node) => node.textContent),
+    ['docs/glossary.md', 'docs/spec.pdf']
+  );
   const paragraph = document.querySelector('#markdown-content p');
   paragraph.querySelector('.inline-ai-button').click();
   assert.match(

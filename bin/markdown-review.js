@@ -3,6 +3,8 @@ import { DEFAULT_AI_PROVIDER } from '../src/aiProviders/index.js';
 import { assertTargetDirectory, parseArgs, USAGE } from '../src/cli.js';
 import { applyConfigToOptions, loadConfig } from '../src/config.js';
 import { CONFIG_USAGE, parseConfigArgs, runConfigCommand } from '../src/configCommand.js';
+import { extensionDir, runExtensionCommand } from '../src/extensionCommand.js';
+import { encodePairingCode } from '../src/pairing.js';
 import { createServer, listenOnAvailablePort } from '../src/server.js';
 import { createSettingsFile } from '../src/settings.js';
 
@@ -10,6 +12,9 @@ const argv = process.argv.slice(2);
 // `config` is only a subcommand when written exactly like that; a directory of
 // the same name can still be reviewed with `review-markdown ./config`.
 if (argv[0] === 'config') await runConfig(argv.slice(1));
+// 同じ書き方の約束で `extension` も受けます。拡張機能のフォルダは入れ方によって場所が
+// 変わるので、読み込ませる前にパスを引ける口が要ります。
+if (argv[0] === 'extension') runSubcommand(runExtensionCommand(argv.slice(1)));
 
 const options = await readOptions();
 if (options.help) {
@@ -33,8 +38,13 @@ for (const [label, value] of aiModelLines(options)) console.log(`  ${label}: ${v
 if (port !== options.port) {
   console.log(`Port ${options.port} is already in use; using ${port} instead.`);
 }
-console.log(`  live captions token (Meet Captions Memo拡張機能の設定用): ${liveCaptionsToken}`);
 console.log(`Open ${url}`);
+// 拡張機能へ渡すのはこの1本だけです。URLとトークンを別々に運ばせると、片方だけ古い
+// まま繋ごうとして「連携エラー」になり、どちらを直せばよいかが画面から分かりません。
+console.log('Meet Captions Memo（Google Meetの字幕をこのCLIへ流し込むChrome拡張機能）');
+console.log(`  連携コード: ${encodePairingCode({ url, token: liveCaptionsToken })}`);
+console.log(`  拡張機能フォルダ: ${extensionDir()}`);
+console.log('  読み込ませ方は review-markdown extension、画面からは右上の「Meet連携」で出せます');
 if (options.open) openBrowser(url);
 
 server.on('error', (error) => {
@@ -49,15 +59,19 @@ process.on('SIGINT', shutdown);
 
 async function runConfig(configArgv) {
   try {
-    const result = await runConfigCommand(parseConfigArgs(configArgv));
-    for (const line of result.stderr) console.error(line);
-    for (const line of result.stdout) console.log(line);
-    process.exit(result.exitCode);
+    runSubcommand(await runConfigCommand(parseConfigArgs(configArgv)));
   } catch (error) {
     console.error(`Error: ${error.message}`);
     console.error(`\n${CONFIG_USAGE}`);
     return process.exit(1);
   }
+}
+
+/** サブコマンドの結果を出して終わります。どのサブコマンドも同じ形で答えます。 */
+function runSubcommand({ stdout, stderr, exitCode }) {
+  for (const line of stderr) console.error(line);
+  for (const line of stdout) console.log(line);
+  process.exit(exitCode);
 }
 
 async function readOptions() {

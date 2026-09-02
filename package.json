@@ -21,6 +21,7 @@
     "src/",
     "public/",
     "skills/",
+    "extension/",
     "README.md"
   ],
   "engines": {
@@ -36,7 +37,9 @@
     "review",
     "cli",
     "zenn",
-    "editor"
+    "editor",
+    "google-meet",
+    "captions"
   ],
   "dependencies": {
     "cheerio": "^1.2.0",

@@ -548,6 +548,56 @@ async function testStore(t) {
   return { root, store: new AiStore(root, { dataDir }) };
 }
 
+test('設定の選択肢には、走らせていないAIも選べない状態で並ぶ', async (t) => {
+  const { root, store } = await testStore(t);
+  const service = new AiService(root, {
+    store,
+    client: fakeCodex({
+      provider: 'codex',
+      reviewModel: 'deep-test-model',
+      reviewEffort: 'high',
+      listModels: () => [{ id: 'fast-test-model', efforts: ['none', 'low'], isDefault: true }]
+    })
+  });
+
+  const choices = await service.modelChoices();
+
+  assert.deepEqual(
+    choices.providers.map(({ id, active }) => [id, active]),
+    [['codex', true], ['claude', false], ['langchain', false]],
+    '一覧から落とさない。落とすと、ほかのAIで走らせられること自体が画面から消える'
+  );
+  const claude = choices.providers.find((provider) => provider.id === 'claude');
+  assert.match(claude.requires, /@anthropic-ai\/sdk/, '選べない理由を添える');
+  assert.match(claude.command, /config set aiProvider claude --global/, '選べるようにする1行も添える');
+  assert.equal(choices.modelsUnavailable, null, 'モデルを引けたときは理由が要らない');
+  assert.equal(choices.effortsUnavailable, null);
+  assert.deepEqual(choices.running, {
+    assistant: { model: 'fast-test-model', effort: 'low' },
+    review: { model: 'deep-test-model', effort: 'high' }
+  }, '名指ししていない用途でも、いま何で走っているかを返す');
+});
+
+test('モデルの一覧を引けなかったときは、空の一覧ではなく理由を返す', async (t) => {
+  const { root, store } = await testStore(t);
+  const service = new AiService(root, {
+    store,
+    client: fakeCodex({
+      provider: 'codex',
+      supportsEffort: false,
+      listModels: () => { throw new Error('unauthorized: login required'); },
+      describeError: () => 'Codexへログインしてください'
+    })
+  });
+
+  const choices = await service.modelChoices();
+
+  assert.deepEqual(choices.models, []);
+  assert.equal(choices.modelsUnavailable, 'Codexへログインしてください', '空だった理由をそのまま渡す');
+  assert.match(choices.effortsUnavailable, /推論強度を受け付けません/);
+  assert.equal(choices.supportsEffort, false);
+});
+
 function fakeCodex(overrides = {}) {
   let nextThread = 1;
   return {

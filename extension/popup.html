@@ -14,8 +14,10 @@
   <details id="syncSettings" class="sync-settings">
     <summary>review-markdown連携</summary>
     <p class="sync-settings__hint">
-      発言を記録するたびに、review-markdown-cliが開いているMarkdownファイルへも書き足します。
-      サーバー起動時のログに出る「live captions token」と、そのURL・ファイルのパスを入力してください。
+      発言を記録するたびに、review-markdownが開いているMarkdownファイルへも書き足します。
+      review-markdownを起動し、画面右上の「Meet連携」（またはターミナルの起動ログ）から
+      連携コードをコピーして貼り付けてください。トークンは起動のたびに変わるので、
+      立ち上げ直したら貼り直します。
     </p>
     <form id="syncForm">
       <label class="sync-settings__row">
@@ -23,21 +25,25 @@
         連携を有効にする
       </label>
       <label class="sync-settings__field">
-        サーバーURL
-        <input type="text" id="syncServerUrl" placeholder="http://localhost:3000" />
+        連携コード
+        <input type="text" id="syncCode" placeholder="rmc1...." autocomplete="off" spellcheck="false" />
       </label>
-      <label class="sync-settings__field">
-        トークン
-        <input type="text" id="syncToken" placeholder="live captions token" autocomplete="off" />
+      <p id="syncPairing" class="sync-settings__note"></p>
+      <label class="sync-settings__row">
+        <input type="checkbox" id="syncAutoPath" />
+        会議ごとにファイルを自動で作る
       </label>
-      <label class="sync-settings__field">
+      <label class="sync-settings__field" id="syncPathField">
         書き込み先ファイル（レビュー対象ディレクトリからの相対パス）
-        <input type="text" id="syncPath" placeholder="meeting-notes/today.md" />
+        <input type="text" id="syncPath" list="syncPathOptions" placeholder="meeting-notes/today.md" />
+        <datalist id="syncPathOptions"></datalist>
       </label>
       <div class="sync-settings__actions">
         <button type="submit" class="btn">保存</button>
+        <button type="button" class="btn" id="syncTest">接続を確認</button>
         <span id="syncSaved" class="sync-settings__saved" hidden>保存しました</span>
       </div>
+      <p id="syncStatus" class="sync-settings__status" aria-live="polite"></p>
     </form>
   </details>
 
@@ -63,6 +69,7 @@
     </article>
   </template>
 
+  <script src="pairing.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

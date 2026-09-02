@@ -27,8 +27,10 @@
   const activeEntries = new Map();
   let recording = true;
   let badgeEl = null;
-  let syncSettings = null; // 未読み込みの間はnull。読み込み後は { enabled, serverUrl, token, path }
+  let syncSettings = null; // 未読み込みの間はnull。読み込み後は { enabled, serverUrl, token, path, autoPath }
   let lastSyncFailed = false;
+  // 直し方が違うので、トークン切れ（403）だけは分けて覚えます。
+  let lastSyncStale = false;
 
   // ---------- ストレージ ----------
 
@@ -172,7 +174,8 @@
 
   async function syncLineToReviewMarkdown(memo, { speaker, text, time }) {
     if (!syncSettings || !syncSettings.enabled) return;
-    const { serverUrl, token, path: targetPath } = syncSettings;
+    const { serverUrl, token } = syncSettings;
+    const targetPath = resolveTargetPath(memo);
     if (!serverUrl || !token || !targetPath) return;
 
     try {
@@ -190,10 +193,33 @@
         })
       });
       lastSyncFailed = !response.ok;
+      // 403だけは直し方が違います（コードの貼り直し）。同じ「連携エラー」に混ぜると、
+      // 立ち上げ直したせいでトークンが変わっただけなのに、原因を探すことになります。
+      lastSyncStale = response.status === 403;
     } catch {
       lastSyncFailed = true;
+      lastSyncStale = false;
     }
     updateBadge();
+  }
+
+  /**
+   * 書き込み先のファイル。
+   *
+   * 「会議ごとに自動で作る」を選んだときは、会議の日付と会議コードから決めます。以前は
+   * 会議のたびに手でパスを書き換える必要があり、書き換え忘れると前の会議の記録へ続きが
+   * 混ざりました。日付と会議コードで分かれていれば、そのまま次の会議でも使えます。
+   */
+  function resolveTargetPath(memo) {
+    if (!syncSettings.autoPath) return syncSettings.path || '';
+    const date = (memo.startedAt || new Date().toISOString()).slice(0, 10);
+    const code = safeFileName(memo.meetingCode || 'meet');
+    return `meet-captions/${date}-${code}.md`;
+  }
+
+  /** パスの区切りや、ファイル名に使えない字を落とします。 */
+  function safeFileName(value) {
+    return String(value).replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '') || 'meet';
   }
 
   async function flushActive() {
@@ -275,10 +301,16 @@
     updateBadge();
   }
 
+  /** バッジに出す連携の状態。直し方の分かる言葉にします。 */
+  function syncLabel() {
+    if (lastSyncStale) return '連携コードを貼り直してください';
+    return lastSyncFailed ? '連携エラー' : '連携中';
+  }
+
   function updateBadge(lineCount) {
     if (!badgeEl) return;
     const count = typeof lineCount === 'number' ? lineCount : activeEntries.size;
-    const syncSuffix = syncSettings?.enabled ? (lastSyncFailed ? ' ・連携エラー' : ' ・連携中') : '';
+    const syncSuffix = syncSettings?.enabled ? ` ・${syncLabel()}` : '';
     badgeEl.textContent = recording
       ? `字幕メモ: 記録中 (${count}行)${syncSuffix}`
       : '字幕メモ: 一時停止中(クリックで再開)';
@@ -312,6 +344,7 @@
       if (changes[SYNC_SETTINGS_KEY]) {
         syncSettings = changes[SYNC_SETTINGS_KEY].newValue || null;
         lastSyncFailed = false;
+        lastSyncStale = false;
         updateBadge();
       }
     });

@@ -3,11 +3,13 @@ import path from 'node:path';
 import { serveAsset } from './assets.js';
 import { documentRevision } from './documentEdits.js';
 import { applyBlockEdits } from './editorMarkdown.js';
+import { extensionDir } from './extensionCommand.js';
 import { httpError, readJsonBody, sendBuffer, sendJson, startNdjson } from './http.js';
 import { appendCaptionEntry, normalizeCaptionEntry } from './liveCaptions.js';
 import { assetUrlFor, isMarkdownPath, isTextDocumentPath, resolveDocumentLink } from './links.js';
 import { renderMarkdown } from './markdown.js';
 import { listMarkdownFiles } from './markdownFiles.js';
+import { encodePairingCode } from './pairing.js';
 import {
   assertSupportedPdfAiTarget,
   isPdfPath,
@@ -58,6 +60,8 @@ const ROUTES = [
   { methods: ['POST'], pathname: '/api/ai/review', handle: reviewWithAi },
   { methods: ['POST'], pathname: '/api/ai/revise', handle: reviseWithAi },
   { methods: ['GET'], pathname: '/api/live-captions/token', handle: liveCaptionsTokenInfo },
+  { methods: ['GET'], pathname: '/api/live-captions/ping', handle: liveCaptionsPing },
+  { methods: ['GET'], pathname: '/api/live-captions/targets', handle: liveCaptionsTargets },
   { methods: ['POST'], pathname: '/api/live-captions/append', handle: appendLiveCaption }
 ];
 
@@ -80,9 +84,11 @@ export function createRequestHandler({
   return async function handleRequest(request, response) {
     const url = new URL(request.url, 'http://localhost');
 
-    // 字幕の追記だけは拡張機能（別オリジンの chrome-extension://）から呼ばれるので、
+    // 字幕まわりだけは拡張機能（別オリジンの chrome-extension://）から呼ばれるので、
     // ブラウザが送るプリフライトにはルート一覧を通さずここで直接答えます。
-    if (request.method === 'OPTIONS' && url.pathname === '/api/live-captions/append') {
+    // 1本ずつ書かずにまとめて見るのは、書き足したエンドポイントで付け忘れると、
+    // ブラウザが要求そのものを送らず、原因の分からない失敗になるからです。
+    if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/live-captions/')) {
       applyLiveCaptionsCors(request, response);
       response.writeHead(204);
       return response.end();
@@ -393,11 +399,59 @@ function assertLocalAiRequest(request) {
 async function liveCaptionsTokenInfo({ request, response, liveCaptionsToken }) {
   assertLocalAiRequest(request);
   response.setHeader('Cache-Control', 'no-store');
+  const serverUrl = `http://${request.headers.host}`;
   return sendJson(response, {
     token: liveCaptionsToken,
     header: LIVE_CAPTIONS_TOKEN_HEADER,
-    endpoint: '/api/live-captions/append'
+    endpoint: '/api/live-captions/append',
+    serverUrl,
+    // URLとトークンを1本にまとめたもの。貼り付ける先が1つになるので、片方だけ古い、
+    // という食い違いが起きません（`src/pairing.js`）。
+    pairingCode: encodePairingCode({ url: serverUrl, token: liveCaptionsToken }),
+    // 拡張機能はフォルダを指定して読み込ませます。どこにあるかは入れ方で変わるので、
+    // 画面から辿れるようにここで返します。
+    extensionDir: extensionDir()
   });
+}
+
+/**
+ * 拡張機能からの「繋がっていますか」です。
+ *
+ * 追記のエンドポイントを試し打ちすると、確かめるだけでファイルが1行増えます。確かめる
+ * ためだけの窓口を分けておけば、設定を保存する前に、URLとトークンが合っているかと、
+ * どのディレクトリへ書き込むことになるのかを見せられます。
+ */
+async function liveCaptionsPing({ rootDir, request, response, liveCaptionsToken }) {
+  assertLiveCaptionsRequest(request, response, liveCaptionsToken);
+  return sendJson(response, { ok: true, rootDir: path.basename(rootDir), rootPath: rootDir });
+}
+
+/**
+ * 書き込み先に選べるMarkdownファイルの一覧です。
+ *
+ * 拡張機能の設定でパスを手で打つと、打ち間違いは最初の発言まで分かりません（存在しない
+ * パスは作られるので、間違えたことにも気づけません）。一覧を渡して選ばせれば、既にある
+ * ファイルへ書き足すつもりの取り違えはここで無くなります。新しく作る道も残すので、
+ * 一覧はあくまで候補です。
+ */
+async function liveCaptionsTargets(context) {
+  const { rootDir, filter, request, response, liveCaptionsToken } = context;
+  assertLiveCaptionsRequest(request, response, liveCaptionsToken);
+  const files = await listMarkdownFiles(rootDir, filter);
+  return sendJson(response, { rootDir: path.basename(rootDir), files });
+}
+
+/**
+ * 字幕まわりの、拡張機能から呼ばれる窓口に共通の関門です。
+ * CORSヘッダー・localhostであること・トークンの一致の3つを、同じ順で当てます。
+ */
+function assertLiveCaptionsRequest(request, response, liveCaptionsToken) {
+  applyLiveCaptionsCors(request, response);
+  assertLiveCaptionsHost(request);
+  if (!liveCaptionsToken || request.headers[LIVE_CAPTIONS_TOKEN_HEADER] !== liveCaptionsToken) {
+    throw httpError('Invalid live captions token', 403);
+  }
+  response.setHeader('Cache-Control', 'no-store');
 }
 
 /**
@@ -410,18 +464,13 @@ async function liveCaptionsTokenInfo({ request, response, liveCaptionsToken }) {
  */
 async function appendLiveCaption(context) {
   const { rootDir, request, response, liveCaptionsToken } = context;
-  applyLiveCaptionsCors(request, response);
-  assertLiveCaptionsHost(request);
-  if (!liveCaptionsToken || request.headers[LIVE_CAPTIONS_TOKEN_HEADER] !== liveCaptionsToken) {
-    throw httpError('Invalid live captions token', 403);
-  }
+  assertLiveCaptionsRequest(request, response, liveCaptionsToken);
   const body = await readJsonBody(request);
   const relativeFile = normalizeRelativePath(rootDir, body.path);
   if (!isMarkdownPath(relativeFile)) throw httpError('Only Markdown files can receive live captions', 400);
 
   const entry = normalizeCaptionEntry(body);
   const result = await appendCaptionEntry(rootDir, relativeFile, entry);
-  response.setHeader('Cache-Control', 'no-store');
   return sendJson(response, { ok: true, ...result });
 }
 
@@ -450,7 +499,7 @@ function applyLiveCaptionsCors(request, response) {
   response.setHeader('Access-Control-Allow-Origin', origin);
   response.setHeader('Vary', 'Origin');
   response.setHeader('Access-Control-Allow-Headers', `content-type, ${LIVE_CAPTIONS_TOKEN_HEADER}`);
-  response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
 }
 
 async function listFiles({ rootDir, filter, features, response }) {
