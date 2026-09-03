@@ -97,6 +97,15 @@ export function createState() {
     revise: null,
     reviseAbortController: null,
 
+    // 文字起こしの聞き直し。どこからを「直近」とするかは文書をまたいでも変えません。
+    // 会議のあいだ同じ決め方で押し続けるほうが多いからです。
+    recapScope: 'since-last',
+    recapMinutes: 10,
+    // いま押したら読む範囲（サーバーが計算したもの）と、返ってきた要約。
+    recapWindow: null,
+    recap: null,
+    recapAbortController: null,
+
     // Edit mode bookkeeping
     dirtyBlocks: new Set(),
     blockVersions: new Map(),
@@ -157,6 +166,11 @@ export function resetDocumentState(state, filePath) {
   state.revise = null;
   state.reviseAbortController?.abort();
   state.reviseAbortController = null;
+  // 聞き直しは文書ごとです。決め方（recapScope / recapMinutes）だけは持ち越します。
+  state.recapWindow = null;
+  state.recap = null;
+  state.recapAbortController?.abort();
+  state.recapAbortController = null;
   state.commentsVersion += 1;
   state.dirtyBlocks.clear();
   state.blockVersions.clear();

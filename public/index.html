@@ -89,6 +89,7 @@
             <button id="placement-tab-button" type="button" role="tab" aria-selected="false" aria-controls="placement-panel">指摘の配置</button>
             <button id="review-tab-button" type="button" role="tab" aria-selected="false" aria-controls="review-panel">AIレビュー</button>
             <button id="revise-tab-button" type="button" role="tab" aria-selected="false" aria-controls="revise-panel">本文の修正</button>
+            <button id="recap-tab-button" class="hidden" type="button" role="tab" aria-selected="false" aria-controls="recap-panel">文字起こし</button>
           </div>
           <section id="outline-panel" class="outline-panel hidden" role="tabpanel" aria-labelledby="outline-tab-button">
             <div class="side-section-header">
@@ -395,6 +396,40 @@
                 </div>
               </form>
               <div id="revise-results" class="placement-results"></div>
+            </div>
+          </section>
+          <section id="recap-panel" class="recap-panel hidden" role="tabpanel" aria-labelledby="recap-tab-button" aria-live="polite">
+            <div class="pane-scroll">
+              <div class="ai-header">
+                <div>
+                  <p class="eyebrow">Transcript recap</p>
+                  <h2>文字起こしの聞き直し</h2>
+                </div>
+              </div>
+              <p class="placement-hint">直近で言われたこと（コメント・指摘・質問・決定）の要約と、それを踏まえて次にすることを出します。読むのはファイルにいま書かれているところまでなので、画面に出ている本文より新しい発言も入ります。</p>
+              <form id="recap-form" class="placement-form recap-form">
+                <fieldset id="recap-scope" class="recap-scope">
+                  <legend>どこからを「直近」とするか</legend>
+                  <label><input type="radio" name="recap-scope" value="since-last" checked> 前回聞いたところから</label>
+                  <label>
+                    <input type="radio" name="recap-scope" value="minutes"> 直近
+                    <select id="recap-minutes" aria-label="直近の分数">
+                      <option value="5">5分</option>
+                      <option value="10" selected>10分</option>
+                      <option value="30">30分</option>
+                    </select>
+                  </label>
+                  <label><input type="radio" name="recap-scope" value="all"> 会議の最初から</label>
+                </fieldset>
+                <p id="recap-range" class="recap-range" aria-live="polite">読む範囲を確認しています…</p>
+                <textarea id="recap-question" rows="2" placeholder="分からなかったことがあれば書きます（例：「そこは分けましょう」が何を指しているのか分かりませんでした）"></textarea>
+                <div class="placement-actions">
+                  <button id="recap-range-refresh" type="button" title="いまファイルに書かれているところまでで、読む範囲を計算し直します">範囲を取り直す</button>
+                  <button id="recap-stop-button" class="hidden" type="button">停止</button>
+                  <button id="recap-run-button" type="submit">直近を聞く</button>
+                </div>
+              </form>
+              <div id="recap-results" class="placement-results"></div>
             </div>
           </section>
         </aside>

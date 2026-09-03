@@ -3,6 +3,7 @@ import { createAiController } from './ai.js';
 import { createAiContextController } from './aiContext.js';
 import { createAutosave } from './autosave.js';
 import { createBodyCopier } from './bodyCopy.js';
+import { createCaptionRecapController } from './captionRecap.js';
 import { commentIndexesAt, renderCommentHighlights } from './commentAnchors.js';
 import {
   copyCommentTarget,
@@ -275,6 +276,17 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     onApplyEdits: applyDocumentEdits,
     onRevealTarget: revealTarget
   });
+  // 会議中の聞き直し。文字起こしのファイルを開いたときだけタブが出ます。
+  const recap = createCaptionRecapController({
+    refs,
+    state,
+    api,
+    toaster,
+    prepareAi: () => ai.prepare(),
+    // 読ませるのは発言だけですが、前提（読み取りコンテキスト）は保存済みのものを
+    // 読むので、他のAI機能と同じく先に画面の内容を保存します。
+    flushComments: () => commentSaves.flush()
+  });
   const pdfViewer = pdfViewerFactory({
     document,
     content,
@@ -473,6 +485,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     contextPage.load();
     documentReview.load();
     revise.reset();
+    recap.load();
     renderComments();
 
     try {
@@ -548,6 +561,10 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     documentReview.refresh();
     contextPage.render();
     bodyCopy.syncControl();
+    // 文字起こしでない文書にはタブを出しません。本文が入れ替わるたびに見直すのは、
+    // 会議中に書き足されたファイルを開き直したときも、その場でタブが出るようにするためです。
+    refs.recapTabButton.classList.toggle('hidden', !recap.available());
+    recap.refresh();
   }
 
   function adoptFeatures(features) {

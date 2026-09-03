@@ -43,6 +43,23 @@ const DOCUMENT = [
   ''
 ].join('\n');
 
+/** 文字起こし。聞き直しの窓は時刻で切るので、時刻まで固定しておきます。 */
+const MEETING = [
+  '# 定例会議',
+  '',
+  '---',
+  '',
+  '**田中** `[10:00:00]`',
+  '今日は再起動手順の確認です。',
+  '',
+  '**鈴木** `[10:20:00]`',
+  '手順の前提が書かれていないので、当番は読めません。',
+  '',
+  '**鈴木** `[10:21:30]`',
+  '来週の水曜までに直してください。',
+  ''
+].join('\n');
+
 const PERSONA = {
   source: 'ai',
   label: '運用当番の新人',
@@ -171,6 +188,8 @@ const EXPECTED = {
   'prompt:verification(noUnplaced)': '335c145ccc4a6d3e65200bcfe9e7c6b92fa632453071f7b558989ea94b2c0e82',
   'prompt:revise(comments+instruction)': 'ac2101a054acf608fa7e1a85c4687c147ae2771ef2d67e12535330fdf67657b2',
   'prompt:revise(instructionOnly)': '12ef15b2376365bf02deb839eb0933154e210738ee48a72886c0eb166072f7fa',
+  'prompt:recap(all)': 'bb869aff908996bbdf353a55cc99824a388c9bca39cc94ebd7ba84cda8b95699',
+  'prompt:recap(minutes+question)': 'e43bfc4ee1ae2ae0d4fc633be3a3034da9781b233166b88e474cf35788fdbdff',
   'prompt:chat(first)': 'eca6465f453c6d1cd1845608167f881f915bdd589c8057ce9d2b63e63f1a9ef5',
   'prompt:chat(firstWithTranscript)': 'ac2b844af404254f9372d41794a5b7d60b1f07f1010a9f32f5aa7dc896a68ca1',
   'prompt:chat(followUpUnchanged)': 'a2847a54fee98149f0221be22f89814e6e08aac58d56453beec780756bcbed5f',
@@ -293,6 +312,12 @@ test('AIへ渡す文面は、書き換えるまで一字も変わらない', asy
   await placedOnly.reviewDocument('guide.md', { skillIds: ['fixture-skill'] });
   record('prompt:verification(noUnplaced)', prompts.at(-1));
 
+  // 文字起こしの聞き直し。会議の最初からと、直近◯分＋聞きたいことの2通りで文面が変わります。
+  await service.recapCaptions('meeting.md', { scope: 'all' });
+  record('prompt:recap(all)', prompts.at(-1));
+  await service.recapCaptions('meeting.md', { scope: 'minutes', minutes: 5, question: '「前提」は何を指していますか？' });
+  record('prompt:recap(minutes+question)', prompts.at(-1));
+
   const { conversation } = await createConversation(service, 'guide.md');
   await service.sendMessage(conversation.id, 'ここはどう直しますか？');
   record('prompt:chat(first)', prompts.at(-1));
@@ -367,6 +392,7 @@ async function fixtureRoot(t) {
 
   await fs.writeFile(path.join(root, 'guide.md'), DOCUMENT, 'utf8');
   await fs.writeFile(path.join(root, 'no-persona.md'), DOCUMENT, 'utf8');
+  await fs.writeFile(path.join(root, 'meeting.md'), MEETING, 'utf8');
   for (const id of ['fixture-skill', 'other-skill']) {
     const skillDir = path.join(root, '.claude', 'skills', id);
     await fs.mkdir(skillDir, { recursive: true });
@@ -422,6 +448,9 @@ const TRANSLATION_ANSWER = JSON.stringify({
 
 const PLACEMENT_ANSWER = JSON.stringify({ placements: [], unplaced: [] });
 
+/** 聞き直しの固定の答え。ここで固定しているのは送る文面なので、答えは形だけ合わせます。 */
+const RECAP_ANSWER = JSON.stringify({ summary: '前提の記述を求められました。', answer: '', points: [], actions: [] });
+
 /** 管理者の答え。埋まらなかった項目は空のまま、問いだけが返るのが普通の形です。 */
 const BRIEF_ANSWER = JSON.stringify({
   purpose: '当番が手順書だけで再起動を完了できるようになる。',
@@ -469,6 +498,7 @@ function answerFor(outputSchema, reviewAnswer) {
   if (fields.includes('edits')) return REVISE_ANSWER;
   if (fields.includes('summary') && fields.includes('placements')) return reviewAnswer;
   if (fields.includes('placements')) return PLACEMENT_ANSWER;
+  if (fields.includes('points')) return RECAP_ANSWER;
   // 管理者もペルソナも assumptions を返すので、先に問いの有無で見分けます。
   if (fields.includes('questions')) return BRIEF_ANSWER;
   if (fields.includes('assumptions')) return PERSONA_ANSWER;

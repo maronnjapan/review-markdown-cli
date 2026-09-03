@@ -2391,6 +2391,153 @@ test('the context screen opens the saved premises wide, and lets the reviewer fi
   assert.equal(document.querySelector('#review-panel').classList.contains('hidden'), false, 'AIレビューのタブを開く');
 });
 
+test('文字起こしを開くと、押す前に読む範囲が出て、聞くと要約と次の行動が並ぶ', async (t) => {
+  const markdown = [
+    '# 定例会議',
+    '',
+    '---',
+    '',
+    '**田中** `[10:00:00]`',
+    '今日は再起動手順の確認です。',
+    '',
+    '**鈴木** `[10:20:00]`',
+    '手順の前提が書かれていないので、当番は読めません。',
+    ''
+  ].join('\n');
+  const windowRequests = [];
+  const recapRequests = [];
+  const reviewFile = '.review/docs/meeting.md.review.json';
+
+  const { document, window } = await startApp(t, 'http://localhost/#/review/docs%2Fmeeting.md', {
+    '/api/file': async () => ({
+      path: 'docs/meeting.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'docs/meeting.md', comments: [] },
+      reviewFile
+    }),
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model' }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/recap-window': (input) => {
+      const query = new URL(String(input), 'http://localhost').searchParams;
+      windowRequests.push(Object.fromEntries(query));
+      return {
+        window: {
+          scope: query.get('scope'),
+          appliedScope: query.get('scope') === 'all' ? 'all' : 'minutes',
+          fallback: query.get('scope') === 'since-last' ? 'no-mark' : '',
+          minutes: Number(query.get('minutes')),
+          entries: [{ index: 1 }],
+          leadIn: [],
+          dropped: 0,
+          total: 2,
+          chars: 30,
+          from: '10:20:00',
+          to: '10:20:00',
+          reason: ''
+        }
+      };
+    },
+    '/api/ai/recap': (_input, options) => {
+      recapRequests.push([JSON.parse(options.body), options.headers]);
+      return ndjsonResponse([
+        { type: 'started' },
+        {
+          type: 'result',
+          recap: {
+            summary: '手順書の前提が足りない、という話でした。',
+            answer: '「前提」は、当番が読む前に分かっているべき条件のことです。',
+            question: '「前提」って何のことですか？',
+            points: [{
+              kind: 'request',
+              speaker: '鈴木',
+              point: '手順の前提を書いてほしい',
+              quote: '手順の前提が書かれていないので、当番は読めません。'
+            }],
+            actions: [{ action: '3章の冒頭に前提を書く', reason: '鈴木さんの依頼' }],
+            range: {
+              scope: 'since-last',
+              appliedScope: 'minutes',
+              fallback: 'no-mark',
+              minutes: 10,
+              entries: 1,
+              leadIn: 0,
+              dropped: 0,
+              total: 2,
+              from: '10:20:00',
+              to: '10:20:00'
+            }
+          }
+        }
+      ]);
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content h1'));
+  await waitFor(() => windowRequests.length === 1);
+
+  // 押す前に、どこからどこまでを読むのかが出ます。初回は前回の位置が無いので落ちた旨も出ます。
+  document.querySelector('#recap-tab-button').click();
+  assert.equal(document.querySelector('#recap-tab-button').classList.contains('hidden'), false);
+  assert.equal(document.querySelector('#recap-panel').classList.contains('hidden'), false);
+  assert.deepEqual(windowRequests[0], { path: 'docs/meeting.md', scope: 'since-last', minutes: '10' });
+  assert.match(document.querySelector('#recap-range').textContent, /直近10分の1発言（10:20:00〜10:20:00）/);
+  assert.match(document.querySelector('#recap-range').textContent, /まだ聞いていない/);
+
+  // 決め方を変えたら、範囲もその場で引き直します。
+  const allScope = [...document.querySelectorAll('input[name="recap-scope"]')].find((input) => input.value === 'all');
+  allScope.checked = true;
+  allScope.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await waitFor(() => windowRequests.length === 2);
+  assert.equal(windowRequests[1].scope, 'all');
+  assert.match(document.querySelector('#recap-range').textContent, /会議の最初からの1発言/);
+
+  const question = document.querySelector('#recap-question');
+  question.value = '「前提」って何のことですか？';
+  document.querySelector('#recap-form').requestSubmit();
+  await waitFor(() => document.querySelector('.recap-section'));
+
+  assert.deepEqual(recapRequests[0][0], {
+    path: 'docs/meeting.md',
+    scope: 'all',
+    minutes: 10,
+    question: '「前提」って何のことですか？'
+  });
+  assert.equal(recapRequests[0][1]['X-Review-Markdown-Token'], 'ui-ai-token');
+  assert.match(document.querySelector('.review-summary').textContent, /前提が足りない/);
+  assert.match(document.querySelector('.recap-answer').textContent, /当番が読む前に分かっているべき条件/);
+  assert.match(document.querySelector('.placement-card').textContent, /手順の前提を書いてほしい/);
+  assert.equal(document.querySelector('.placement-card .target-badge').textContent, '依頼');
+  assert.match(document.querySelector('.recap-actions li').textContent, /3章の冒頭に前提を書く/);
+  // 読んだ範囲は結果にも残します。要約だけでは、会議のどこの話か分かりません。
+  assert.match(document.querySelector('.placement-note').textContent, /読んだのは 直近10分の1発言/);
+  // 聞いたぶん「前回の位置」が進むので、範囲は取り直します。
+  await waitFor(() => windowRequests.length === 3);
+});
+
+test('文字起こしでない文書に、聞き直しのタブは出ない', async (t) => {
+  const markdown = '# 設計メモ\n\n**太字**の段落です。\n';
+  const windowRequests = [];
+  const { document } = await startApp(t, 'http://localhost/#/review/docs%2Fnote.md', {
+    '/api/file': async () => ({
+      path: 'docs/note.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'docs/note.md', comments: [] },
+      reviewFile: '.review/docs/note.md.review.json'
+    }),
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: true, provider: 'codex' }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/recap-window': (input) => {
+      windowRequests.push(String(input));
+      return { window: null };
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content h1'));
+
+  assert.equal(document.querySelector('#recap-tab-button').classList.contains('hidden'), true);
+  assert.deepEqual(windowRequests, [], '発言の無い文書では範囲も引きに行かない');
+});
+
 async function renderViews(markdown) {
   const options = {
     resolveLink: (href) => resolveDocumentLink(href, { relativeFile: 'docs/note.md' })

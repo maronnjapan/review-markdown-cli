@@ -152,6 +152,18 @@ const SELECTORS = {
   reviseStopButton: '#revise-stop-button',
   reviseResults: '#revise-results',
 
+  recapTabButton: '#recap-tab-button',
+  recapPanel: '#recap-panel',
+  recapForm: '#recap-form',
+  recapScope: '#recap-scope',
+  recapMinutes: '#recap-minutes',
+  recapRange: '#recap-range',
+  recapRangeRefresh: '#recap-range-refresh',
+  recapQuestion: '#recap-question',
+  recapRunButton: '#recap-run-button',
+  recapStopButton: '#recap-stop-button',
+  recapResults: '#recap-results',
+
   contextView: '#context-view',
   contextOpenButton: '#context-open-button',
   aiContextOpenPage: '#ai-context-open-page',

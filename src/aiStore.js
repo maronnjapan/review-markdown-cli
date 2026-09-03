@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { MAX_TRANSLATIONS } from './aiLimits.js';
+import { MAX_RECAP_MARKS, MAX_TRANSLATIONS } from './aiLimits.js';
+import { readRecapMark } from './captionRecap.js';
 import { TRANSLATION_PROMPT_VERSION } from './prompts/translate.js';
 
 const STORE_VERSION = 1;
@@ -47,8 +48,12 @@ export class AiStore {
     this.projectDir = path.join(dataDir, 'projects', projectStorageKey(rootDir));
     this.conversationsDir = path.join(this.projectDir, 'conversations');
     this.translationFile = path.join(this.projectDir, 'translation-cache.json');
+    // 文字起こしをどこまで聞いたか。文書と一緒に配らないのは、これがレビューの成果物
+    // ではなく、この端末のこの人がどこまで追いついたかという記録だからです。
+    this.recapMarkFile = path.join(this.projectDir, 'caption-marks.json');
     this.writeQueue = Promise.resolve();
     this.translationCache = null;
+    this.recapMarks = null;
   }
 
   async listConversations(documentPath) {
@@ -112,6 +117,27 @@ export class AiStore {
     });
   }
 
+  /**
+   * その文書を前回どこまで聞いたか。一度も聞いていなければ null です。
+   * 壊れていても投げません（`readRecapMark` が読めない値を null にします）。
+   */
+  async getRecapMark(documentPath) {
+    const marks = await this.readRecapMarks();
+    return readRecapMark(marks.entries[documentPath]?.mark);
+  }
+
+  async saveRecapMark(documentPath, mark) {
+    await this.enqueueWrite(async () => {
+      const marks = await this.readRecapMarks();
+      marks.entries[documentPath] = { mark, updatedAt: new Date().toISOString() };
+      const entries = Object.entries(marks.entries)
+        .sort(([, a], [, b]) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
+        .slice(0, MAX_RECAP_MARKS);
+      marks.entries = Object.fromEntries(entries);
+      await writeJsonAtomic(this.recapMarkFile, marks);
+    });
+  }
+
   conversationPath(id) {
     if (!/^[a-zA-Z0-9-]{8,80}$/.test(String(id))) throw new Error('Invalid conversation id');
     return path.join(this.conversationsDir, `${id}.json`);
@@ -130,6 +156,21 @@ export class AiStore {
       this.translationCache = { version: STORE_VERSION, entries: {} };
     }
     return this.translationCache;
+  }
+
+  async readRecapMarks() {
+    if (this.recapMarks) return this.recapMarks;
+    try {
+      const parsed = JSON.parse(await fs.readFile(this.recapMarkFile, 'utf8'));
+      this.recapMarks = {
+        version: STORE_VERSION,
+        entries: parsed && typeof parsed.entries === 'object' ? parsed.entries : {}
+      };
+    } catch (error) {
+      if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
+      this.recapMarks = { version: STORE_VERSION, entries: {} };
+    }
+    return this.recapMarks;
   }
 
   enqueueWrite(write) {

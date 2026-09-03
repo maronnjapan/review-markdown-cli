@@ -156,6 +156,22 @@ export const api = {
   async reviseWithAi(payload, options = {}) {
     await ensureAiToken();
     return streamNdjson('/api/ai/revise', payload, { ...options, headers: aiHeaders() });
+  },
+
+  /**
+   * いま「直近」がどこからどこまでになるか。AIは起動しないので、聞く前に引けます。
+   * 読むのはファイルの中身なので、画面に出ている本文より新しい発言も数に入ります。
+   */
+  async readRecapWindow({ path, scope, minutes }) {
+    await ensureAiToken();
+    const query = new URLSearchParams({ path, scope, minutes: String(minutes) });
+    return fetchJson(`/api/ai/recap-window?${query}`, aiOptions());
+  },
+
+  /** 直近の文字起こしの要約と、次にすること。本文にもコメントにも書き込みません。 */
+  async recapWithAi(payload, options = {}) {
+    await ensureAiToken();
+    return streamNdjson('/api/ai/recap', payload, { ...options, headers: aiHeaders() });
   }
 };
 
