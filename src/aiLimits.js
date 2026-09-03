@@ -286,3 +286,78 @@ export const MAX_REFERENCE_FILES = 8;
  * 添えたファイルの数だけ毎回の入力が増えます。
  */
 export const MAX_REFERENCE_FILE_CHARS = 8_000;
+
+/* ---- 自動タスク（文字起こし・資料からのタスクの抽出と実行） ---------- */
+
+/**
+ * 1回の抽出で受け取る新しいタスクの数。プロンプトの「Report at most …」へそのまま入ります。
+ * 増やすほど一覧が長くなり、減らすほど拾い漏らします。文字起こしは数分おきに読み直すので、
+ * 1回で全部を拾わなくても次の回で拾えます。
+ */
+export const MAX_NEW_TASKS_PER_RUN = 10;
+
+/**
+ * 1つの文書に持てるタスクの数。超えた分は、完了と見送りの古いものから落とします。
+ * 未着手のタスクは落としません。落とすと、拾ったのに消えたタスクが出ます。
+ */
+export const MAX_TASKS_PER_DOCUMENT = 80;
+
+/**
+ * 見守りの1回で、AIに実行させるタスクの数。抽出のたびに全部を実行させると、
+ * 会議の1発言ごとに調査メモが3本書かれることになります。残りは次の回に持ち越します。
+ */
+export const MAX_TASK_RUNS_PER_TICK = 3;
+
+/**
+ * 1回の抽出でモデルへ渡す本文の長さ。これを超える文書は、末尾からこの長さだけを渡します。
+ * 文字起こしでは末尾がいちばん新しい発言なので、切れるのは古い部分です。
+ * 追記だけの文書では新しく増えた分しか渡さないので、ここに当たるのは最初の1回と、
+ * 途中を書き換えた回だけです。
+ */
+export const MAX_TASK_SOURCE_CHARS = 24_000;
+
+/**
+ * 追記された分の手前に添える本文の長さ。発言の続きが前の発言を指しているとき、
+ * 何を指しているかをモデルが読めるようにするためです。
+ */
+export const TASK_SOURCE_TAIL_CHARS = 1_500;
+
+/**
+ * これだけ増えるまで、見守りはAIへ送りません。字幕は1発言ずつ届くので、届くたびに
+ * 読み直すと、同じ話題を何度も読ませることになります。
+ */
+export const MIN_TASK_SOURCE_GROWTH_CHARS = 120;
+
+/**
+ * 増え方が小さくても、これだけの間隔が空いたら読み直します（見守りの間隔の倍数）。
+ * 会議の最後の一言が上の閾値に届かないまま、いつまでも拾われないのを避けるためです。
+ */
+export const TASK_SOURCE_STALE_TICKS = 5;
+
+/**
+ * 抽出のたびに「もう起こしたタスク」として渡す件数。新しいものから数えます。
+ * 減らすと、古いタスクを同じ題名でもう一度起こすようになります。
+ */
+export const MAX_EXISTING_TASKS_IN_PROMPT = 60;
+
+/** タスク1件の題名・詳細・引用・担当の長さ。モデルの答えはこの長さで切って受け取ります。 */
+export const MAX_TASK_TITLE_CHARS = 200;
+export const MAX_TASK_DETAIL_CHARS = 1_000;
+export const MAX_TASK_QUOTE_CHARS = 400;
+export const MAX_TASK_OWNER_CHARS = 100;
+
+/**
+ * AIが実行したタスクの結果（調査メモ・コード例・回答案）の長さ。
+ * これを超えた分は末尾を落とし、落としたことを画面に出します。
+ */
+export const MAX_TASK_RESULT_CHARS = 12_000;
+
+/** 実行の結果から生まれる次のタスクと、材料に無かった問いの数。 */
+export const MAX_TASK_FOLLOW_UPS = 3;
+export const MAX_TASK_QUESTIONS = 5;
+
+/**
+ * 「特にしてほしいこと」の長さ。すべての抽出と実行の先頭に付くので、読み取りコンテキストと
+ * 同じく、長くするほど毎回の入力が増えます。
+ */
+export const MAX_AUTO_TASK_INSTRUCTIONS_CHARS = 2_000;

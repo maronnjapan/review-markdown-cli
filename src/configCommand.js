@@ -52,6 +52,9 @@ Examples:
   review-markdown config set port 4000
   review-markdown config set manager true
   review-markdown config set translation true
+  review-markdown config set autoTasks true
+  review-markdown config set autoTasksInterval 300
+  review-markdown config add autoTasksActions research inquiry
   review-markdown config set aiContext '入門者向けの技術書。読者はJavaScriptの基礎を知っている。'
   review-markdown config list
 
@@ -60,9 +63,14 @@ Examples:
 スラッシュを含まないパターンはどの階層にも一致し、先頭に / を付けると直下だけに一致します。
 設定ファイル名は ${CONFIG_FILE_NAME} です。
 
-manager と translation は既定では無効です。
+manager と translation と autoTasks は既定では無効です。
 使う機能だけ true にすると、次回以降の起動でも有効になります。
-translation は、ブラウザ右上の「設定」からも入り切りできます（その場で効き、ここへ保存します）。
+translation と autoTasks は、ブラウザ右上の「設定」からも入り切りできます（その場で効き、ここへ保存します）。
+
+autoTasks は、文字起こしや書きかけの資料から「やること」をAIに起こさせ、任せられるものを裏で
+済ませておく自動タスクです。autoTasksInterval は文書を読み直す間隔（秒）、autoTasksActions は
+任せること（organize / focus / research / sample / inquiry。書いたものだけが走ります）、
+autoTasksInstructions は特にしてほしいことの文章です。どれも「設定」から変えられます。
 
 aiContext は翻訳・AIチャット・指摘の配置で AI に渡す読み取りコンテキストです。
 ここに書いた前提はディレクトリ配下のすべての文書に効きます。

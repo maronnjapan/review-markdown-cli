@@ -190,6 +190,11 @@ const EXPECTED = {
   'prompt:revise(instructionOnly)': '12ef15b2376365bf02deb839eb0933154e210738ee48a72886c0eb166072f7fa',
   'prompt:recap(all)': 'bb869aff908996bbdf353a55cc99824a388c9bca39cc94ebd7ba84cda8b95699',
   'prompt:recap(minutes+question)': 'e43bfc4ee1ae2ae0d4fc633be3a3034da9781b233166b88e474cf35788fdbdff',
+  'prompt:tasks(transcript,first)': '90fd6bc22440fdea761a3c17edcbf6f9d74a2d7027d122c7293a287a150c89b1',
+  'prompt:tasks(transcript,appended+instructions)': 'd9705ff5b00d8c8ef471869f700822757c5f34d08e0f39ec1b8be83d0dbb75a2',
+  'prompt:tasks(document,extractOnly)': '53469256dddd2b518dfb046e7bfd628dc3ab6f44b5c95822ed3a8c6e4645e87a',
+  'prompt:taskRun(research)': '1b360b603666e5b146e7d53fb3bed3fc06ffed8da5677b9b703b5e172fe6eec2',
+  'prompt:taskRun(sample+instructions)': '84f21e3710a655e76a33163790ae5f7c98f3e98dc1d22c67a83fb661c3ff03bf',
   'prompt:chat(first)': 'eca6465f453c6d1cd1845608167f881f915bdd589c8057ce9d2b63e63f1a9ef5',
   'prompt:chat(firstWithTranscript)': 'ac2b844af404254f9372d41794a5b7d60b1f07f1010a9f32f5aa7dc896a68ca1',
   'prompt:chat(followUpUnchanged)': 'a2847a54fee98149f0221be22f89814e6e08aac58d56453beec780756bcbed5f',
@@ -317,6 +322,30 @@ test('AIへ渡す文面は、書き換えるまで一字も変わらない', asy
   record('prompt:recap(all)', prompts.at(-1));
   await service.recapCaptions('meeting.md', { scope: 'minutes', minutes: 5, question: '「前提」は何を指していますか？' });
   record('prompt:recap(minutes+question)', prompts.at(-1));
+
+  // 自動タスク。文字起こしを最初から読む形、追記だけを読む形（既存タスクと特にしてほしいこと付き）、
+  // 資料を整理も今すべきことも無しで読む形、そして実行の2種類で文面が変わります。
+  const noTasks = { tasks: [], analysis: null };
+  await service.extractTasks('meeting.md', { record: noTasks, actions: ['organize', 'focus', 'research'] });
+  record('prompt:tasks(transcript,first)', prompts.at(-1));
+  const readSoFar = MEETING.indexOf('**鈴木** `[10:21:30]`');
+  await service.extractTasks('meeting.md', {
+    record: {
+      tasks: [{ id: 'task-fixed-1', title: '手順の前提を書く', kind: 'action', status: 'open', priority: 'now' }],
+      analysis: { revision: crypto.createHash('sha256').update(MEETING.slice(0, readSoFar)).digest('hex'), length: readSoFar }
+    },
+    actions: ['organize', 'focus'],
+    instructions: 'サンプル実装はTypeScriptで書く。'
+  });
+  record('prompt:tasks(transcript,appended+instructions)', prompts.at(-1));
+  await service.extractTasks('guide.md', { record: noTasks, actions: [] });
+  record('prompt:tasks(document,extractOnly)', prompts.at(-1));
+  await service.performTask('guide.md', {
+    title: '再起動の前提条件を調べる', detail: '当番が知らない前提を洗い出す。', kind: 'research', quote: 'この手順は当番が読みます。'
+  });
+  record('prompt:taskRun(research)', prompts.at(-1));
+  await service.performTask('guide.md', { title: '再起動スクリプトの例', detail: '', kind: 'sample', quote: '' }, { instructions: 'サンプル実装はTypeScriptで書く。' });
+  record('prompt:taskRun(sample+instructions)', prompts.at(-1));
 
   const { conversation } = await createConversation(service, 'guide.md');
   await service.sendMessage(conversation.id, 'ここはどう直しますか？');
@@ -451,6 +480,10 @@ const PLACEMENT_ANSWER = JSON.stringify({ placements: [], unplaced: [] });
 /** 聞き直しの固定の答え。ここで固定しているのは送る文面なので、答えは形だけ合わせます。 */
 const RECAP_ANSWER = JSON.stringify({ summary: '前提の記述を求められました。', answer: '', points: [], actions: [] });
 
+/** 自動タスクの固定の答え。抽出と実行の2つで、どちらも形だけ合わせます。 */
+const TASKS_ANSWER = JSON.stringify({ summary: '前提が足りません。', focus: { now: '', reason: '' }, tasks: [], updates: [] });
+const TASK_RESULT_ANSWER = JSON.stringify({ summary: '前提は3つです。', body: '# 調査メモ', followUps: [], questions: [] });
+
 /** 管理者の答え。埋まらなかった項目は空のまま、問いだけが返るのが普通の形です。 */
 const BRIEF_ANSWER = JSON.stringify({
   purpose: '当番が手順書だけで再起動を完了できるようになる。',
@@ -499,6 +532,9 @@ function answerFor(outputSchema, reviewAnswer) {
   if (fields.includes('summary') && fields.includes('placements')) return reviewAnswer;
   if (fields.includes('placements')) return PLACEMENT_ANSWER;
   if (fields.includes('points')) return RECAP_ANSWER;
+  // 自動タスクの実行は questions を返すので、管理者より先に見分けます。
+  if (fields.includes('updates')) return TASKS_ANSWER;
+  if (fields.includes('followUps')) return TASK_RESULT_ANSWER;
   // 管理者もペルソナも assumptions を返すので、先に問いの有無で見分けます。
   if (fields.includes('questions')) return BRIEF_ANSWER;
   if (fields.includes('assumptions')) return PERSONA_ANSWER;

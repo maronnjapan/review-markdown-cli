@@ -2,6 +2,7 @@ import { api as defaultApi } from './api.js';
 import { createAiController } from './ai.js';
 import { createAiContextController } from './aiContext.js';
 import { createAutosave } from './autosave.js';
+import { createAutoTasksController } from './autoTasks.js';
 import { createBodyCopier } from './bodyCopy.js';
 import { createCaptionRecapController } from './captionRecap.js';
 import { commentIndexesAt, renderCommentHighlights } from './commentAnchors.js';
@@ -287,6 +288,16 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     // 読むので、他のAI機能と同じく先に画面の内容を保存します。
     flushComments: () => commentSaves.flush()
   });
+  // 自動タスク。有効なときだけタブが出て、一覧はサーバーの記録の写しです。
+  const autoTasks = createAutoTasksController({
+    refs,
+    state,
+    api,
+    toaster,
+    prepareAi: () => ai.prepare(),
+    // タスクを起こすときも前提（3点・メモ・参照ファイル）を読むので、先に画面の内容を保存します。
+    flushComments: () => commentSaves.flush()
+  });
   const pdfViewer = pdfViewerFactory({
     document,
     content,
@@ -486,6 +497,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     documentReview.load();
     revise.reset();
     recap.load();
+    autoTasks.load();
     renderComments();
 
     try {
@@ -565,12 +577,15 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     // 会議中に書き足されたファイルを開き直したときも、その場でタブが出るようにするためです。
     refs.recapTabButton.classList.toggle('hidden', !recap.available());
     recap.refresh();
+    // 自動タスクのタブも、機能の有無と文書の種類（PDFでは出さない）で出し入れします。
+    autoTasks.sync();
   }
 
   function adoptFeatures(features) {
     state.features = {
       manager: features?.manager === true,
-      translation: features?.translation === true
+      translation: features?.translation === true,
+      autoTasks: features?.autoTasks === true
     };
     refs.managerTabButton.classList.toggle('hidden', !state.features.manager);
     // 管理者が無効なときの3点は、保存側も断ります。書ける欄を出しておくと、
@@ -600,6 +615,8 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
   function applyFeatureChange(features) {
     if (!features) return;
     adoptFeatures(features);
+    // 自動タスクは、設定で入れた直後からタブが出て、切った直後にタブが消えます。
+    autoTasks.sync();
     if (!state.currentPath || state.mode === 'edit') return;
     if (state.documentType === 'pdf') pdfViewer.renderHighlights(state.comments);
     else renderCommentMode();

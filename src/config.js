@@ -15,6 +15,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { normalizeAiContext } from './aiContext.js';
 import { AI_PROVIDERS, DEFAULT_AI_PROVIDER, unknownProviderMessage } from './aiProviders/index.js';
+import { normalizeAutoTaskActions, normalizeAutoTaskInstructions, normalizeAutoTaskInterval } from './autoTasks.js';
+import { AUTO_TASK_ACTION_IDS, DEFAULT_AUTO_TASK_INTERVAL_SECONDS } from './autoTaskVocabulary.js';
 import { normalizePatterns } from './pathFilter.js';
 
 export const CONFIG_FILE_NAME = '.review-markdown.json';
@@ -66,6 +68,26 @@ const CONFIG_KEY_SPECS = {
     kind: 'scalar',
     parse: (value, source) => parseBoolean(value, source),
     help: '翻訳機能を有効にするかどうか（既定: false）'
+  },
+  autoTasks: {
+    kind: 'scalar',
+    parse: (value, source) => parseBoolean(value, source),
+    help: '自動タスク（文字起こし・資料からタスクを起こし、裏で実行する）を有効にするかどうか（既定: false）'
+  },
+  autoTasksInterval: {
+    kind: 'scalar',
+    parse: (value, source) => normalizeAutoTaskInterval(value, source),
+    help: `自動タスクが文書を読み直す間隔（秒。既定: ${DEFAULT_AUTO_TASK_INTERVAL_SECONDS}）`
+  },
+  autoTasksActions: {
+    kind: 'list',
+    parse: (value, source) => normalizeAutoTaskActions(value, source),
+    help: `自動タスクに任せること（一覧。${AUTO_TASK_ACTION_IDS.join(' / ')}。既定: すべて）`
+  },
+  autoTasksInstructions: {
+    kind: 'text',
+    parse: (value, source) => normalizeAutoTaskInstructions(value, source),
+    help: '自動タスクに特にしてほしいこと（文章）'
   },
   aiEmptyTarget: {
     kind: 'scalar',
@@ -124,7 +146,7 @@ export const USER_SCOPED_KEYS = CONFIG_KEYS.filter((key) => CONFIG_KEY_SPECS[key
 
 /** `config --help` の Keys 節。表から作るので、キーを足しても説明を書き忘れません。 */
 export const CONFIG_KEY_HELP = CONFIG_KEYS.map((key) => (
-  `  ${key.padEnd(17)}${CONFIG_KEY_SPECS[key].help}`
+  `  ${key.padEnd(23)}${CONFIG_KEY_SPECS[key].help}`
 )).join('\n');
 
 /** 用途ごとのモデル指定。設定していない用途は、選んだAIの既定から選びます。 */
@@ -353,6 +375,7 @@ export function applyConfigToOptions(options, config = {}) {
   const useOpen = options.openSource === 'default' && config.open !== undefined;
   const useManager = options.managerSource === 'default' && config.manager !== undefined;
   const useTranslation = options.translationSource === 'default' && config.translation !== undefined;
+  const useAutoTasks = options.autoTasksSource === 'default' && config.autoTasks !== undefined;
   return {
     ...options,
     include: dedupe([...(config.include || []), ...options.include]),
@@ -361,6 +384,12 @@ export function applyConfigToOptions(options, config = {}) {
     open: useOpen ? config.open : options.open,
     manager: useManager ? config.manager : options.manager,
     translation: useTranslation ? config.translation : options.translation,
+    autoTasks: useAutoTasks ? config.autoTasks : options.autoTasks,
+    // 自動タスクの間隔・任せること・特にしてほしいことは、コマンドラインに口を持ちません。
+    // 設定ファイルの値がそのまま届き、画面の「設定」からも変えられます。
+    autoTasksInterval: config.autoTasksInterval,
+    autoTasksActions: config.autoTasksActions,
+    autoTasksInstructions: config.autoTasksInstructions,
     aiContext: options.aiContext ?? config.aiContext ?? '',
     // AIの選択とモデルの指定はコマンドラインに口を持たないので、設定ファイルの値が
     // そのまま届きます。どれも未設定なら、既定のAIをその既定のモデルで走らせます。

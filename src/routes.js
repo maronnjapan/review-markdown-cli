@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { normalizeAiContext } from './aiContext.js';
 import { serveAsset } from './assets.js';
+import { applyTasksChange, normalizeTasksChange, readTasks, relativeTasksPath, updateTasks } from './autoTasks.js';
 import { DIRECTORY_CONTEXT_PATH, readDirectoryContext, writeDirectoryContext } from './directoryContext.js';
 import { documentRevision } from './documentEdits.js';
 import { applyBlockEdits } from './editorMarkdown.js';
@@ -64,6 +65,10 @@ const ROUTES = [
   { methods: ['POST'], pathname: '/api/ai/revise', handle: reviseWithAi },
   { methods: ['GET'], pathname: '/api/ai/recap-window', handle: readRecapWindow },
   { methods: ['POST'], pathname: '/api/ai/recap', handle: recapWithAi },
+  { methods: ['GET'], pathname: '/api/tasks', feature: 'autoTasks', handle: readAutoTasks },
+  { methods: ['POST'], pathname: '/api/tasks', feature: 'autoTasks', handle: changeAutoTasks },
+  { methods: ['POST'], pathname: '/api/ai/tasks/extract', feature: 'autoTasks', handle: extractTasksWithAi },
+  { methods: ['POST'], pathname: '/api/ai/tasks/run', feature: 'autoTasks', handle: runTaskWithAi },
   { methods: ['GET'], pathname: '/api/live-captions/token', handle: liveCaptionsTokenInfo },
   { methods: ['GET'], pathname: '/api/live-captions/ping', handle: liveCaptionsPing },
   { methods: ['GET'], pathname: '/api/live-captions/targets', handle: liveCaptionsTargets },
@@ -84,7 +89,9 @@ export function createRequestHandler({
   aiToken,
   liveCaptionsToken,
   projectAiContext = '',
-  settings = createSettings()
+  settings = createSettings(),
+  // 自動タスクの実行係（`autoTaskRunner.js`）。無いときは、その機能のルートだけが動きません。
+  autoTasks = null
 }) {
   return async function handleRequest(request, response) {
     const url = new URL(request.url, 'http://localhost');
@@ -112,6 +119,7 @@ export function createRequestHandler({
       liveCaptionsToken,
       projectAiContext,
       settings,
+      autoTasks,
       features: settings.features,
       request,
       response,
@@ -340,6 +348,98 @@ async function readRecapWindow(context) {
   });
 }
 
+/* ---------------------------------------------------------------- *
+ * 自動タスク
+ * ---------------------------------------------------------------- */
+
+/**
+ * その文書のタスクと、見守りの状態です。AIは起動しません。
+ *
+ * 他のAI機能と同じトークンを求めます。読むだけの窓口ですが、裏でAIに書かせた結果を
+ * 含むので、レビューファイルと同じ「誰でも読める」扱いにはしていません。
+ */
+async function readAutoTasks(context) {
+  const { rootDir, filter, response, url } = context;
+  authorizeAiRequest(context);
+  const documentPath = tasksTarget(rootDir, filter, url.searchParams.get('path'));
+  return sendJson(response, await tasksPayload(context, documentPath));
+}
+
+/**
+ * 画面からの変更です。一覧まるごとではなく、変えたいこと（見守りの入り切り・状態・
+ * 手で足す・消す）だけを受け取ります。裏で足されたタスクを、画面の保存で消さないためです。
+ */
+async function changeAutoTasks(context) {
+  const { rootDir, filter, request, response } = context;
+  authorizeAiRequest(context);
+  const body = await readJsonBody(request);
+  const documentPath = tasksTarget(rootDir, filter, body.path);
+  let change;
+  try {
+    change = normalizeTasksChange(body);
+  } catch (error) {
+    throw httpError(error.message, 400);
+  }
+  await updateTasks(rootDir, documentPath, (current) => applyTasksChange(current, change));
+  return sendJson(response, await tasksPayload(context, documentPath));
+}
+
+/**
+ * 「タスクを整理する」。変わっていなくてもいま読み直し、任せられたものを実行します。
+ * 裏の見守りと同じ列に並ぶので、同じ増えた分から同じタスクが2度起こされることはありません。
+ */
+function extractTasksWithAi(context) {
+  return streamAiRequest(context, {
+    run: async ({ documentPath, signal, onDelta, send }) => {
+      assertAutoTaskRunner(context);
+      if (!isTextDocumentPath(documentPath)) throw new Error('自動タスクの対象にできるのはMarkdownとテキストだけです');
+      const record = await context.autoTasks.runNow(documentPath, {
+        signal,
+        onDelta,
+        // 抽出と実行は続けて走るので、いまどちらを待っているかを画面へ流します。
+        onPhase: (phase) => send({ type: 'phase', phase })
+      });
+      return tasksPayloadFor(context, documentPath, record);
+    },
+    toEvent: (payload) => payload
+  });
+}
+
+/** タスクを1つ実行します。結果は「確認待ち」として記録に入り、採るかどうかはレビュアーが決めます。 */
+function runTaskWithAi(context) {
+  return streamAiRequest(context, {
+    run: async ({ documentPath, body, signal, onDelta }) => {
+      assertAutoTaskRunner(context);
+      const record = await context.autoTasks.runTask(documentPath, String(body.id || ''), { signal, onDelta });
+      return tasksPayloadFor(context, documentPath, record);
+    },
+    toEvent: (payload) => payload
+  });
+}
+
+async function tasksPayload(context, documentPath) {
+  return tasksPayloadFor(context, documentPath, await readTasks(context.rootDir, documentPath));
+}
+
+function tasksPayloadFor({ autoTasks }, documentPath, record) {
+  return {
+    tasks: record,
+    tasksFile: relativeTasksPath(documentPath),
+    runner: autoTasks ? autoTasks.status(documentPath, record) : null
+  };
+}
+
+/** 自動タスクの対象。PDFは本文を読み直せないので受け付けません。 */
+function tasksTarget(rootDir, filter, requestedPath) {
+  const documentPath = reviewTarget(rootDir, filter, requestedPath);
+  if (!isTextDocumentPath(documentPath)) throw httpError('自動タスクの対象にできるのはMarkdownとテキストだけです', 400);
+  return documentPath;
+}
+
+function assertAutoTaskRunner({ autoTasks }) {
+  if (!autoTasks) throw new Error('自動タスクの実行係がありません');
+}
+
 function sendAiMessage(context) {
   return streamAiRequest(context, {
     needsDocument: false,
@@ -518,6 +618,8 @@ async function appendLiveCaption(context) {
 
   const entry = normalizeCaptionEntry(body);
   const result = await appendCaptionEntry(rootDir, relativeFile, entry);
+  // 字幕が届いた文書は、自動タスクの見守りの対象になります（有効なときだけ読み直します）。
+  context.autoTasks?.noteActivity(relativeFile);
   return sendJson(response, { ok: true, ...result });
 }
 
@@ -719,9 +821,11 @@ async function exportReview({ rootDir, filter, features, url, response }) {
   const review = await readReview(rootDir, relativeFile);
   // 出力したレビューを渡す相手には、どの前提の上で読まれたレビューかまで届けます。
   // ディレクトリ全体の前提は別のファイルにあるので、ここで足してから組み立てます。
+  // 自動タスクも同じです。有効なときだけ、起こしたタスクと今すべきことを書き出します。
   const markdown = buildReviewMarkdown({
     ...visibleReview(review, features),
-    directoryAiContext: await readDirectoryContext(rootDir)
+    directoryAiContext: await readDirectoryContext(rootDir),
+    tasks: features.autoTasks && isTextDocumentPath(relativeFile) ? await readTasks(rootDir, relativeFile) : null
   });
   const outputPath = await exportPathForExistingReview(rootDir, relativeFile);
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
@@ -768,9 +872,11 @@ function reviewPremiseOf(body) {
 
 /** Disabled features are unavailable through direct API calls as well as hidden in the browser. */
 function featureDisabled(feature) {
-  const where = feature === 'manager'
-    ? '資料の管理者は無効です。設定または起動オプションで有効にしてください'
-    : '翻訳機能は無効です。画面右上の「設定」、設定ファイル、または起動オプションで有効にしてください';
+  const where = {
+    manager: '資料の管理者は無効です。設定または起動オプションで有効にしてください',
+    translation: '翻訳機能は無効です。画面右上の「設定」、設定ファイル、または起動オプションで有効にしてください',
+    autoTasks: '自動タスクは無効です。画面右上の「設定」、設定ファイル、または起動オプションで有効にしてください'
+  }[feature] || `${feature} は無効です`;
   return httpError(where, 404);
 }
 

@@ -108,6 +108,30 @@ test('the manager and translation are disabled until explicitly enabled', () => 
   assert.deepEqual(config, { manager: true, translation: true });
 });
 
+test('自動タスクも既定では無効で、間隔・任せること・特にしてほしいことは設定ファイルから届く', () => {
+  const defaults = applyConfigToOptions(parseArgs(['.']), {});
+  assert.equal(defaults.autoTasks, false);
+  assert.equal(defaults.autoTasksInterval, undefined, '書かなければ実行係の既定に任せる');
+
+  const flags = applyConfigToOptions(parseArgs(['.', '--enable-auto-tasks']), { autoTasks: false });
+  assert.equal(flags.autoTasks, true, 'コマンドラインは設定ファイルより強い');
+  assert.equal(applyConfigToOptions(parseArgs(['.', '--no-auto-tasks']), { autoTasks: true }).autoTasks, false);
+
+  const { config } = normalizeConfig({
+    autoTasks: 'yes', autoTasksInterval: '300', autoTasksActions: 'research, inquiry', autoTasksInstructions: ' 顧客の質問を拾う '
+  });
+  assert.deepEqual(config, {
+    autoTasks: true, autoTasksInterval: 300, autoTasksActions: ['research', 'inquiry'], autoTasksInstructions: '顧客の質問を拾う'
+  });
+  const applied = applyConfigToOptions(parseArgs(['.']), config);
+  assert.equal(applied.autoTasks, true);
+  assert.deepEqual(applied.autoTasksActions, ['research', 'inquiry']);
+
+  // 知らない自動化と、短すぎる間隔は断ります。黙って通すと、何が走るのか読めなくなります。
+  assert.throws(() => normalizeConfig({ autoTasksActions: ['research', 'deploy'] }), /知らない自動化です: deploy/);
+  assert.throws(() => normalizeConfig({ autoTasksInterval: 5 }), /30 から 3600 まで/);
+});
+
 test('--no-config and --config pick which file is read', async () => {
   const root = await seedProject({ exclude: ['drafts'] });
   const other = path.join(root, 'other-config.json');

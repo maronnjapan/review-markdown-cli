@@ -27,7 +27,7 @@ test('the manager and translation routes are unavailable by default', async (t) 
   });
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const opened = await fetch(`${baseUrl}/api/file?path=guide.md`).then((response) => response.json());
-  assert.deepEqual(opened.features, { manager: false, translation: false });
+  assert.deepEqual(opened.features, { manager: false, translation: false, autoTasks: false });
 
   const headers = { 'Content-Type': 'application/json', 'X-Review-Markdown-Token': 'disabled-token' };
   for (const [endpoint, body] of [

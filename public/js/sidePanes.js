@@ -6,7 +6,8 @@ const PANES = {
   placement: { panel: 'placementPanel', tab: 'placementTabButton' },
   review: { panel: 'reviewPanel', tab: 'reviewTabButton' },
   revise: { panel: 'revisePanel', tab: 'reviseTabButton' },
-  recap: { panel: 'recapPanel', tab: 'recapTabButton' }
+  recap: { panel: 'recapPanel', tab: 'recapTabButton' },
+  tasks: { panel: 'tasksPanel', tab: 'tasksTabButton' }
 };
 
 /**

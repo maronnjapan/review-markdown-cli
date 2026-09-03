@@ -5,6 +5,7 @@ import { applyConfigToOptions, loadConfig } from '../src/config.js';
 import { CONFIG_USAGE, parseConfigArgs, runConfigCommand } from '../src/configCommand.js';
 import { extensionDir, runExtensionCommand } from '../src/extensionCommand.js';
 import { encodePairingCode } from '../src/pairing.js';
+import { DEFAULT_AUTO_TASK_ACTIONS, DEFAULT_AUTO_TASK_INTERVAL_SECONDS } from '../src/autoTaskVocabulary.js';
 import { createServer, listenOnAvailablePort } from '../src/server.js';
 import { createSettingsFile } from '../src/settings.js';
 
@@ -33,6 +34,8 @@ if (filter.exclude.length) console.log(`  exclude: ${filter.exclude.join(', ')}`
 if (options.aiContext) console.log(`  ai context: ${summarize(options.aiContext)}`);
 if (options.manager) console.log('  manager: enabled');
 if (options.translation) console.log('  translation: enabled');
+// 裏でAIを動かし続ける機能なので、どの間隔で何を任せているかまで起動時に見せます。
+if (options.autoTasks) console.log(`  auto tasks: enabled (${autoTasksSummary(options)})`);
 // モデルを名指ししたときだけ出します。自動で選んだモデルは /api/ai/status が画面へ出します。
 for (const [label, value] of aiModelLines(options)) console.log(`  ${label}: ${value}`);
 if (port !== options.port) {
@@ -110,7 +113,10 @@ function settingsFileFor(parsed) {
     targetDir: parsed.targetDir,
     // 今回の起動でコマンドラインが決めたものは、保存しても次の起動まで残りません。
     // 画面で「保存したのに戻る」と見えないよう、保存のたびに知らせます。
-    fixedByCommandLine: parsed.translationSource === 'flag' ? ['translation'] : []
+    fixedByCommandLine: [
+      ...(parsed.translationSource === 'flag' ? ['translation'] : []),
+      ...(parsed.autoTasksSource === 'flag' ? ['autoTasks'] : [])
+    ]
   });
 }
 
@@ -175,6 +181,13 @@ function profileLines(label, { model, effort } = {}) {
     ...(model ? [[label, model]] : []),
     ...(effort ? [[`${label.replace(' model', '')} effort`, effort]] : [])
   ];
+}
+
+/** 自動タスクの決め事を1行に。見守りの間隔と、任せている自動化の一覧です。 */
+function autoTasksSummary({ autoTasksInterval, autoTasksActions }) {
+  const interval = autoTasksInterval ?? DEFAULT_AUTO_TASK_INTERVAL_SECONDS;
+  const actions = autoTasksActions ?? DEFAULT_AUTO_TASK_ACTIONS;
+  return `every ${interval}s; ${actions.length ? actions.join(', ') : 'extract only'}`;
 }
 
 /** One line for the startup banner; the whole text still goes to the AI. */

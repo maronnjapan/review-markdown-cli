@@ -1,12 +1,14 @@
+import { AUTO_TASK_ACTIONS } from './autoTasks.js';
 import { escapeHtml } from './util.js';
 
 /**
  * 設定ダイアログです。
  *
- * ここから変えられるのは2つ、翻訳機能の入り切りと、用途ごとのモデルです。どちらも
- * これまで設定ファイルとコマンドラインだけで決まっていたもので、変えるには立ち上げ
- * 直しが要りました。読んでいる途中で「この節はレビュー用の深いモデルで読み直したい」
- * と思ったときに、原稿を閉じずに変えられるようにしてあります。
+ * ここから変えられるのは3つ、翻訳機能の入り切り、自動タスク（入り切り・間隔・任せること・
+ * 特にしてほしいこと）、用途ごとのモデルです。どれもこれまで設定ファイルとコマンドライン
+ * だけで決まっていたもので、変えるには立ち上げ直しが要りました。読んでいる途中で「この節は
+ * レビュー用の深いモデルで読み直したい」「裏の見守りを止めたい」と思ったときに、原稿を閉じずに
+ * 変えられるようにしてあります。
  *
  * 保存はサーバーが引き受けます（`src/settings.js`）。画面がするのは、いまの値を出して、
  * 変えた値を送って、返ってきた結果を出すことだけです。断られた理由もサーバーの文面を
@@ -107,6 +109,11 @@ export function createSettingsController({ refs, state, api, toaster, onApplied 
     const supportsEffort = state.settings?.ai?.supportsEffort !== false;
     const patch = {
       translation: refs.settingsTranslation.checked,
+      autoTasks: refs.settingsAutoTasks.checked,
+      // 空は「自動で選ぶ」で、サーバー側では「設定しない」に戻ります。
+      autoTasksInterval: refs.settingsAutoTasksInterval.value,
+      autoTasksActions: [...refs.settingsAutoTasksActions.querySelectorAll('input:checked')].map((input) => input.value),
+      autoTasksInstructions: refs.settingsAutoTasksInstructions.value.trim(),
       aiEmptyTarget: refs.settingsAiEmptyTarget.value
     };
     for (const field of MODEL_FIELDS) {
@@ -128,12 +135,42 @@ export function createSettingsController({ refs, state, api, toaster, onApplied 
     state.settings = payload;
     const { settings = {}, ai = {} } = payload;
     refs.settingsTranslation.checked = settings.translation === true;
+    renderAutoTasks(settings);
     refs.settingsAiEmptyTarget.value = settings.aiEmptyTarget === 'none' ? 'none' : 'document';
     renderProvider(ai);
     renderProviderChoices(ai);
     for (const field of MODEL_FIELDS) renderModelField(field, ai, settings);
     refs.settingsModelHint.textContent = modelHint(ai);
     renderSaveTarget(payload.configPath);
+  }
+
+  /**
+   * 自動タスク。任せることは、一覧から落とさずにチェックで出します。外したものは
+   * 走らないだけで、無いわけではないからです。何も設定していなければ全部に印が付きます。
+   */
+  function renderAutoTasks(settings) {
+    refs.settingsAutoTasks.checked = settings.autoTasks === true;
+    const interval = settings.autoTasksInterval ? String(settings.autoTasksInterval) : '';
+    // 設定ファイルに一覧に無い秒数が書いてあっても、開いただけで消えないように選択肢へ足します。
+    if (interval && ![...refs.settingsAutoTasksInterval.options].some((option) => option.value === interval)) {
+      const option = refs.settingsAutoTasksInterval.ownerDocument.createElement('option');
+      option.value = interval;
+      option.textContent = `${interval}秒`;
+      refs.settingsAutoTasksInterval.append(option);
+    }
+    refs.settingsAutoTasksInterval.value = interval;
+    const chosen = Array.isArray(settings.autoTasksActions)
+      ? settings.autoTasksActions
+      : AUTO_TASK_ACTIONS.map(({ id }) => id);
+    refs.settingsAutoTasksActions.innerHTML = [
+      '<legend class="settings-field-label">任せること</legend>',
+      ...AUTO_TASK_ACTIONS.map(({ id, label, hint }) => `
+        <label class="settings-check settings-action" title="${escapeHtml(hint)}">
+          <input type="checkbox" value="${escapeHtml(id)}"${chosen.includes(id) ? ' checked' : ''}>
+          <span>${escapeHtml(label)}<small>${escapeHtml(hint)}</small></span>
+        </label>`)
+    ].join('');
+    refs.settingsAutoTasksInstructions.value = settings.autoTasksInstructions || '';
   }
 
   function renderProvider(ai) {
@@ -323,6 +360,10 @@ export function createSettingsController({ refs, state, api, toaster, onApplied 
   function setBusy(busy) {
     refs.settingsSave.disabled = busy;
     refs.settingsTranslation.disabled = busy;
+    refs.settingsAutoTasks.disabled = busy;
+    refs.settingsAutoTasksInterval.disabled = busy;
+    refs.settingsAutoTasksInstructions.disabled = busy;
+    for (const input of refs.settingsAutoTasksActions.querySelectorAll('input')) input.disabled = busy;
     refs.settingsAiEmptyTarget.disabled = busy;
   }
 
