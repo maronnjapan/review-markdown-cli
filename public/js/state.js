@@ -33,6 +33,14 @@ export function createState() {
     aiContext: '',
     aiContextDirty: false,
     projectAiContext: '',
+    // 画面で「ディレクトリ全体」を選んで書いた前提。保存先は対象ディレクトリの
+    // `.review/context.json` で、配下のどの文書を開いても同じものが効きます。
+    directoryAiContext: '',
+    directoryAiContextDirty: false,
+    directoryContextFile: '',
+    // 読み取りコンテキストの欄がいまどちらを書いているか（`document` / `directory`）。
+    // 文書をまたいでも変えません。同じ範囲で書き続けるレビューのほうが多いからです。
+    aiContextScope: 'document',
     // 資料の管理者が決めた目的・ストーリー・期待値。前提としてAIへ渡し、
     // 3つが揃うまでAIレビューは一度止まります。
     brief: null,

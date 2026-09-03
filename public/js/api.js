@@ -19,6 +19,9 @@ export const api = {
 
   saveComments: (payload) => postJson('/api/review', payload),
 
+  /** ディレクトリ全体に効く前提。行き先が文書のレビューファイルではないので、窓口も別です。 */
+  saveDirectoryContext: (payload) => postJson('/api/context/directory', payload),
+
   async exportReview(path) {
     const response = await fetch(`/api/export?path=${encodeURIComponent(path)}`);
     if (!response.ok) throw new Error(await errorMessage(response));
@@ -30,9 +33,12 @@ export const api = {
    * last copy on the way out. Beacons outlive the page; a fetch would be cancelled.
    */
   beaconComments(payload) {
-    if (typeof navigator === 'undefined' || !navigator.sendBeacon) return false;
-    const body = new Blob([JSON.stringify(payload)], { type: 'application/json' });
-    return navigator.sendBeacon('/api/review', body);
+    return beacon('/api/review', payload);
+  },
+
+  /** 同じく、閉じる間際のディレクトリ全体の前提。行き先だけが違います。 */
+  beaconDirectoryContext(payload) {
+    return beacon('/api/context/directory', payload);
   },
 
   async prepareAi() {
@@ -152,6 +158,12 @@ export const api = {
     return streamNdjson('/api/ai/revise', payload, { ...options, headers: aiHeaders() });
   }
 };
+
+function beacon(url, payload) {
+  if (typeof navigator === 'undefined' || !navigator.sendBeacon) return false;
+  const body = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+  return navigator.sendBeacon(url, body);
+}
 
 function postJson(url, payload, extraHeaders = {}) {
   return fetchJson(url, {

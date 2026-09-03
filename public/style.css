@@ -905,6 +905,21 @@ button.danger:hover { background: #9b2116; border-color: #9b2116; color: #fff; }
 }
 .reference-file-item-actions { margin-left: auto; }
 .reference-file-item-actions button { font-size: 0.7rem; padding: 0.15rem 0.45rem; }
+/* 読み取りコンテキストの適用範囲。欄のすぐ上に置いて、どちらへ書くのかを先に見せます。 */
+.context-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.9rem;
+  margin-top: 0.5rem;
+}
+.context-scope label {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  font-size: 0.78rem;
+  gap: 0.3rem;
+}
+.context-scope-hint { margin-top: 0.3rem; }
 .ai-context-project { margin-top: 0.6rem; }
 .ai-context-project-label {
   color: var(--muted);

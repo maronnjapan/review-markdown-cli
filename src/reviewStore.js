@@ -192,6 +192,11 @@ export function buildReviewMarkdown(review) {
     lines.push('> 対象PDFは読み取り専用です。コメントの対応はPDF外で行い、状態は確認状況を表します。', '');
   }
   appendDocumentBrief(lines, review.brief);
+  // 効く範囲の広いほうから書きます。読む人は、この文書だけの前提が
+  // 「ディレクトリ全体の前提に何を足したものか」として読めます。
+  if (review.directoryAiContext) {
+    lines.push('## 読み取りコンテキスト（ディレクトリ全体）', '', review.directoryAiContext, '');
+  }
   if (review.aiContext) lines.push('## 読み取りコンテキスト', '', review.aiContext, '');
   appendContextNotes(lines, review.contextNotes);
   appendPersona(lines, review.persona);

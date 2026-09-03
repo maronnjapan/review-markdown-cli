@@ -45,7 +45,8 @@ test('PDF API lists and streams the original file without exposing an edit path'
 
   const opened = await fetch(`${baseUrl}/api/file?path=spec.pdf`).then((response) => response.json());
   assert.deepEqual(Object.keys(opened).sort(), [
-    'documentType', 'features', 'path', 'pdfUrl', 'projectAiContext', 'review', 'reviewFile', 'textBody'
+    'directoryAiContext', 'directoryContextFile', 'documentType', 'features', 'path', 'pdfUrl',
+    'projectAiContext', 'review', 'reviewFile', 'textBody'
   ]);
   assert.equal(opened.documentType, 'pdf');
   assert.equal(opened.textBody, false);

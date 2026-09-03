@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { normalizeAiContext } from './aiContext.js';
 import { serveAsset } from './assets.js';
+import { DIRECTORY_CONTEXT_PATH, readDirectoryContext, writeDirectoryContext } from './directoryContext.js';
 import { documentRevision } from './documentEdits.js';
 import { applyBlockEdits } from './editorMarkdown.js';
 import { extensionDir } from './extensionCommand.js';
@@ -43,6 +45,7 @@ const ROUTES = [
   { methods: ['GET', 'HEAD'], pathname: '/vendor/pdfjs/pdf.mjs', handle: openPdfJsAsset },
   { methods: ['GET', 'HEAD'], pathname: '/vendor/pdfjs/pdf.worker.min.mjs', handle: openPdfJsAsset },
   { methods: ['POST'], pathname: '/api/review', handle: saveReview },
+  { methods: ['POST'], pathname: '/api/context/directory', handle: saveDirectoryContext },
   { methods: ['GET'], pathname: '/api/export', handle: exportReview },
   { methods: ['GET'], pathname: '/api/ai/status', handle: aiStatus },
   { methods: ['GET'], pathname: '/api/settings', handle: readSettings },
@@ -539,6 +542,7 @@ async function openFile({ rootDir, filter, projectAiContext, features, url, resp
       textBody: false,
       review: visibleReview(await readReview(rootDir, relativeFile), features),
       projectAiContext,
+      ...await directoryContextOf(rootDir),
       features,
       reviewFile: await relativeReviewPath(rootDir, relativeFile)
     });
@@ -554,9 +558,24 @@ async function openFile({ rootDir, filter, projectAiContext, features, url, resp
     ...await renderBothViews(markdown, relativeFile, filter),
     review: visibleReview(review, features),
     projectAiContext,
+    ...await directoryContextOf(rootDir),
     features,
     reviewFile: await relativeReviewPath(rootDir, relativeFile)
   });
+}
+
+/**
+ * 画面が「ディレクトリ全体」の欄へ出す前提と、その保存先です。
+ *
+ * 文書を開くたびに返すのは、この前提が別の文書を開いている間にも書き換わるからです。
+ * 保存先まで返すのは、どのファイルに書いたのかを画面から辿れるようにするためで、
+ * レビューファイルのパス（`reviewFile`）を返しているのと同じ理由です。
+ */
+async function directoryContextOf(rootDir) {
+  return {
+    directoryAiContext: await readDirectoryContext(rootDir),
+    directoryContextFile: DIRECTORY_CONTEXT_PATH
+  };
 }
 
 /**
@@ -601,6 +620,7 @@ async function saveFile({ rootDir, filter, projectAiContext, features, request, 
     appliedEdits,
     review: visibleReview(review, features),
     projectAiContext,
+    ...await directoryContextOf(rootDir),
     features,
     reviewFile: await relativeReviewPath(rootDir, relativeFile)
   });
@@ -640,10 +660,37 @@ async function saveReview({ rootDir, filter, features, request, response }) {
   });
 }
 
+/**
+ * コマンドを実行したディレクトリ配下すべてに効く読み取りコンテキストを保存します。
+ *
+ * 文書ごとの前提（`/api/review`）と分けているのは、書き込む先が文書のレビューファイルでは
+ * なく、対象ディレクトリに1つだけある `.review/context.json` だからです。どの文書を開いて
+ * 書いても、行き先は同じ1か所です。
+ */
+async function saveDirectoryContext({ rootDir, request, response }) {
+  const body = await readJsonBody(request);
+  if (typeof body.aiContext !== 'string') throw httpError('aiContext は文字列で送ってください', 400);
+  // 長すぎる前提は切り詰めずに断ります（`aiContext.js`）。書いたものが黙って半分になると、
+  // 何が前提として渡っているのかが画面から分からなくなります。
+  let aiContext;
+  try {
+    aiContext = normalizeAiContext(body.aiContext, 'ディレクトリ全体の読み取りコンテキスト');
+  } catch (error) {
+    throw httpError(error.message, 400);
+  }
+  await writeDirectoryContext(rootDir, aiContext);
+  return sendJson(response, { directoryAiContext: aiContext, directoryContextFile: DIRECTORY_CONTEXT_PATH });
+}
+
 async function exportReview({ rootDir, filter, features, url, response }) {
   const relativeFile = reviewTarget(rootDir, filter, url.searchParams.get('path'));
   const review = await readReview(rootDir, relativeFile);
-  const markdown = buildReviewMarkdown(visibleReview(review, features));
+  // 出力したレビューを渡す相手には、どの前提の上で読まれたレビューかまで届けます。
+  // ディレクトリ全体の前提は別のファイルにあるので、ここで足してから組み立てます。
+  const markdown = buildReviewMarkdown({
+    ...visibleReview(review, features),
+    directoryAiContext: await readDirectoryContext(rootDir)
+  });
   const outputPath = await exportPathForExistingReview(rootDir, relativeFile);
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, markdown, 'utf8');

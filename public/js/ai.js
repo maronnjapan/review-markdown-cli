@@ -336,7 +336,8 @@ export function createAiController({
     const count = state.comments.length;
     const noteCount = (state.contextNotes || []).length;
     const fileCount = (state.referenceFiles || []).length;
-    const hasContext = Boolean((state.aiContext || '').trim() || (state.projectAiContext || '').trim());
+    const hasContext = Boolean((state.aiContext || '').trim() || (state.directoryAiContext || '').trim()
+      || (state.projectAiContext || '').trim());
     const shared = [
       count ? `この文書のコメント${count}件` : '',
       // 管理者が決めた3点は、この資料が何のためにあるかそのものなので先に置きます。

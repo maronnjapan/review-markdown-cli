@@ -12,8 +12,9 @@ import { hasReferenceFiles, readReferenceEntries, referenceFilesBlock } from './
  * 対象読者、原稿の位置づけ、守りたい用語など、本文からは読み取れない前提を渡すと、
  * 翻訳・AIチャット・指摘の配置・AIレビューが同じ前提の上で動きます。
  *
- * コンテキストは6か所から集めます。
+ * コンテキストは7か所から集めます。
  *   - project : 設定ファイルの `aiContext`（`--ai-context` で上書きできる。全文書に効く）
+ *   - directory: 画面で「ディレクトリ全体」を選んで書いた前提（`directoryContext.js`。全文書に効く）
  *   - document: レビューファイルへ保存した文書ごとのコンテキスト
  *   - brief   : 資料の管理者が決めた目的・ストーリー・期待値（`documentBrief.js`）
  *   - notes   : レビューファイルへ残したコンテキストメモ（`contextNotes.js`）
@@ -37,16 +38,20 @@ export function normalizeAiContext(value, source = '読み取りコンテキス�
 }
 
 /**
- * Merges the six sources into the object every prompt builder takes.
+ * Merges the seven sources into the object every prompt builder takes.
  * `revision` changes whenever any of them changes, and stays empty while all are unset.
  *
  * `files` は読み終えた参照ファイルです。ここでファイルを開かないのは、この関数を
  * 同期のままにしておくためで、他の5つと同じく「保存済みの値を受け取って確かめる」
  * 形に揃えています。読むのは `aiService.readingContext()` です。
  */
-export function resolveAiContext({ project, document, brief, notes, persona, files } = {}) {
+export function resolveAiContext({ project, directory, document, brief, notes, persona, files } = {}) {
   const context = {
     project: normalizeAiContext(project, 'aiContext'),
+    // 設定ファイルの前提と別に持つのは、決める場所が違うからです（`directoryContext.js`）。
+    // モデルへは1つの枠にまとめて渡すので、長さは別々に数えます。まとめてから数えると、
+    // 両方に書いた人だけが上限に当たります。
+    directory: normalizeAiContext(directory, 'ディレクトリ全体の読み取りコンテキスト'),
     document: normalizeAiContext(document, '読み取りコンテキスト'),
     // ここへ来るのは保存済みの値なので、上限では断りません（断るのは受け取る側）。
     brief: readDocumentBrief(brief),
@@ -59,7 +64,7 @@ export function resolveAiContext({ project, document, brief, notes, persona, fil
 
 export function hasAiContext(context) {
   return Boolean(
-    context?.project || context?.document || hasDocumentBrief(context?.brief)
+    context?.project || context?.directory || context?.document || hasDocumentBrief(context?.brief)
     || hasContextNotes(context?.notes) || hasPersonaContent(context?.persona)
     || hasReferenceFiles(context?.files)
   );
@@ -70,6 +75,7 @@ export function aiContextBlock(context) {
   if (!hasAiContext(context)) return '';
   return readingContextBlock({
     project: context.project,
+    directory: context.directory,
     document: context.document,
     brief: documentBriefBlock(context.brief),
     notes: contextNotesBlock(context.notes),
