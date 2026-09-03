@@ -62,6 +62,8 @@ const ROUTES = [
   { methods: ['POST'], pathname: '/api/ai/persona', handle: composeAiPersona },
   { methods: ['POST'], pathname: '/api/ai/review', handle: reviewWithAi },
   { methods: ['POST'], pathname: '/api/ai/revise', handle: reviseWithAi },
+  { methods: ['GET'], pathname: '/api/ai/recap-window', handle: readRecapWindow },
+  { methods: ['POST'], pathname: '/api/ai/recap', handle: recapWithAi },
   { methods: ['GET'], pathname: '/api/live-captions/token', handle: liveCaptionsTokenInfo },
   { methods: ['GET'], pathname: '/api/live-captions/ping', handle: liveCaptionsPing },
   { methods: ['GET'], pathname: '/api/live-captions/targets', handle: liveCaptionsTargets },
@@ -305,6 +307,36 @@ function reviseWithAi(context) {
       aiService.proposeEdits(documentPath, body.instruction, { signal, onDelta })
     ),
     toEvent: (proposal) => proposal
+  });
+}
+
+/**
+ * 直近の文字起こしの、言われたことと次にすること。読ませるのは切り出した窓だけです。
+ * どこまでが「直近」かは `/api/ai/recap-window` が先に答えます。
+ */
+function recapWithAi(context) {
+  return streamAiRequest(context, {
+    run: ({ aiService, documentPath, body, signal, onDelta }) => (
+      aiService.recapCaptions(documentPath, body, { signal, onDelta })
+    ),
+    toEvent: (recap) => ({ recap })
+  });
+}
+
+/**
+ * いま「直近」がどこからどこまでになるか。AIを起動しないので、押す前に引けます。
+ * 実行と同じ切り出しを通るので、ここで見せた範囲がそのまま読ませる範囲です。
+ */
+async function readRecapWindow(context) {
+  const { rootDir, filter, aiService, response, url } = context;
+  authorizeAiRequest(context);
+  const documentPath = reviewTarget(rootDir, filter, url.searchParams.get('path'));
+  if (!isMarkdownPath(documentPath)) throw httpError('文字起こしを読めるのはMarkdownだけです', 400);
+  return sendJson(response, {
+    window: await aiService.recapWindow(documentPath, {
+      scope: url.searchParams.get('scope'),
+      minutes: url.searchParams.get('minutes')
+    })
   });
 }
 

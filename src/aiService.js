@@ -15,6 +15,14 @@ import {
 } from './aiLimits.js';
 import { AiStore, defaultAiDataDir, translationCacheKey } from './aiStore.js';
 import {
+  RECAP_SCHEMA,
+  buildRecap,
+  normalizeRecapRequest,
+  parseCaptionEntries,
+  recapPrompt,
+  selectRecapWindow
+} from './captionRecap.js';
+import {
   DEFAULT_AI_PROVIDER,
   createAiClient,
   listProviderChoices,
@@ -73,7 +81,8 @@ const ANSWER_SUBJECTS = {
   brief: '管理者が組み立てた目的・ストーリー・期待値',
   persona: 'AIが組み直した読み手ペルソナ',
   review: 'AIのレビュー結果',
-  revise: 'AIの修正案'
+  revise: 'AIの修正案',
+  recap: '直近の文字起こしの要約'
 };
 
 export function createAiService(rootDir, options = {}) {
@@ -466,6 +475,53 @@ export class AiService {
     };
   }
 
+  /**
+   * いま「直近」がどこからどこまでになるか。AIは使いません。
+   *
+   * 聞き直す前に画面へ出すためのものです。押してから範囲が分かるのでは、
+   * 「どこまでが直近なのか」をレビュアーが確かめる手立てがありません。
+   * 実際に読ませるときも同じ `selectRecapWindow` を通すので、出した範囲と
+   * 読ませる範囲は必ず一致します。
+   */
+  async recapWindow(documentPath, input) {
+    const request = normalizeRecapRequest(input);
+    const entries = await this.readCaptionEntries(documentPath);
+    return selectRecapWindow(entries, { ...request, mark: await this.store.getRecapMark(documentPath) });
+  }
+
+  /**
+   * 直近の文字起こしから、言われたことと、それを踏まえて次にすることを出します。
+   *
+   * 読ませるのは切り出した窓だけです。会議が2時間続いていても、渡すのは直近の
+   * ひとまとまりなので、待ち時間は会議の長さでは増えません。
+   */
+  async recapCaptions(documentPath, input, { onDelta, signal } = {}) {
+    const request = normalizeRecapRequest(input);
+    const entries = await this.readCaptionEntries(documentPath);
+    if (entries.length === 0) throw new Error('この文書には文字起こしの発言が見つかりません');
+
+    const window = selectRecapWindow(entries, { ...request, mark: await this.store.getRecapMark(documentPath) });
+    if (window.entries.length === 0) {
+      throw new Error(window.reason === 'no-new-entries'
+        ? '前回聞いたところから、新しい発言はありません'
+        : '読ませる発言がありません');
+    }
+
+    const readingContext = await this.readingContext(documentPath);
+    const { answer } = await this.askForJson({
+      feature: 'recap',
+      prompt: recapPrompt(window, request.question, readingContext),
+      outputSchema: RECAP_SCHEMA,
+      onDelta,
+      signal
+    });
+
+    // 「ここまで聞いた」を覚えるのは、答えを受け取ってからです。途中で失敗したぶんまで
+    // 聞いたことにすると、次に「前回から」で押したときにその区間が飛びます。
+    if (window.mark) await this.store.saveRecapMark(documentPath, window.mark);
+    return buildRecap(answer, window, { question: request.question });
+  }
+
   async listConversations(documentPath) {
     return this.store.listConversations(documentPath);
   }
@@ -615,6 +671,17 @@ export class AiService {
     const markdown = await fs.readFile(path.join(this.rootDir, documentPath), 'utf8');
     if (markdown.length > MAX_TARGET_CHARS) throw new Error(tooLongMessage);
     return markdown;
+  }
+
+  /**
+   * 文字起こしの発言。`readDocument` を通さないのは、長さで断らないためです。
+   *
+   * 2時間の会議は `MAX_TARGET_CHARS` を超えることがあります。他の機能なら「分割して
+   * ください」で正しいのですが、聞き直しがモデルへ渡すのは切り出した窓だけなので、
+   * 長い会議こそ使いたい場面で断るのは筋が通りません。
+   */
+  async readCaptionEntries(documentPath) {
+    return parseCaptionEntries(await fs.readFile(path.join(this.rootDir, documentPath), 'utf8'));
   }
 
   /** モデルへ渡す本文ブロック。1つも取れない文書は、指す場所が無いので断ります。 */

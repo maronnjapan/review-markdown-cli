@@ -21,6 +21,9 @@ const FEATURE_PURPOSE = {
   translate: 'assistant',
   chat: 'assistant',
   place: 'assistant',
+  // 文字起こしの聞き直し。会議が進んでいる最中に押すもので、深く読ませて30秒待つ間に
+  // 話は次へ行きます。速いほうで読ませるのは、この機能では速さが精度の一部だからです。
+  recap: 'assistant',
   brief: 'review',
   persona: 'review',
   review: 'review',
