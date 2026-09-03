@@ -25,6 +25,11 @@
  * `persona` は読み手ペルソナ、`files` は添えた参照ファイルの文面で、どれも無ければ
  * 空文字を渡します。
  *
+ * ディレクトリ全体の前提は2つあります。設定ファイル（`--ai-context`）で決めた `project` と、
+ * 画面で「ディレクトリ全体」を選んで書いた `directory` です。1つの枠へまとめるのは、
+ * どちらも「この配下のすべての文書に効く前提」で、モデルにとって読み方が同じだからです。
+ * どこで書いたかはレビュアーの都合であって、読む側には関係がありません。
+ *
  * 5つを別々の枠のまま並べるのは、出どころが違うからです。管理者の3点は資料を作る前に
  * 決めた設計、書いた前提は整えた1枚、メモは積み上げた記録、ペルソナは1人の読み手、
  * 参照ファイルは隣に置いてある別の資料。混ぜると、どれをどう読めばよいかが消えます。
@@ -34,9 +39,10 @@
  * 参照ファイルを最後に置くのは、ここだけが人の書いた前提ではなく、そのまま持ってきた
  * 別の資料の中身だからです。前提を読み終えてから資料に入るほうが、境目を間違えません。
  */
-export function readingContextBlock({ project, document, brief, notes, persona, files }) {
+export function readingContextBlock({ project, directory, document, brief, notes, persona, files }) {
+  const wide = [project, directory].filter(Boolean).join('\n\n');
   const written = [
-    project ? `<project>\n${project}\n</project>` : '',
+    wide ? `<project>\n${wide}\n</project>` : '',
     document ? `<document>\n${document}\n</document>` : ''
   ].filter(Boolean);
   // 書いた前提と読み手ペルソナは別の枠で渡します。片方だけ設定した文書では、

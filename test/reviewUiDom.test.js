@@ -583,7 +583,7 @@ test('the reading context is editable, saved with the review, and announced to t
   await waitFor(() => document.querySelector('#markdown-content p .inline-comment-button'));
 
   assert.equal(document.querySelector('#ai-context-input').value, '第3章。読者は初学者。');
-  assert.equal(document.querySelector('#ai-context-state').textContent.trim(), '設定済み');
+  assert.equal(document.querySelector('#ai-context-state').textContent.trim(), 'このファイルのみ');
   assert.equal(document.querySelector('#ai-context-project').hidden, false);
   assert.equal(document.querySelector('#ai-context-project-text').textContent, '入門書の原稿。');
   assert.equal(document.querySelector('#placement-context-hint').hidden, false, '指摘の配置にも渡すと伝える');
@@ -601,6 +601,72 @@ test('the reading context is editable, saved with the review, and announced to t
   // The pane promises to say what a question carries; the context is part of it.
   document.querySelector('#markdown-content p .inline-ai-button').click();
   assert.match(document.querySelector('#ai-target-comments').textContent, /読み取りコンテキストも渡します/);
+});
+
+test('the reading context can be written for the whole directory instead of one file', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const requests = [];
+  const { document, window } = await startApp(t, 'http://localhost/#/review/chapter3.md', {
+    '/api/file': async () => ({
+      path: 'chapter3.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'chapter3.md', comments: [], aiContext: '第3章。読者は初学者。' },
+      directoryAiContext: 'この本は入門者向け。',
+      directoryContextFile: '.review/context.json',
+      reviewFile: '.review/chapter3.md.review.json'
+    }),
+    '/api/review': (_input, options) => {
+      const body = JSON.parse(options.body);
+      // 前のテストの自動保存もこのスタブへ届くので、この文書ぶんだけを見ます。
+      if (body.path === 'chapter3.md') requests.push(['review', body]);
+      return {
+        review: { targetFile: body.path, comments: body.comments || [], aiContext: body.aiContext },
+        reviewFile: '.review/chapter3.md.review.json'
+      };
+    },
+    '/api/context/directory': (_input, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(['directory', body]);
+      return { directoryAiContext: body.aiContext, directoryContextFile: '.review/context.json' };
+    },
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: false, error: 'Codexへログインしてください' }),
+    '/api/ai/conversations': () => ({ conversations: [] })
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-comment-button'));
+
+  // 開いた直後は、そのファイルだけの前提を書く欄です。ディレクトリ全体の前提は下に見えます。
+  const contextInput = document.querySelector('#ai-context-input');
+  assert.equal(contextInput.value, '第3章。読者は初学者。');
+  assert.equal(document.querySelector('#ai-context-state').textContent.trim(), 'このファイル＋ディレクトリ全体');
+  assert.equal(document.querySelector('#ai-context-other').hidden, false);
+  assert.equal(document.querySelector('#ai-context-other-text').textContent, 'この本は入門者向け。');
+
+  // 範囲を切り替えると、欄の中身が入れ替わります。書いた前提はどちらも残ります。
+  const directoryRadio = document.querySelector('#ai-context-scope input[value="directory"]');
+  directoryRadio.checked = true;
+  directoryRadio.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.equal(contextInput.value, 'この本は入門者向け。');
+  assert.equal(document.querySelector('#ai-context-other-text').textContent, '第3章。読者は初学者。');
+  // 選んだ範囲は、コンテキスト画面の同じ欄にも映ります。
+  assert.equal(document.querySelector('#workspace-ai-context-input').value, 'この本は入門者向け。');
+  assert.equal(
+    document.querySelector('#workspace-ai-context-scope input[value="directory"]').checked,
+    true,
+    '2か所の欄が別々の範囲を書いていることはない'
+  );
+
+  contextInput.value = 'この本は入門者向け。用語は原著の訳語に合わせる。';
+  contextInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.match(document.querySelector('#ai-context-status').textContent, /自動保存待ち/);
+
+  document.querySelector('#save-button').click();
+  await waitFor(() => requests.some(([type]) => type === 'directory') && requests.some(([type]) => type === 'review'));
+  const [, directoryBody] = requests.find(([type]) => type === 'directory');
+  assert.equal(directoryBody.aiContext, 'この本は入門者向け。用語は原著の訳語に合わせる。');
+  const [, reviewBody] = requests.find(([type]) => type === 'review');
+  assert.equal(reviewBody.aiContext, '第3章。読者は初学者。', 'ファイルごとの前提は書き換えない');
+  await waitFor(() => document.querySelector('#ai-context-status').dataset.state === 'saved');
 });
 
 test('a document without a reading context says so and offers an empty box', async (t) => {

@@ -23,6 +23,7 @@ import {
 import { purposeFor } from './codexProfiles.js';
 import { collectCommentContext, commentContextBlock } from './commentContext.js';
 import { applyConversationEdits } from './conversationEdits.js';
+import { readDirectoryContext } from './directoryContext.js';
 import { buildBriefDraft, normalizeBriefInput } from './documentBrief.js';
 import {
   REVISE_SCHEMA,
@@ -101,6 +102,8 @@ export class AiService {
     this.ai = client;
     // The reading context from the config file or --ai-context. It applies to
     // every document under the review root; each document can add its own.
+    // 同じく配下すべてに効く「画面で書いたディレクトリ全体の前提」は、書き換えられる
+    // たびに読み直すので、ここでは持ちません（`readingContext()`）。
     this.projectContext = normalizeAiContext(projectContext, 'aiContext');
     this.managerEnabled = managerEnabled === true;
   }
@@ -117,11 +120,19 @@ export class AiService {
    *
    * 参照ファイルはここで毎回読み直します。前提として渡すのは保存したパスではなく
    * 中身なので、隣のファイルを直したら次のAI操作からその中身で読ませます。
+   *
+   * ディレクトリ全体の前提（`directoryContext.js`）も毎回読み直します。画面から
+   * 書き換えられるものなので、起動時に読んだきりだと、書き換えても立ち上げ直すまで
+   * 効きません。設定ファイルの `projectContext` が起動時のままなのとは、ここが違います。
    */
   async readingContext(documentPath) {
-    const { aiContext, brief, contextNotes, persona, referenceFiles } = await readReview(this.rootDir, documentPath);
+    const [{ aiContext, brief, contextNotes, persona, referenceFiles }, directoryContext] = await Promise.all([
+      readReview(this.rootDir, documentPath),
+      readDirectoryContext(this.rootDir)
+    ]);
     return resolveAiContext({
       project: this.projectContext,
+      directory: directoryContext,
       document: aiContext,
       brief: this.managerEnabled ? brief : null,
       notes: contextNotes,
@@ -288,9 +299,13 @@ export class AiService {
     // 走り書きだけ、というのは読み手ペルソナと同じです。
     // 参照ファイルも同じ理由で渡しません。隣に置いてある資料は「すでに書かれているもの」
     // そのもので、そこから目的を起こすのは本文から起こすのと変わりません。
-    const { aiContext, contextNotes, persona } = await readReview(this.rootDir, documentPath);
+    const [{ aiContext, contextNotes, persona }, directoryContext] = await Promise.all([
+      readReview(this.rootDir, documentPath),
+      readDirectoryContext(this.rootDir)
+    ]);
     const readingContext = resolveAiContext({
       project: this.projectContext,
+      directory: directoryContext,
       document: aiContext,
       notes: contextNotes,
       persona
@@ -319,9 +334,13 @@ export class AiService {
     // 読み取りコンテキストと残したメモ、そして管理者が決めた3点は渡します。
     // どんな原稿の読み手なのかが決まるからで、なかでも期待値は「読んだあと何ができれば
     // よいか」なので、読み手そのものの説明に一番近い前提です。
-    const { aiContext, brief, contextNotes } = await readReview(this.rootDir, documentPath);
+    const [{ aiContext, brief, contextNotes }, directoryContext] = await Promise.all([
+      readReview(this.rootDir, documentPath),
+      readDirectoryContext(this.rootDir)
+    ]);
     const readingContext = resolveAiContext({
       project: this.projectContext,
+      directory: directoryContext,
       document: aiContext,
       brief: this.managerEnabled ? brief : null,
       notes: contextNotes
@@ -647,6 +666,7 @@ function normalizeConversationContext(value) {
 function filterReadingContext(context, enabled) {
   return resolveAiContext({
     project: enabled.has('reading') ? context.project : '',
+    directory: enabled.has('reading') ? context.directory : '',
     document: enabled.has('reading') ? context.document : '',
     brief: enabled.has('brief') ? context.brief : null,
     notes: enabled.has('notes') ? context.notes : [],

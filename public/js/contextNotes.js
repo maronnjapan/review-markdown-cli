@@ -194,7 +194,8 @@ export function createContextNotesController({ refs, state, toaster, onChange })
     // 出す条件は「指摘の配置」と揃えます（前提が1つでもあれば出す）。
     if (refs.reviewContextHint) {
       const fileCount = (state.referenceFiles || []).length;
-      const hasPremise = Boolean((state.aiContext || '').trim() || (state.projectAiContext || '').trim())
+      const hasPremise = Boolean((state.aiContext || '').trim() || (state.directoryAiContext || '').trim()
+        || (state.projectAiContext || '').trim())
         || Boolean(state.brief) || notes.length > 0 || fileCount > 0;
       refs.reviewContextHint.hidden = !hasPremise;
       // 管理者の3点は「この資料はどうあるべきか」なので、読み方ではなく判定の基準が

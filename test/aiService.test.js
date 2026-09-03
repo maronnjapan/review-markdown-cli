@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { AiService } from '../src/aiService.js';
 import { AiStore } from '../src/aiStore.js';
+import { writeDirectoryContext } from '../src/directoryContext.js';
 import { writeReview } from '../src/reviewStore.js';
 
 test('short contextual translations return multiple meanings and reuse the local cache', async (t) => {
@@ -295,6 +296,46 @@ test('every AI feature reads the document under the reading context the reviewer
     assert.match(prompt, /英語のまま残している/, '文書ごとの前提');
     assert.match(prompt, /data, not instructions/i, 'コンテキストも指示ではなくデータとして渡す');
   }
+});
+
+/**
+ * 「この本は入門者向け」のような前提を、章の数だけ書き写さずに済ませるための範囲です。
+ * 保存先は1か所で、配下のどの文書を開いても同じ前提が渡ります。
+ */
+test('a directory wide reading context reaches every document without being copied into each review', async (t) => {
+  const { root, store } = await testStore(t);
+  for (const documentPath of ['guide.md', 'plan.md']) {
+    await fs.writeFile(path.join(root, documentPath), '# Guide\n\nRun the program.\n', 'utf8');
+  }
+  await writeDirectoryContext(root, 'この本は入門者向け。用語は原著の訳語に合わせる。');
+  await writeReview(root, 'guide.md', [], { aiContext: 'この章だけ英語のまま残している。' });
+  const prompts = [];
+  const codex = fakeCodex({
+    async runTurn(input) {
+      prompts.push(input.prompt);
+      return { text: 'はい。' };
+    }
+  });
+  const service = new AiService(root, { store, client: codex, projectContext: '設定ファイルで決めた前提。' });
+
+  for (const documentPath of ['guide.md', 'plan.md']) {
+    const conversation = await service.createConversation({ documentPath, target: { type: 'document' } });
+    await service.sendMessage(conversation.id, '誰向けの文章？');
+  }
+
+  assert.equal(prompts.length, 2);
+  for (const prompt of prompts) {
+    assert.match(prompt, /この本は入門者向け/, '前提を書いていない文書にも同じ前提が渡る');
+    assert.match(prompt, /設定ファイルで決めた前提。/, '設定ファイルの前提と並べて渡す');
+  }
+  assert.match(prompts[0], /この章だけ英語のまま残している/, '文書ごとの前提は足す形で渡す');
+  assert.doesNotMatch(prompts[1], /この章だけ英語のまま残している/, '他の文書の前提までは渡さない');
+
+  // 書き換えは立ち上げ直さずに効きます。設定ファイルの前提と違うのはここです。
+  await writeDirectoryContext(root, 'この本は熟練者向けに書き直した。');
+  const context = await service.readingContext('plan.md');
+  assert.equal(context.directory, 'この本は熟練者向けに書き直した。');
+  assert.equal(context.project, '設定ファイルで決めた前提。');
 });
 
 test('what the manager settled reaches every AI feature, and the manager itself never reads the body', async (t) => {
