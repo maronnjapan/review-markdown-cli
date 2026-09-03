@@ -172,6 +172,33 @@ export const api = {
   async recapWithAi(payload, options = {}) {
     await ensureAiToken();
     return streamNdjson('/api/ai/recap', payload, { ...options, headers: aiHeaders() });
+  },
+
+  /** その文書の自動タスクと、見守りの状態。AIは起動しません。 */
+  async readTasks(path) {
+    await ensureAiToken();
+    return fetchJson(`/api/tasks?path=${encodeURIComponent(path)}`, aiOptions());
+  },
+
+  /**
+   * 自動タスクへの変更。一覧まるごとではなく、変えたいこと（見守り・状態・手で足す・消す）
+   * だけを送ります。裏で足されたタスクを、この保存で消さないためです。
+   */
+  async changeTasks(payload) {
+    await ensureAiToken();
+    return postJson('/api/tasks', payload, aiHeaders());
+  },
+
+  /** 「タスクを整理する」。いまの本文を読み直してタスクを起こし、任せた種類は実行します。 */
+  async extractTasksWithAi(payload, options = {}) {
+    await ensureAiToken();
+    return streamNdjson('/api/ai/tasks/extract', payload, { ...options, headers: aiHeaders() });
+  },
+
+  /** タスクを1つ実行します。結果は「確認待ち」として記録に入ります。 */
+  async runTaskWithAi(payload, options = {}) {
+    await ensureAiToken();
+    return streamNdjson('/api/ai/tasks/run', payload, { ...options, headers: aiHeaders() });
   }
 };
 

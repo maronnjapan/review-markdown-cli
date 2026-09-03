@@ -5,6 +5,7 @@ import { aiContextBlock, hasAiContext, normalizeAiContext, resolveAiContext } fr
 import {
   CONVERSATION_TITLE_CHARS,
   MAX_EDIT_INSTRUCTION_CHARS,
+  MAX_EXISTING_TASKS_IN_PROMPT,
   MAX_HEADING_DEPTH,
   MAX_MESSAGE_CHARS,
   MAX_NOTES_CHARS,
@@ -14,6 +15,7 @@ import {
   TERM_MAX_WORDS
 } from './aiLimits.js';
 import { AiStore, defaultAiDataDir, translationCacheKey } from './aiStore.js';
+import { detectSourceKind, readExtractionAnswer, readTaskResult, sliceTaskSource } from './autoTasks.js';
 import {
   RECAP_SCHEMA,
   buildRecap,
@@ -57,6 +59,7 @@ import {
 } from './commentPlacement.js';
 import { followUpChatPrompt, initialChatPrompt } from './prompts/chat.js';
 import { BRIEF_SCHEMA, briefPrompt } from './prompts/manager.js';
+import { TASK_RESULT_SCHEMA, extractTasksPrompt, performTaskPrompt, taskExtractionSchema } from './prompts/tasks.js';
 import { PASSAGE_SCHEMA, TERM_SCHEMA, translationPrompt } from './prompts/translate.js';
 import { listReferenceFiles, readReferenceFiles } from './referenceFiles.js';
 import { deleteReviewSkill, listReviewSkills, readReviewSkill, readReviewSkills, saveReviewSkill } from './reviewSkills.js';
@@ -82,7 +85,9 @@ const ANSWER_SUBJECTS = {
   persona: 'AIが組み直した読み手ペルソナ',
   review: 'AIのレビュー結果',
   revise: 'AIの修正案',
-  recap: '直近の文字起こしの要約'
+  recap: '直近の文字起こしの要約',
+  tasks: '自動タスクの抽出結果',
+  taskRun: '自動タスクの実行結果'
 };
 
 export function createAiService(rootDir, options = {}) {
@@ -522,6 +527,76 @@ export class AiService {
     return buildRecap(answer, window, { question: request.question });
   }
 
+  /**
+   * 文字起こしや資料から「やること」を起こします。保存はしません。
+   *
+   * 返すのは、受け取れる形に整えた答えと、今回どこまで読んだか（`source`）です。記録へ
+   * 重ねるのは `autoTasks.js` の `applyExtraction`、いつ呼ぶかを決めるのは
+   * `autoTaskRunner.js` です。本文を `readDocument` に通さないのは、長さで断らないためです
+   * （聞き直しと同じ理由）。渡すのは前回から増えた分か、長すぎれば末尾からだけで、
+   * 切り出しは `sliceTaskSource` が決めます。
+   *
+   * @param {object} input
+   * @param {object} input.record その文書の記録（`readTasks`）。既存タスクと前回の解析を読みます。
+   * @param {string[]} input.actions 任せている自動化。整理と今すべきことを頼むかがこれで決まります。
+   * @param {string} input.instructions 特にしてほしいこと。
+   * @param {boolean} input.captioned この起動中に字幕が届いたファイルか。
+   */
+  async extractTasks(documentPath, { record, actions = [], instructions = '', captioned = false } = {}, { onDelta, signal } = {}) {
+    const markdown = await fs.readFile(path.join(this.rootDir, documentPath), 'utf8');
+    const source = {
+      ...sliceTaskSource(markdown, record?.analysis),
+      sourceKind: detectSourceKind(markdown, { captioned })
+    };
+    if (!source.text.trim()) throw new Error('タスクを起こせる本文がありません');
+
+    const existing = existingTasksForPrompt(record?.tasks || []);
+    const readingContext = await this.readingContext(documentPath);
+    const { answer } = await this.askForJson({
+      feature: 'tasks',
+      prompt: extractTasksPrompt({
+        sourceKind: source.sourceKind,
+        appended: source.appended,
+        omitted: source.omitted,
+        recentText: source.recent,
+        newText: source.text,
+        existingTasksJson: JSON.stringify(existing),
+        organize: actions.includes('organize'),
+        focus: actions.includes('focus'),
+        instructions,
+        readingContextBlock: aiContextBlock(readingContext)
+      }),
+      outputSchema: taskExtractionSchema(existing.map(({ id }) => id)),
+      onDelta,
+      signal
+    });
+    return { answer: readExtractionAnswer(answer), source };
+  }
+
+  /**
+   * 起こしたタスクを1つ実行します。書くのは調査メモ・コード例・回答案のいずれかで、
+   * ファイルにもネットワークにも触りません。保存はしません（`autoTasks.js` の `applyTaskResult`）。
+   */
+  async performTask(documentPath, task, { instructions = '' } = {}, { onDelta, signal } = {}) {
+    const markdown = await fs.readFile(path.join(this.rootDir, documentPath), 'utf8');
+    const source = sliceTaskSource(markdown, null);
+    const readingContext = await this.readingContext(documentPath);
+    const { answer } = await this.askForJson({
+      feature: 'taskRun',
+      prompt: performTaskPrompt({
+        task: { title: task.title, detail: task.detail || '', kind: task.kind, quote: task.quote || '' },
+        materialText: source.text,
+        omitted: source.omitted,
+        instructions,
+        readingContextBlock: aiContextBlock(readingContext)
+      }),
+      outputSchema: TASK_RESULT_SCHEMA,
+      onDelta,
+      signal
+    });
+    return readTaskResult(answer);
+  }
+
   async listConversations(documentPath) {
     return this.store.listConversations(documentPath);
   }
@@ -724,6 +799,17 @@ export class AiService {
 }
 
 const DEFAULT_CONVERSATION_CONTEXT = ['comments', 'reading', 'brief', 'notes', 'persona', 'files'];
+
+/**
+ * 「もう起こしたタスク」としてモデルへ渡す形。id・題名・種類・状態・優先度だけで、
+ * 詳細も引用も渡しません。見送ったものも渡します。渡さないと、見送るたびに同じタスクが
+ * 次の回で起こされます。多すぎるときは新しいものから数えます。
+ */
+function existingTasksForPrompt(tasks) {
+  return tasks
+    .slice(-MAX_EXISTING_TASKS_IN_PROMPT)
+    .map(({ id, title, kind, status, priority }) => ({ id, title, kind, status, priority }));
+}
 
 function normalizeConversationContext(value) {
   if (!Array.isArray(value)) return [...DEFAULT_CONVERSATION_CONTEXT];

@@ -440,7 +440,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   color: var(--primary);
   font-weight: 700;
 }
-#comments-panel, .manager-panel, .ai-panel, .placement-panel, .review-panel, .revise-panel, .outline-panel {
+#comments-panel, .manager-panel, .ai-panel, .placement-panel, .review-panel, .revise-panel, .outline-panel, .tasks-panel {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -1084,7 +1084,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   justify-content: flex-end;
   margin-top: 0.45rem;
 }
-#placement-submit-button, #review-run-button, #persona-compose-button, #revise-submit-button, #recap-run-button {
+#placement-submit-button, #review-run-button, #persona-compose-button, #revise-submit-button, #recap-run-button, #tasks-run-button {
   background: var(--primary);
   border-color: var(--primary);
   color: #fff;
@@ -1731,6 +1731,127 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .recap-actions li { font-size: 0.85rem; }
 .recap-action-what { display: block; }
 .recap-action-why { color: var(--muted); display: block; font-size: 0.76rem; }
+
+/*
+ * 自動タスク：見守りの入り切り、今すべきこと、タスクの一覧。
+ *
+ * 「今すべきこと」を一覧より上に置いています。会議中に開くパネルなので、一覧を
+ * 読み下す前に、いま手を付けるものが1つ見えることを優先しました。
+ */
+.tasks-watch {
+  border-bottom: 1px solid var(--border);
+  padding: 0.6rem 1rem 0.5rem;
+}
+.tasks-watch .settings-check { font-size: 0.85rem; }
+.tasks-watch .ai-context-hint { margin-top: 0.3rem; }
+.tasks-panel .placement-form { padding-bottom: 0.5rem; }
+.tasks-panel .placement-form .ai-context-hint { margin-top: 0.35rem; }
+.tasks-focus {
+  background: #eef6ff;
+  border-radius: 12px;
+  display: grid;
+  gap: 0.3rem;
+  margin: 0.25rem 0.75rem 0.5rem;
+  padding: 0.7rem 0.85rem;
+}
+.tasks-focus h3 { font-size: 0.78rem; margin: 0; }
+.tasks-focus-now { font-size: 0.9rem; font-weight: 600; margin: 0; }
+.tasks-focus-reason { color: #475467; font-size: 0.78rem; margin: 0; }
+.tasks-focus-updated { color: var(--muted); font-size: 0.7rem; margin: 0; }
+.tasks-panel .ai-context { border-top: 1px solid var(--border); }
+.tasks-list {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.75rem;
+}
+.tasks-list > .muted { font-size: 0.8rem; margin: 0; }
+.task-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.65rem 0.75rem;
+}
+/* 済んだものと見送ったものは、残っているものより薄く。消さないのは、蒸し返しを見分けるためです。 */
+.task-card[data-status="done"], .task-card[data-status="dismissed"] { opacity: 0.68; }
+.task-card[data-status="ready"] { border-color: #087443; }
+.task-card[data-status="running"] { border-style: dashed; }
+.task-card-head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.task-status, .task-kind, .task-priority {
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.1rem 0.5rem;
+}
+.task-status { background: #eef2f6; color: #475467; }
+.task-status[data-status="ready"] { background: #e3f4ea; color: #087443; }
+.task-status[data-status="running"] { background: #eef6ff; color: var(--primary); }
+.task-status[data-status="done"] { background: #e3f4ea; color: #087443; }
+.task-status[data-status="dismissed"] { background: #f2f4f7; color: #98a2b8; }
+.task-kind { background: #f8fafc; border: 1px solid var(--border); color: #475467; }
+.task-kind[data-kind="research"] { color: #0b7285; }
+.task-kind[data-kind="sample"] { color: #2557d6; }
+.task-kind[data-kind="inquiry"] { color: #b7791f; }
+.task-kind[data-kind="decision"] { color: #b42318; }
+.task-priority { background: #f8fafc; color: var(--muted); }
+.task-priority[data-priority="now"] { background: #fdecea; color: #b42318; }
+.task-priority[data-priority="next"] { background: #fdf3e2; color: #8a5b00; }
+.task-owner, .task-source { color: var(--muted); font-size: 0.7rem; }
+.task-title { font-size: 0.9rem; font-weight: 600; margin: 0; }
+.task-detail { color: #344054; font-size: 0.8rem; margin: 0; white-space: pre-wrap; }
+.task-quote {
+  border-left: 3px solid var(--border);
+  color: #475467;
+  font-size: 0.76rem;
+  margin: 0;
+  padding-left: 0.6rem;
+  white-space: pre-wrap;
+}
+.task-reason { color: var(--muted); font-size: 0.74rem; margin: 0; }
+.task-error { font-size: 0.76rem; margin: 0; }
+.task-running { color: var(--primary); font-size: 0.74rem; }
+.task-result {
+  background: #f8fafc;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  padding: 0.5rem 0.65rem;
+}
+.task-result > summary { cursor: pointer; font-weight: 600; }
+.task-result-body {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.76rem;
+  margin: 0.5rem 0 0;
+  max-height: 24rem;
+  overflow: auto;
+  padding: 0.6rem;
+  white-space: pre-wrap;
+}
+.task-result-label { font-size: 0.74rem; font-weight: 600; margin: 0.5rem 0 0.2rem; }
+.task-result-list { font-size: 0.76rem; margin: 0; padding-left: 1.1rem; }
+.task-result-meta { color: var(--muted); font-size: 0.7rem; margin: 0.4rem 0 0; }
+.task-actions { margin-top: 0.15rem; }
+.tasks-settings-hint { padding: 0 1rem 0.75rem; }
+/* 設定ダイアログの「任せること」。外したものも消えず、何が走らないかが読める形で並べます。 */
+.settings-actions {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+}
+.settings-actions legend { padding: 0 0.25rem; }
+.settings-action span { display: grid; }
+.settings-action small { color: var(--muted); font-size: 0.72rem; font-weight: 400; }
 
 @media (max-width: 1100px) {
   .review-layout { grid-template-columns: 1fr; }

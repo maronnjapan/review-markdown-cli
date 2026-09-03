@@ -17,6 +17,7 @@
  */
 
 import path from 'node:path';
+import { DEFAULT_AUTO_TASK_ACTIONS, DEFAULT_AUTO_TASK_INTERVAL_SECONDS } from './autoTaskVocabulary.js';
 import {
   aiModelsFromConfig,
   globalConfigPath,
@@ -26,14 +27,25 @@ import {
   writeConfigFile
 } from './config.js';
 
-/** 画面から変えられる設定キー。ここに無いキーは、画面からは読むことも書くこともしません。 */
-export const UI_SETTING_KEYS = ['translation', 'aiEmptyTarget', 'aiModel', 'aiEffort', 'aiReviewModel', 'aiReviewEffort'];
+/**
+ * 画面から変えられる設定キー。ここに無いキーは、画面からは読むことも書くこともしません。
+ *
+ * 自動タスクの4つ（入り切り・間隔・任せること・特にしてほしいこと）もここにあります。
+ * 裏でAIを動かし続ける機能なので、費用を抑えたくなったその場で切れることが、
+ * 設定ファイルへ書いて立ち上げ直せることより先に要るからです。
+ */
+export const UI_SETTING_KEYS = [
+  'translation',
+  'autoTasks', 'autoTasksInterval', 'autoTasksActions', 'autoTasksInstructions',
+  'aiEmptyTarget', 'aiModel', 'aiEffort', 'aiReviewModel', 'aiReviewEffort'
+];
 
 /**
  * 空にすると「設定しない」に戻るキー。モデルと推論強度は、外すと選んだAIの既定へ戻ります。
- * `translation` はここにありません。false は「無効にした」という指定そのものだからです。
+ * `translation` と `autoTasks` はここにありません。false は「無効にした」という指定そのものだからです。
+ * `autoTasksActions` もありません。空の一覧は「どれも任せない」という指定で、未設定（全部任せる）とは別です。
  */
-const CLEARABLE_KEYS = ['aiModel', 'aiEffort', 'aiReviewModel', 'aiReviewEffort'];
+const CLEARABLE_KEYS = ['autoTasksInterval', 'autoTasksInstructions', 'aiModel', 'aiEffort', 'aiReviewModel', 'aiReviewEffort'];
 
 /**
  * 走っているサーバーが見ている設定です。
@@ -58,7 +70,20 @@ export function createSettings({ values = {}, manager = false, file = null } = {
 
     /** 有効になっている機能。ルートは要求のたびにこれを読むので、変えた直後から効きます。 */
     get features() {
-      return Object.freeze({ manager, translation: current.translation === true });
+      return Object.freeze({ manager, translation: current.translation === true, autoTasks: current.autoTasks === true });
+    },
+
+    /**
+     * 自動タスクの決め事。実行係（`autoTaskRunner.js`）は見守りのたびにこれを読むので、
+     * 画面で切った直後の回から、AIへは何も送らなくなります。
+     */
+    get autoTasks() {
+      return Object.freeze({
+        enabled: current.autoTasks === true,
+        intervalSeconds: current.autoTasksInterval ?? DEFAULT_AUTO_TASK_INTERVAL_SECONDS,
+        actions: Object.freeze([...(current.autoTasksActions ?? DEFAULT_AUTO_TASK_ACTIONS)]),
+        instructions: current.autoTasksInstructions ?? ''
+      });
     },
 
     /** 用途ごとのモデル指定。`aiProviders/` が受け取る形です。 */
@@ -139,11 +164,16 @@ export function createSettingsFile({
     const projectSource = sources.find((source) => path.resolve(source) !== filePath);
     for (const key of UI_SETTING_KEYS) {
       if (shadowed.some((entry) => entry.key === key)) continue;
-      if (config[key] === values[key]) continue;
+      if (sameSetting(config[key], values[key])) continue;
       shadowed.push({ key, source: projectSource || 'プロジェクト設定' });
     }
     return shadowed;
   }
+}
+
+/** 一覧の設定（任せる自動化）は中身で比べます。同一性で比べると、同じ一覧が毎回「上書きされる」に見えます。 */
+function sameSetting(a, b) {
+  return Array.isArray(a) || Array.isArray(b) ? JSON.stringify(a) === JSON.stringify(b) : a === b;
 }
 
 /**
@@ -175,10 +205,16 @@ export function normalizeSettings(patch, current = {}) {
  * 1キー1値の形へほどきます。名指ししなかった用途はキーごと落とし、「未設定（選んだAIの
  * 既定で走る）」と「既定と同じ名前を書いた」を画面でも取り違えないようにします。
  */
-export function settingsFromOptions({ translation, aiModels = {} } = {}) {
+export function settingsFromOptions({
+  translation, autoTasks, autoTasksInterval, autoTasksActions, autoTasksInstructions, aiModels = {}
+} = {}) {
   const { assistant = {}, review = {} } = aiModels;
   return {
     translation: translation === true,
+    autoTasks: autoTasks === true,
+    ...(autoTasksInterval !== undefined ? { autoTasksInterval } : {}),
+    ...(autoTasksActions !== undefined ? { autoTasksActions } : {}),
+    ...(autoTasksInstructions ? { autoTasksInstructions } : {}),
     ...(assistant.model ? { aiModel: assistant.model } : {}),
     ...(assistant.effort ? { aiEffort: assistant.effort } : {}),
     ...(review.model ? { aiReviewModel: review.model } : {}),

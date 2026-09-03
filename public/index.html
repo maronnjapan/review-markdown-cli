@@ -90,6 +90,7 @@
             <button id="review-tab-button" type="button" role="tab" aria-selected="false" aria-controls="review-panel">AIレビュー</button>
             <button id="revise-tab-button" type="button" role="tab" aria-selected="false" aria-controls="revise-panel">本文の修正</button>
             <button id="recap-tab-button" class="hidden" type="button" role="tab" aria-selected="false" aria-controls="recap-panel">文字起こし</button>
+            <button id="tasks-tab-button" class="hidden" type="button" role="tab" aria-selected="false" aria-controls="tasks-panel">タスク<span id="tasks-tab-count" class="tab-count" hidden></span></button>
           </div>
           <section id="outline-panel" class="outline-panel hidden" role="tabpanel" aria-labelledby="outline-tab-button">
             <div class="side-section-header">
@@ -432,6 +433,57 @@
               <div id="recap-results" class="placement-results"></div>
             </div>
           </section>
+          <section id="tasks-panel" class="tasks-panel hidden" role="tabpanel" aria-labelledby="tasks-tab-button" aria-live="polite">
+            <div class="pane-scroll">
+              <div class="ai-header">
+                <div>
+                  <p class="eyebrow">Auto tasks</p>
+                  <h2>自動タスク</h2>
+                </div>
+                <span id="tasks-state" class="ai-context-state">0件</span>
+              </div>
+              <p class="placement-hint">文字起こしや書きかけの資料から、まだやること（対応・判断・調査・サンプル実装・問い合わせ対応）をAIが起こします。調査・サンプル実装・問い合わせ対応は、任せてあればAIが裏で書き、「確認待ち」として並びます。読んで採るかどうかを決めるのはあなたです。</p>
+              <p id="tasks-runner-hint" class="placement-hint" hidden></p>
+
+              <section class="tasks-watch">
+                <label class="settings-check">
+                  <input id="tasks-watch" type="checkbox">
+                  <span>この文書を見守る</span>
+                </label>
+                <p id="tasks-watch-hint" class="ai-context-hint">一定間隔でこの文書を読み直し、増えた分からタスクを起こします。字幕が届いている文書は、付けなくても会議のあいだ見守ります。</p>
+                <p id="tasks-status" class="ai-context-status" aria-live="polite"></p>
+              </section>
+
+              <form id="tasks-run-form" class="placement-form">
+                <div class="placement-actions">
+                  <button id="tasks-stop-button" class="hidden" type="button">停止</button>
+                  <button id="tasks-run-button" type="submit">タスクを整理する</button>
+                </div>
+                <p id="tasks-run-hint" class="ai-context-hint">いまの本文を読み直してタスクを起こし、任せてある種類はそのまま実行します。見守りを待たずに走らせたいときに押します。</p>
+              </form>
+
+              <section id="tasks-focus" class="tasks-focus" hidden>
+                <h3>今すべきこと</h3>
+                <p id="tasks-focus-now" class="tasks-focus-now"></p>
+                <p id="tasks-focus-reason" class="tasks-focus-reason"></p>
+                <p id="tasks-focus-updated" class="tasks-focus-updated"></p>
+              </section>
+
+              <details id="tasks-add" class="ai-context">
+                <summary>タスクを自分で足す</summary>
+                <form id="tasks-add-form" class="context-note-form">
+                  <select id="tasks-add-kind" aria-label="タスクの種類"></select>
+                  <textarea id="tasks-add-input" rows="2" placeholder="例：再起動の停止条件を運用チームに確認する"></textarea>
+                  <div class="context-note-actions">
+                    <button id="tasks-add-submit" type="submit" disabled>足す</button>
+                  </div>
+                </form>
+              </details>
+
+              <div id="tasks-list" class="tasks-list"></div>
+              <p class="ai-context-hint tasks-settings-hint">何を任せるか（整理・今すべきこと・調査・サンプル実装・問い合わせ対応）と見守りの間隔、特にしてほしいことは、画面右上の「設定」で変えられます。費用を抑えたいときは、そこで自動タスクを切ってください。</p>
+            </div>
+          </section>
         </aside>
       </section>
       <section id="context-view" class="context-workspace hidden" aria-label="コンテキスト">
@@ -647,6 +699,36 @@
             <span>英訳を有効にする</span>
           </label>
           <p class="ai-context-hint">段落・選択範囲・文書全体の「翻訳」を出します。無効にすると画面から消えるだけでなく、翻訳のAPIも断ります。</p>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">自動タスク</h3>
+          <label class="settings-check">
+            <input id="settings-auto-tasks" type="checkbox">
+            <span>自動タスクを有効にする</span>
+          </label>
+          <p class="ai-context-hint">文字起こしや書きかけの資料からAIがやることを起こし、任せた自動化を裏で走らせます。無効にすると「タスク」タブが消え、見守りも止まり、AIへは何も送りません。</p>
+          <div class="settings-fields">
+            <label class="settings-field">
+              <span class="settings-field-label">見守りの間隔</span>
+              <select id="settings-auto-tasks-interval">
+                <option value="">自動で選ぶ（120秒）</option>
+                <option value="60">60秒</option>
+                <option value="120">120秒</option>
+                <option value="300">300秒（5分）</option>
+                <option value="600">600秒（10分）</option>
+                <option value="1800">1800秒（30分）</option>
+              </select>
+            </label>
+          </div>
+          <fieldset id="settings-auto-tasks-actions" class="settings-actions">
+            <legend class="settings-field-label">任せること</legend>
+          </fieldset>
+          <p class="ai-context-hint">外したものは走りません。タスクを起こすこと自体は、有効なあいだ必ず走ります。</p>
+          <label class="settings-field">
+            <span class="settings-field-label">特にしてほしいこと</span>
+            <textarea id="settings-auto-tasks-instructions" rows="3" placeholder="例：顧客からの質問は必ず問い合わせ対応として起こす。サンプル実装はTypeScriptで。"></textarea>
+          </label>
         </section>
 
         <section class="settings-section">

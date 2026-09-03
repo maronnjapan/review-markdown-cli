@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { normalizeAiContext } from './aiContext.js';
 import { createAiService } from './aiService.js';
+import { createAutoTaskRunner } from './autoTaskRunner.js';
 import { sendError } from './http.js';
 import { createPathFilter } from './pathFilter.js';
 import { createRequestHandler } from './routes.js';
@@ -24,6 +25,9 @@ export { listMarkdownFiles } from './markdownFiles.js';
  * @param {boolean} [options.manager] 資料の管理者を有効にする。既定は無効。
  * @param {boolean} [options.translation] 翻訳機能を有効にする。既定は無効。既定値であって、
  *   画面の設定から入り切りできます（`src/settings.js`）。
+ * @param {boolean} [options.autoTasks] 自動タスクを有効にする。既定は無効。翻訳と同じく既定値で、
+ *   画面の設定から入り切りできます。`autoTasksInterval` / `autoTasksActions` /
+ *   `autoTasksInstructions` も同じく設定ファイルの値が起点です。
  * @param {object} [options.settingsFile] 画面から変えた設定の保存先（`createSettingsFile`）。
  *   渡さないと、変更は今回の起動のあいだだけ効きます。
  *
@@ -33,6 +37,8 @@ export { listMarkdownFiles } from './markdownFiles.js';
  * @param {object} [options.aiClient] AIクライアント。渡すと `aiProvider` は見ません。
  * @param {string} [options.aiDataDir] 端末側の保存ディレクトリ。
  * @param {string} [options.aiToken] AIエンドポイントのトークン。既定は起動ごとの乱数。
+ * @param {object} [options.autoTaskRunner] 自動タスクの実行係そのもの。渡すと組み立てません。
+ * @param {Function} [options.log] 実行係がターミナルへ出す1行の渡し先。既定は console.log。
  */
 export function createServer(targetDir = '.', options = {}) {
   const rootDir = path.resolve(targetDir);
@@ -53,8 +59,16 @@ export function createServer(targetDir = '.', options = {}) {
   const liveCaptionsToken = options.liveCaptionsToken || crypto.randomBytes(24).toString('base64url');
   // What every document under this root is read under; a document adds its own.
   const projectAiContext = normalizeAiContext(options.aiContext, 'aiContext');
+  // 自動タスクの実行係。見守りはサーバーが聞き始めてから動き、閉じたら止まります。
+  // 有効かどうかは見守りのたびに設定を読み直すので、ここでは無効でも組み立てておきます。
+  const autoTasks = options.autoTaskRunner || createAutoTaskRunner({
+    rootDir,
+    aiService,
+    settings,
+    log: options.log || ((line) => console.log(line))
+  });
   const handleRequest = createRequestHandler({
-    rootDir, filter, aiService, aiToken, liveCaptionsToken, projectAiContext, settings
+    rootDir, filter, aiService, aiToken, liveCaptionsToken, projectAiContext, settings, autoTasks
   });
 
   const app = {
@@ -62,11 +76,15 @@ export function createServer(targetDir = '.', options = {}) {
       const server = http.createServer((request, response) => {
         handleRequest(request, response).catch((error) => sendError(response, error));
       });
-      server.once('close', () => aiService.close?.());
+      autoTasks.start();
+      server.once('close', () => {
+        autoTasks.stop();
+        aiService.close?.();
+      });
       return server.listen(port, '127.0.0.1', callback);
     }
   };
-  return { app, rootDir, filter, aiService, settings, liveCaptionsToken };
+  return { app, rootDir, filter, aiService, settings, liveCaptionsToken, autoTasks };
 }
 
 /**

@@ -12,7 +12,7 @@ export function createState() {
 
     // Optional features are opt-in. The server repeats these flags with each
     // document response so a direct URL and a file-list navigation behave alike.
-    features: { manager: false, translation: false },
+    features: { manager: false, translation: false, autoTasks: false },
     // 設定ダイアログが最後に受け取ったもの（`public/js/settings.js`）。開くまでは null です。
     settings: null,
 
@@ -106,6 +106,14 @@ export function createState() {
     recap: null,
     recapAbortController: null,
 
+    // 自動タスク。サーバーが持つ記録（`.review/<target>.tasks.json`）の写しと、見守りの状態。
+    // 裏で増えるものなので、開いているあいだは定期的に取り直します（`autoTasks.js`）。
+    tasks: null,
+    tasksRunner: null,
+    tasksFile: '',
+    tasksStatus: 'idle',
+    tasksAbortController: null,
+
     // Edit mode bookkeeping
     dirtyBlocks: new Set(),
     blockVersions: new Map(),
@@ -171,6 +179,12 @@ export function resetDocumentState(state, filePath) {
   state.recap = null;
   state.recapAbortController?.abort();
   state.recapAbortController = null;
+  state.tasks = null;
+  state.tasksRunner = null;
+  state.tasksFile = '';
+  state.tasksStatus = 'idle';
+  state.tasksAbortController?.abort();
+  state.tasksAbortController = null;
   state.commentsVersion += 1;
   state.dirtyBlocks.clear();
   state.blockVersions.clear();

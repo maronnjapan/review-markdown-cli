@@ -2,6 +2,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { normalizeAiContext } from './aiContext.js';
 import { SEVERITY_LABELS } from './aiVocabulary.js';
+import {
+  TASK_KIND_LABELS,
+  TASK_PRIORITY_LABELS,
+  TASK_PRIORITY_ORDER,
+  TASK_STATUS_LABELS
+} from './autoTaskVocabulary.js';
 import { CONTEXT_NOTE_LABELS, normalizeContextNotes, readContextNotes } from './contextNotes.js';
 import { BRIEF_FIELDS, normalizeDocumentBrief, readDocumentBrief } from './documentBrief.js';
 import { PERSONA_FIELD_LABELS, normalizePersona } from './persona.js';
@@ -201,6 +207,7 @@ export function buildReviewMarkdown(review) {
   appendContextNotes(lines, review.contextNotes);
   appendPersona(lines, review.persona);
   appendReferenceFiles(lines, review.referenceFiles);
+  appendAutoTasks(lines, review.tasks);
   for (const group of [...COMMENT_GROUPS, OTHER_GROUP]) {
     appendCommentGroup(lines, group.title, grouped.get(group) || [], group.render, statusLabels);
   }
@@ -287,6 +294,38 @@ function appendReferenceFiles(lines, referenceFiles) {
   lines.push('この文書と一緒にAIへ読ませたファイルです。');
   lines.push('');
   for (const referenceFile of referenceFiles) lines.push(`- ${referenceFile}`);
+  lines.push('');
+}
+
+/**
+ * 自動タスクが起こしたタスクと、今すべきこと。渡す相手（人でもAIエージェントでも）が
+ * 「何が残っているか」を、コメントを読む前に掴めるようにします。結果の本文は写しません。
+ * 長いうえに、採るかどうかをまだレビュアーが決めていないものだからです。
+ * 有効でないときは `tasks` が来ないので、この節ごと出ません。
+ */
+function appendAutoTasks(lines, tasks) {
+  if (!tasks || (!tasks.focus && tasks.tasks.length === 0)) return;
+  lines.push('## 自動タスク', '');
+  if (tasks.focus) {
+    lines.push(...indentedListItem(`今すべきこと: ${tasks.focus.now}${tasks.focus.reason ? `（${tasks.focus.reason}）` : ''}`), '');
+  }
+  const statusOrder = { ready: 0, open: 1, running: 2, done: 3, dismissed: 4 };
+  const sorted = [...tasks.tasks].sort((a, b) => (
+    (statusOrder[a.status] - statusOrder[b.status])
+    || (TASK_PRIORITY_ORDER[a.priority] - TASK_PRIORITY_ORDER[b.priority])
+  ));
+  for (const task of sorted) {
+    const box = task.status === 'done' ? '[x]' : '[ ]';
+    const head = `${TASK_STATUS_LABELS[task.status] || task.status}／${TASK_KIND_LABELS[task.kind] || task.kind}／${TASK_PRIORITY_LABELS[task.priority] || task.priority}`;
+    // 2行目以降の字下げは indentedListItem に任せます。ここで下げると二重に下がります。
+    const body = [
+      `${box} ${task.title}（${head}${task.owner ? `／担当: ${task.owner}` : ''}）`,
+      task.detail || '',
+      task.quote ? `引用: ${task.quote}` : '',
+      task.result?.summary ? `AIの結果: ${task.result.summary}` : ''
+    ].filter(Boolean).join('\n');
+    lines.push(...indentedListItem(body));
+  }
   lines.push('');
 }
 
