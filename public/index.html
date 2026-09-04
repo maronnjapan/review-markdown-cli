@@ -736,6 +736,11 @@
             <span class="settings-field-label">特にしてほしいこと</span>
             <textarea id="settings-auto-tasks-instructions" rows="3" placeholder="例：顧客からの質問は必ず問い合わせ対応として起こす。サンプル実装はTypeScriptで。"></textarea>
           </label>
+          <label class="settings-field">
+            <span class="settings-field-label">対象の人</span>
+            <input id="settings-auto-tasks-owner" type="text" placeholder="例：田中, 田中太郎, たなか">
+          </label>
+          <p class="ai-context-hint">名前を書くと、その人がやることだけをタスクにします。会議の文字起こしから全員ぶんを起こさせないための欄です。表記が揺れる名前は、読点かカンマで区切って別名も並べてください。担当が書かれていないタスクは残します（文字起こしは担当を言わないまま進むことが多く、落とすと肝心のものが消えるためです）。空にすると、全員ぶんを起こします。</p>
         </section>
 
         <section class="settings-section">

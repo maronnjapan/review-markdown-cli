@@ -16,7 +16,9 @@ import {
   committedTasks,
   detectSourceKind,
   listWatchedFiles,
+  matchesTaskOwner,
   normalizeAutoTaskActions,
+  normalizeAutoTaskOwner,
   normalizeTasksChange,
   readTaskResult,
   readTasks,
@@ -102,6 +104,42 @@ test('画面からの変更は、変えたいことだけを受け取り、無�
   assert.equal(added.source, 'reviewer');
   assert.equal(added.status, 'open');
   assert.equal(added.createdAt, '2026-09-03T00:00:00.000Z');
+});
+
+test('タスクには参考知識と参照ファイルを添えられて、同階層以下の外は断る', () => {
+  const change = normalizeTasksChange({
+    setReference: [{ id: 't1', knowledge: ' 停止条件は運用チームの手順書が正 ', files: ['docs/spec.md'] }]
+  }, 'docs/plan.md');
+  assert.deepEqual(change.setReference, [{ id: 't1', knowledge: '停止条件は運用チームの手順書が正', files: ['docs/spec.md'] }]);
+
+  // 添えられるのは、文書と同じディレクトリとその下だけです（文書に添える参照ファイルと同じ線）。
+  assert.throws(
+    () => normalizeTasksChange({ setReference: [{ id: 't1', files: ['../secret.md'] }] }, 'docs/plan.md'),
+    /選べないファイル/
+  );
+  assert.throws(
+    () => normalizeTasksChange({ setReference: [{ id: 't1', knowledge: 'x'.repeat(2001) }] }, 'docs/plan.md'),
+    /参考知識が長すぎます/
+  );
+  assert.throws(() => normalizeTasksChange({ setReference: [{ knowledge: 'x' }] }, 'docs/plan.md'), /idが要ります/);
+
+  const record = readTasksRecord({
+    tasks: [{ id: 't1', title: '前提を調べる', kind: 'research', status: 'open' }]
+  }, 'docs/plan.md');
+  const attached = applyTasksChange(record, change, new Date('2026-09-03T00:00:00.000Z'));
+  assert.deepEqual(attached.tasks[0].reference, { knowledge: '停止条件は運用チームの手順書が正', files: ['docs/spec.md'] });
+
+  // 空にしたら欄ごと消えます。空の枠を残すと、実行の文面に「参考はある（中身は空）」が出ます。
+  const cleared = applyTasksChange(attached, normalizeTasksChange({
+    setReference: [{ id: 't1', knowledge: '', files: [] }]
+  }, 'docs/plan.md'));
+  assert.equal('reference' in cleared.tasks[0], false);
+
+  // 保存済みの記録を読むときは投げません。同階層以下から外れたパスは落とします。
+  const read = readTasksRecord({
+    tasks: [{ id: 't1', title: 'A', reference: { knowledge: '前提', files: ['docs/spec.md', '../secret.md', 3] } }]
+  }, 'docs/plan.md');
+  assert.deepEqual(read.tasks[0].reference, { knowledge: '前提', files: ['docs/spec.md'] });
 });
 
 /* ---------------------------------------------------------------- *
@@ -252,6 +290,28 @@ test('文字起こしかどうかは、字幕の発言が数件あるかで決�
   assert.equal(detectSourceKind(TRANSCRIPT), 'transcript');
   assert.equal(detectSourceKind('# 設計メモ\n\n**太字**の段落です。\n'), 'document');
   assert.equal(detectSourceKind('# 設計メモ\n', { captioned: true }), 'transcript', '字幕が届いていれば形を見なくても文字起こし');
+  assert.equal(
+    detectSourceKind(TRANSCRIPT, { transcriptFile: false }),
+    'document',
+    '文字起こし用のファイルでなければ、発言の形をしていても資料として読む'
+  );
+});
+
+/* ---------------------------------------------------------------- *
+ * 対象の人
+ * ---------------------------------------------------------------- */
+
+test('対象の人は、別名を並べられて、担当の書かれていないタスクは通す', () => {
+  assert.equal(normalizeAutoTaskOwner(' 田中, 田中太郎 '), '田中, 田中太郎');
+  assert.equal(normalizeAutoTaskOwner(undefined), '');
+  assert.throws(() => normalizeAutoTaskOwner('x'.repeat(201)), /長すぎます/);
+
+  assert.equal(matchesTaskOwner('田中', ''), true, '決めていなければ全員ぶんを起こす');
+  assert.equal(matchesTaskOwner('田中さん', '田中'), true, '敬称や肩書きが付いても同じ人');
+  assert.equal(matchesTaskOwner('田中', '田中太郎'), true);
+  assert.equal(matchesTaskOwner('鈴木', '田中, たなか'), false);
+  assert.equal(matchesTaskOwner('たなか', '田中, たなか'), true, '表記の揺れは別名で拾う');
+  assert.equal(matchesTaskOwner('', '田中'), true, '担当が書かれていないものは残す');
 });
 
 /* ---------------------------------------------------------------- *
@@ -297,6 +357,31 @@ test('抽出の答えは、同じ題名の残っているタスクを重ねず�
 
   const many = { ...answer, tasks: Array.from({ length: MAX_NEW_TASKS_PER_RUN + 5 }, (_, i) => ({ title: `T${i}`, detail: '', kind: 'action', priority: 'later', quote: '', owner: '' })) };
   assert.equal(applyExtraction(readTasksRecord({}, 'x.md'), many, source, {}, at).tasks.length, MAX_NEW_TASKS_PER_RUN);
+});
+
+test('対象の人を決めていると、担当が別の人のタスクは記録へ入らない', () => {
+  const answer = {
+    summary: '',
+    focus: { now: '', reason: '' },
+    tasks: [
+      { title: '前提を調べる', detail: '', kind: 'research', priority: 'now', quote: '', owner: '鈴木' },
+      { title: '停止条件を確認する', detail: '', kind: 'action', priority: 'now', quote: '', owner: '田中さん' },
+      { title: '図の単位を書く', detail: '', kind: 'action', priority: 'next', quote: '', owner: '' }
+    ],
+    updates: []
+  };
+  const source = { revision: 'rev-1', length: 10, sourceKind: 'transcript' };
+  const record = applyExtraction(readTasksRecord({}, 'meeting.md'), answer, source, { owner: '田中' });
+  assert.deepEqual(
+    record.tasks.map((task) => task.title),
+    ['停止条件を確認する', '図の単位を書く'],
+    '別の人のタスクは落とし、担当の書かれていないものは残す'
+  );
+  assert.equal(
+    applyExtraction(readTasksRecord({}, 'meeting.md'), answer, source, {}).tasks.length,
+    3,
+    '決めていなければ全員ぶんを起こす'
+  );
 });
 
 test('実行の結果は確認待ちとして入り、次のタスクを親付きで足し、失敗は未着手へ戻す', () => {
@@ -385,6 +470,40 @@ test('抽出は前提と既存タスクを添え、追記のときは増えた�
   assert.match(turns[2].prompt, /research memo/);
   assert.match(turns[2].prompt, /cannot run code/);
   assert.match(turns[2].prompt, /<automation_instructions>\nTypeScriptで/);
+  assert.equal(/<task_knowledge>/.test(turns[2].prompt), false, '添えていなければ枠ごと出さない');
+
+  // 対象の人を決めていると、その名前と絞り方が文面に入ります。
+  await service.extractTasks('meeting.md', { record, actions: ['focus'], owner: '田中' });
+  assert.match(turns[3].prompt, /<task_owner>\n田中/);
+  assert.match(turns[3].prompt, /Report only the tasks that fall to the person named in <task_owner>/);
+  assert.match(turns[3].prompt, /"focus\.now" to the one thing the person named in <task_owner>/);
+});
+
+test('タスクに添えた参考知識と参照ファイルは、そのタスクを実行するときだけ渡る', async (t) => {
+  const { root, store } = await testStore(t);
+  await fs.writeFile(path.join(root, 'meeting.md'), TRANSCRIPT, 'utf8');
+  await fs.writeFile(path.join(root, 'spec.md'), '# 停止条件\n\n無停止で再起動する。\n', 'utf8');
+  const turns = [];
+  const service = new AiService(root, { store, client: fakeCodex(turns) });
+  const record = readTasksRecord({
+    tasks: [{
+      id: 't1',
+      title: '前提を調べる',
+      kind: 'research',
+      status: 'open',
+      reference: { knowledge: '停止条件は運用チームの手順書が正。', files: ['spec.md'] }
+    }]
+  }, 'meeting.md');
+
+  await service.performTask('meeting.md', record.tasks[0], {});
+  const prompt = turns[0].prompt;
+  assert.match(prompt, /<task_knowledge>\n停止条件は運用チームの手順書が正。/);
+  assert.match(prompt, /<file path="spec\.md">\n# 停止条件/, '保存しているのはパスで、中身は実行のたびに読み直す');
+  assert.match(prompt, /Read them before the material/);
+
+  // 抽出には渡しません。「やってもらうにあたって読むもの」で、何を起こすかを決めるものではありません。
+  await service.extractTasks('meeting.md', { record, actions: [] });
+  assert.equal(/<task_knowledge>/.test(turns[1].prompt), false);
 });
 
 /* ---------------------------------------------------------------- *
@@ -402,7 +521,7 @@ test('見守りは変わった文書だけを読み、任せた種類を上限�
   const logs = [];
   const aiService = {
     async extractTasks(documentPath, input) {
-      calls.push(['extract', documentPath, input.captioned, input.actions]);
+      calls.push(['extract', documentPath, input.captioned, input.actions, input.owner, input.transcriptFile]);
       return {
         answer: {
           summary: '要約',
@@ -425,13 +544,28 @@ test('見守りは変わった文書だけを読み、任せた種類を上限�
       return { summary: `${task.title} の結果`, body: '本文', truncated: false, followUps: [], questions: [], completedAt: '2026-09-03T00:00:00.000Z' };
     }
   };
-  const settings = { autoTasks: { enabled: true, intervalSeconds: 120, actions: ['organize', 'focus', 'research'], instructions: '' } };
-  const runner = createAutoTaskRunner({ rootDir: root, aiService, settings, log: (line) => logs.push(line), setTimer: () => null, clearTimer: () => {} });
+  const settings = {
+    autoTasks: { enabled: true, intervalSeconds: 120, actions: ['organize', 'focus', 'research'], instructions: '', owner: '田中' }
+  };
+  const runner = createAutoTaskRunner({
+    rootDir: root,
+    aiService,
+    settings,
+    // 文字起こしとして読むのは、文字起こし用のファイルだけです。
+    transcripts: { matches: (file) => file === 'meeting.md' },
+    log: (line) => logs.push(line),
+    setTimer: () => null,
+    clearTimer: () => {}
+  });
   runner.noteActivity('meeting.md');
 
   const first = await runner.tick();
   assert.deepEqual(first.ran, ['meeting.md', 'plan.md']);
-  assert.deepEqual(calls.filter(([kind]) => kind === 'extract').map(([, file, captioned]) => [file, captioned]), [['meeting.md', true], ['plan.md', false]]);
+  assert.deepEqual(
+    calls.filter(([kind]) => kind === 'extract').map(([, file, captioned, , owner, transcriptFile]) => [file, captioned, owner, transcriptFile]),
+    [['meeting.md', true, '田中', true], ['plan.md', false, '田中', false]],
+    '対象の人と、文字起こしとして読むかどうかは、見守りのたびに設定から渡す'
+  );
   const performed = calls.filter(([kind]) => kind === 'perform');
   assert.equal(performed.filter(([, file]) => file === 'meeting.md').length, MAX_TASK_RUNS_PER_TICK, '1回の見守りで実行するのは上限まで');
   assert.deepEqual(performed.filter(([, file]) => file === 'meeting.md').map(([, , title]) => title), ['meeting.md 調査1', 'meeting.md 調査2', 'meeting.md 調査3'], '優先度の高い順');
@@ -461,6 +595,7 @@ test('見守りは変わった文書だけを読み、任せた種類を上限�
   const status = runner.status('meeting.md', await readTasks(root, 'meeting.md'));
   assert.equal(status.captioned, true);
   assert.equal(status.watching, false, '無効なら見守っていない');
+  assert.equal(status.owner, '田中', '誰のタスクを起こしているのかは、一覧を読む前に画面へ出す');
 });
 
 test('画面の「整理する」は変わっていなくても読み直し、1つのタスクの実行は確認待ちにする', async (t) => {
@@ -518,12 +653,17 @@ test('自動タスクのルートは有効にするまで断り、有効なら�
     },
     close() {}
   };
-  const disabled = await startServer(t, root, { aiService, aiToken: 'tasks-token', liveCaptionsToken: 'captions-token' });
+  // この文書を文字起こしとして扱う（字幕を書き込めるのも、聞き直せるのもここだけです）。
+  const transcriptFiles = ['meeting.md'];
+  const disabled = await startServer(t, root, { aiService, aiToken: 'tasks-token', liveCaptionsToken: 'captions-token', transcriptFiles });
   const headers = { 'Content-Type': 'application/json', 'X-Review-Markdown-Token': 'tasks-token' };
   assert.equal((await fetch(`${disabled}/api/tasks?path=meeting.md`, { headers })).status, 404, '無効のうちは断る');
   assert.equal((await fetch(`${disabled}/api/ai/tasks/extract`, { method: 'POST', headers, body: JSON.stringify({ path: 'meeting.md' }) })).status, 404);
 
-  const baseUrl = await startServer(t, root, { aiService, aiToken: 'tasks-token', liveCaptionsToken: 'captions-token', autoTasks: true, autoTasksActions: ['focus', 'research'] });
+  const baseUrl = await startServer(t, root, {
+    aiService, aiToken: 'tasks-token', liveCaptionsToken: 'captions-token', transcriptFiles,
+    autoTasks: true, autoTasksActions: ['focus', 'research']
+  });
   assert.equal((await fetch(`${baseUrl}/api/tasks?path=meeting.md`)).status, 403, 'トークン無しでは読めない');
 
   const opened = await fetch(`${baseUrl}/api/file?path=meeting.md`).then((response) => response.json());

@@ -118,14 +118,24 @@ test('自動タスクも既定では無効で、間隔・任せること・特�
   assert.equal(applyConfigToOptions(parseArgs(['.', '--no-auto-tasks']), { autoTasks: true }).autoTasks, false);
 
   const { config } = normalizeConfig({
-    autoTasks: 'yes', autoTasksInterval: '300', autoTasksActions: 'research, inquiry', autoTasksInstructions: ' 顧客の質問を拾う '
+    autoTasks: 'yes',
+    autoTasksInterval: '300',
+    autoTasksActions: 'research, inquiry',
+    autoTasksInstructions: ' 顧客の質問を拾う ',
+    autoTasksOwner: ' 田中, たなか '
   });
   assert.deepEqual(config, {
-    autoTasks: true, autoTasksInterval: 300, autoTasksActions: ['research', 'inquiry'], autoTasksInstructions: '顧客の質問を拾う'
+    autoTasks: true,
+    autoTasksInterval: 300,
+    autoTasksActions: ['research', 'inquiry'],
+    autoTasksInstructions: '顧客の質問を拾う',
+    autoTasksOwner: '田中, たなか'
   });
   const applied = applyConfigToOptions(parseArgs(['.']), config);
   assert.equal(applied.autoTasks, true);
   assert.deepEqual(applied.autoTasksActions, ['research', 'inquiry']);
+  assert.equal(applied.autoTasksOwner, '田中, たなか', '対象の人も設定ファイルからそのまま届く');
+  assert.throws(() => normalizeConfig({ autoTasksOwner: 'x'.repeat(201) }), /長すぎます/);
 
   // 知らない自動化と、短すぎる間隔は断ります。黙って通すと、何が走るのか読めなくなります。
   assert.throws(() => normalizeConfig({ autoTasksActions: ['research', 'deploy'] }), /知らない自動化です: deploy/);

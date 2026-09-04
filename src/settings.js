@@ -1,7 +1,7 @@
 /**
  * 画面から変えられる設定です。
  *
- * 設定ファイルに書けるキーのうち、レビューの最中に変えたくなるのはこの5つだけです。
+ * 設定ファイルに書けるキーのうち、レビューの最中に変えたくなるのはここにあるものだけです。
  * 翻訳機能を使うかどうかと、どのモデルでどれくらい考えさせるか。ほかのキー
  * （対象の絞り込み、ポート、どのAIで走らせるか）は起動のしかたそのものを決めるので、
  * 起動し直す前提の設定ファイルとコマンドラインに置いたままにしています。
@@ -30,13 +30,13 @@ import {
 /**
  * 画面から変えられる設定キー。ここに無いキーは、画面からは読むことも書くこともしません。
  *
- * 自動タスクの4つ（入り切り・間隔・任せること・特にしてほしいこと）もここにあります。
+ * 自動タスクの5つ（入り切り・間隔・任せること・特にしてほしいこと・対象の人）もここにあります。
  * 裏でAIを動かし続ける機能なので、費用を抑えたくなったその場で切れることが、
  * 設定ファイルへ書いて立ち上げ直せることより先に要るからです。
  */
 export const UI_SETTING_KEYS = [
   'translation',
-  'autoTasks', 'autoTasksInterval', 'autoTasksActions', 'autoTasksInstructions',
+  'autoTasks', 'autoTasksInterval', 'autoTasksActions', 'autoTasksInstructions', 'autoTasksOwner',
   'aiEmptyTarget', 'aiModel', 'aiEffort', 'aiReviewModel', 'aiReviewEffort'
 ];
 
@@ -45,7 +45,10 @@ export const UI_SETTING_KEYS = [
  * `translation` と `autoTasks` はここにありません。false は「無効にした」という指定そのものだからです。
  * `autoTasksActions` もありません。空の一覧は「どれも任せない」という指定で、未設定（全部任せる）とは別です。
  */
-const CLEARABLE_KEYS = ['autoTasksInterval', 'autoTasksInstructions', 'aiModel', 'aiEffort', 'aiReviewModel', 'aiReviewEffort'];
+const CLEARABLE_KEYS = [
+  'autoTasksInterval', 'autoTasksInstructions', 'autoTasksOwner',
+  'aiModel', 'aiEffort', 'aiReviewModel', 'aiReviewEffort'
+];
 
 /**
  * 走っているサーバーが見ている設定です。
@@ -82,7 +85,9 @@ export function createSettings({ values = {}, manager = false, file = null } = {
         enabled: current.autoTasks === true,
         intervalSeconds: current.autoTasksInterval ?? DEFAULT_AUTO_TASK_INTERVAL_SECONDS,
         actions: Object.freeze([...(current.autoTasksActions ?? DEFAULT_AUTO_TASK_ACTIONS)]),
-        instructions: current.autoTasksInstructions ?? ''
+        instructions: current.autoTasksInstructions ?? '',
+        // 空文字は「絞らない（全員ぶんを起こす）」です。名前を書いたときだけ絞ります。
+        owner: current.autoTasksOwner ?? ''
       });
     },
 
@@ -206,7 +211,7 @@ export function normalizeSettings(patch, current = {}) {
  * 既定で走る）」と「既定と同じ名前を書いた」を画面でも取り違えないようにします。
  */
 export function settingsFromOptions({
-  translation, autoTasks, autoTasksInterval, autoTasksActions, autoTasksInstructions, aiModels = {}
+  translation, autoTasks, autoTasksInterval, autoTasksActions, autoTasksInstructions, autoTasksOwner, aiModels = {}
 } = {}) {
   const { assistant = {}, review = {} } = aiModels;
   return {
@@ -215,6 +220,7 @@ export function settingsFromOptions({
     ...(autoTasksInterval !== undefined ? { autoTasksInterval } : {}),
     ...(autoTasksActions !== undefined ? { autoTasksActions } : {}),
     ...(autoTasksInstructions ? { autoTasksInstructions } : {}),
+    ...(autoTasksOwner ? { autoTasksOwner } : {}),
     ...(assistant.model ? { aiModel: assistant.model } : {}),
     ...(assistant.effort ? { aiEffort: assistant.effort } : {}),
     ...(review.model ? { aiReviewModel: review.model } : {}),

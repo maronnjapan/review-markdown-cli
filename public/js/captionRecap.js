@@ -77,11 +77,36 @@ export function createCaptionRecapController({
   }
 
   /**
-   * この文書で聞き直せるか。開いている本文に発言の行があるかだけで決めます。
+   * この文書で聞き直せるか。発言の行があることと、文字起こし用のファイルであることの両方です。
    * 文字起こしでない文書にタブを出しても、押せば断られるだけだからです。
    */
   function available() {
+    return hasCaptions() && state.transcript === true;
+  }
+
+  /**
+   * タブを出すか。聞き直せない文書でも、発言が並んでいるならタブは出します。
+   *
+   * 出さないと、文字起こし用のファイルの外に字幕を貼った人には、この機能ごと無いものとして
+   * 映ります。出したうえで「このファイルでは聞き直せない」と理由を書けば、直し方
+   * （設定にパターンを足すか、文字起こし用のファイルへ移すか）まで画面から辿れます。
+   */
+  function visible() {
+    return hasCaptions();
+  }
+
+  function hasCaptions() {
     return state.documentType === 'markdown' && SPEAKER_LINE.test(state.markdown || '');
+  }
+
+  /** 聞き直せない理由。文字起こし用のファイルでないときだけ出ます。 */
+  function scopeNote() {
+    const patterns = state.transcriptFiles || [];
+    return patterns.length
+      ? `この文書は文字起こし用のファイルではないので、聞き直せません。使えるのは ${patterns.join(' / ')} に当たるファイルです`
+        + '（review-markdown config add transcriptFiles \'<パターン>\' で足せます）。'
+      : '文字起こしに使えるファイルが設定されていないので、聞き直せません'
+        + '（review-markdown config add transcriptFiles \'meet-captions\' で足せます）。';
   }
 
   /* ---------------------------------------------------------------- *
@@ -226,6 +251,10 @@ export function createCaptionRecapController({
 
   function renderRange() {
     const window = state.recapWindow;
+    if (hasCaptions() && !available()) {
+      refs.recapRange.textContent = scopeNote();
+      return;
+    }
     if (!available()) {
       refs.recapRange.textContent = 'この文書には文字起こしの発言がありません。';
       return;
@@ -381,5 +410,5 @@ export function createCaptionRecapController({
     refs.recapStopButton.addEventListener('click', () => state.recapAbortController?.abort());
   }
 
-  return { load, refresh, render, refreshRange, available };
+  return { load, refresh, render, refreshRange, available, visible };
 }

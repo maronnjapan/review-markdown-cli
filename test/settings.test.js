@@ -168,9 +168,26 @@ test('起動時に決まった値は、画面が扱う1キー1値の形へほど
   );
   // 自動タスクの決め事も、設定ファイルに書いたぶんだけがそのまま届きます。
   assert.deepEqual(
-    settingsFromOptions({ autoTasks: true, autoTasksInterval: 300, autoTasksActions: ['research'], autoTasksInstructions: '顧客の質問を拾う' }),
-    { translation: false, autoTasks: true, autoTasksInterval: 300, autoTasksActions: ['research'], autoTasksInstructions: '顧客の質問を拾う' }
+    settingsFromOptions({
+      autoTasks: true, autoTasksInterval: 300, autoTasksActions: ['research'], autoTasksInstructions: '顧客の質問を拾う', autoTasksOwner: '田中'
+    }),
+    {
+      translation: false, autoTasks: true, autoTasksInterval: 300, autoTasksActions: ['research'],
+      autoTasksInstructions: '顧客の質問を拾う', autoTasksOwner: '田中'
+    }
   );
+});
+
+test('対象の人は画面から変えられて、空にすると「絞らない」に戻る', async () => {
+  const settings = createSettings({ values: { autoTasks: true, autoTasksOwner: '田中' } });
+  assert.equal(settings.autoTasks.owner, '田中');
+
+  await settings.update({ autoTasksOwner: ' 田中, たなか ' });
+  assert.equal(settings.autoTasks.owner, '田中, たなか');
+
+  await settings.update({ autoTasksOwner: '' });
+  assert.equal(settings.autoTasks.owner, '', '空は「設定しない」に戻り、全員ぶんを起こす');
+  assert.equal('autoTasksOwner' in settings.values, false, '設定ファイルにもキーごと残さない');
 });
 
 /* ---------------------------------------------------------------- *

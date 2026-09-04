@@ -3,6 +3,8 @@ import { escapeHtml } from './util.js';
 
 /** サーバー側の上限と同じです（src/aiLimits.js）。超えて送ると保存時に断られます。 */
 const MAX_TASK_TITLE_CHARS = 200;
+const MAX_TASK_KNOWLEDGE_CHARS = 2000;
+const MAX_REFERENCE_FILES = 8;
 
 /** サーバー側の上限と同じです（src/aiLimits.js の MAX_TASK_PLAN_NOTE_CHARS）。 */
 const MAX_TASK_PLAN_NOTE_CHARS = 1_000;
@@ -85,6 +87,10 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
    */
   let planDrafts = new Map();
   let filterId = 'all';
+  // 開いている「参考」の欄と、まだ保存していない参考知識。段取りと同じ理由で、
+  // 書きかけの文字と開いている欄を、描き直しをまたいで持ちます。
+  let openReferenceIds = new Set();
+  let knowledgeDrafts = new Map();
   let refreshTimer = null;
   let loadRequest = 0;
 
@@ -98,6 +104,8 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
     openPlanIds = new Set();
     planDrafts = new Map();
     filterId = 'all';
+    openReferenceIds = new Set();
+    knowledgeDrafts = new Map();
     stopRefreshing();
     setStatus('idle');
     render();
@@ -330,6 +338,76 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
     return change({ remove: [id] }, 'タスクを削除しました。');
   }
 
+  /* ---------------------------------------------------------------- *
+   * タスクに添える参考知識と参照ファイル
+   * ---------------------------------------------------------------- */
+
+  /**
+   * そのタスクの「参考」を保存します。書きかけの参考知識も一緒に送ります。
+   * ファイルを添えた拍子に、まだ保存していない文字が消えるのを避けるためです。
+   */
+  async function saveReference(id, files, successMessage) {
+    const task = findTask(id);
+    if (!task) return false;
+    const knowledge = knowledgeOf(task);
+    if (knowledge.length > MAX_TASK_KNOWLEDGE_CHARS) {
+      toaster.error(`参考知識は${MAX_TASK_KNOWLEDGE_CHARS}文字までです。`);
+      return false;
+    }
+    const saved = await change({ setReference: [{ id, knowledge, files: files ?? filesOf(task) }] }, successMessage);
+    // 保存できたぶんは、記録のほうを写して出します。断られたときは書いた文字を残します。
+    if (saved) knowledgeDrafts.delete(id);
+    render();
+    return saved;
+  }
+
+  function attachReferenceFile(id, filePath) {
+    const task = findTask(id);
+    if (!task || !filePath) return;
+    const files = filesOf(task);
+    if (files.includes(filePath)) return;
+    if (files.length >= MAX_REFERENCE_FILES) {
+      toaster.error(`1つのタスクに添えられる参照ファイルは${MAX_REFERENCE_FILES}件までです。`);
+      return;
+    }
+    saveReference(id, [...files, filePath], `${filePath} を添えました。このタスクを任せるときに読ませます。`);
+  }
+
+  function detachReferenceFile(id, filePath) {
+    const task = findTask(id);
+    if (!task) return;
+    saveReference(id, filesOf(task).filter((entry) => entry !== filePath), `${filePath} を外しました。`);
+  }
+
+  /**
+   * 添えられるファイルの一覧。文書に添える参照ファイルと同じものを見ます
+   * （`referenceFiles.js` が開いたときに引いています）。まだ無ければここでも引きに行きます。
+   * 引けなかった文書でも、参考知識だけは書けるようにしておくためで、投げません。
+   */
+  async function loadCandidates() {
+    if (state.referenceCandidates || state.referenceCandidatesLoading || !state.currentPath) return;
+    const documentPath = state.currentPath;
+    state.referenceCandidatesLoading = true;
+    try {
+      const listed = await api.listReferenceFiles(documentPath);
+      if (state.currentPath !== documentPath) return;
+      state.referenceCandidates = listed;
+      render();
+    } catch {
+      // 一覧が出ないだけです。添えてあるファイルは外せますし、参考知識は書けます。
+    } finally {
+      if (state.currentPath === documentPath) state.referenceCandidatesLoading = false;
+    }
+  }
+
+  function knowledgeOf(task) {
+    return knowledgeDrafts.has(task.id) ? knowledgeDrafts.get(task.id) : (task.reference?.knowledge || '');
+  }
+
+  function filesOf(task) {
+    return task.reference?.files || [];
+  }
+
   async function add() {
     const title = refs.tasksAddInput.value.trim();
     if (!title) return;
@@ -447,6 +525,9 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
   function renderRunnerHint(record, runner) {
     const parts = [];
     const analysis = record?.analysis;
+    // 誰のタスクを起こしているのかは、一覧を読む前に出します。絞っていることが画面に
+    // 出ていないと、他の人のタスクが無いのを「起こせなかった」と読むことになります。
+    if (runner?.owner) parts.push(`対象の人は「${runner.owner}」です。この人がやることだけを起こします。`);
     if (analysis?.analyzedAt) {
       parts.push(`最後に読んだのは ${timeLabel(analysis.analyzedAt)}（${analysis.sourceKind === 'transcript' ? '文字起こしとして' : '資料として'}）。`);
     }
@@ -495,6 +576,7 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
         ${task.statusReason ? `<p class="task-reason">${escapeHtml(task.statusReason)}</p>` : ''}
         ${task.error ? `<p class="ai-error task-error">実行できませんでした: ${escapeHtml(task.error)}</p>` : ''}
         ${isCommitted(task) ? planHtml(task, busy) : ''}
+        ${referenceHtml(task, busy)}
         ${result ? resultHtml(task, result, resultOpen) : ''}
         <div class="context-note-item-actions task-actions">
           ${deleting
@@ -504,6 +586,64 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
             : actionButtons(task, busy)}
         </div>
       </article>`;
+  }
+
+  /**
+   * そのタスクに添える参考知識と参照ファイル。渡すのは、このタスクを実行するときだけです。
+   *
+   * 済んだタスクには、すでに何か添えてあるときだけ出します。畳んである欄でも、残っている
+   * タスクの数だけ並ぶと、一覧を読み下すときの行数がそのぶん増えるからです。
+   */
+  function referenceHtml(task, busy) {
+    const open = openReferenceIds.has(task.id);
+    const files = filesOf(task);
+    const knowledge = knowledgeOf(task);
+    const finished = task.status === 'done' || task.status === 'dismissed';
+    if (finished && !knowledge && files.length === 0) return '';
+    const disabled = busy ? ' disabled' : '';
+    return `
+      <details class="task-reference"${open ? ' open' : ''} data-task-reference="${escapeHtml(task.id)}">
+        <summary>参考${referenceSummary(knowledge, files)}</summary>
+        <p class="ai-context-hint">このタスクをAIに任せるときだけ渡します。資料の前提（読み取りコンテキスト・メモ・文書に添えた参照ファイル）は、これとは別に毎回渡します。</p>
+        <textarea class="task-knowledge" rows="3" data-task-knowledge="${escapeHtml(task.id)}"
+          placeholder="例：停止条件は運用チームの手順書が正。前回の会議で、再起動は無停止でやると決めた。"${disabled}>${escapeHtml(knowledge)}</textarea>
+        <div class="context-note-actions">
+          <button type="button" data-task-knowledge-save="${escapeHtml(task.id)}"${disabled}>参考知識を保存</button>
+        </div>
+        <div class="reference-file-form">
+          <select data-task-reference-select="${escapeHtml(task.id)}" aria-label="このタスクに添えるファイル">${candidateOptions(files)}</select>
+          <div class="reference-file-actions">
+            <button type="button" data-task-reference-add="${escapeHtml(task.id)}"${files.length >= MAX_REFERENCE_FILES ? ' disabled' : disabled}>添える</button>
+          </div>
+        </div>
+        ${files.length
+          ? `<div class="reference-files-list">${files.map((file) => attachedFileHtml(task.id, file, disabled)).join('')}</div>`
+          : '<p class="muted">まだ何も添えていません。仕様書や前の調査メモを添えると、AIはその中身を読んだうえで書きます。</p>'}
+      </details>`;
+  }
+
+  function referenceSummary(knowledge, files) {
+    const parts = [knowledge ? '参考知識あり' : '', files.length ? `ファイル${files.length}件` : ''].filter(Boolean);
+    return parts.length ? `: ${parts.join('／')}` : '（未設定）';
+  }
+
+  function attachedFileHtml(taskId, file, disabled) {
+    return `
+      <div class="reference-file">
+        <span class="reference-file-path">${escapeHtml(file)}</span>
+        <span class="reference-file-item-actions">
+          <button type="button" data-task-reference-remove="${escapeHtml(file)}" data-task-id="${escapeHtml(taskId)}"${disabled}>外す</button>
+        </span>
+      </div>`;
+  }
+
+  /** 添えられるファイルの選択欄。まだ引けていないときは、理由を1件だけ出します。 */
+  function candidateOptions(attached) {
+    const listed = state.referenceCandidates;
+    if (!listed) return '<option value="">探しています…</option>';
+    const options = listed.files.filter((entry) => !attached.includes(entry.path));
+    if (options.length === 0) return '<option value="">添えられるファイルがありません</option>';
+    return options.map((entry) => `<option value="${escapeHtml(entry.path)}">${escapeHtml(entry.path)}</option>`).join('');
   }
 
   /**
@@ -628,12 +768,23 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
         if (details.open) openPlanIds.add(details.dataset.taskPlan);
         else openPlanIds.delete(details.dataset.taskPlan);
       }
+      if (details?.dataset?.taskReference) {
+        if (details.open) {
+          openReferenceIds.add(details.dataset.taskReference);
+          // 開いたときに引きます。タスクを1件も任せない文書で、一覧を引きに行かないためです。
+          loadCandidates();
+        } else {
+          openReferenceIds.delete(details.dataset.taskReference);
+        }
+      }
     }, true);
-    // 書きかけを控えるのは、描き直しで消さないためです（`planDrafts`）。
+    // 書きかけを控えるのは、描き直しで消さないためです（`planDrafts` / `knowledgeDrafts`）。
     for (const type of ['input', 'change']) {
       refs.tasksList.addEventListener(type, (event) => {
         const form = event.target.closest('[data-task-plan-form]');
         if (form) rememberPlanDraft(form);
+        const knowledgeId = event.target?.dataset?.taskKnowledge;
+        if (knowledgeId) knowledgeDrafts.set(knowledgeId, event.target.value);
       });
     }
     refs.tasksList.addEventListener('submit', (event) => {
@@ -650,6 +801,17 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
       if (button.dataset.taskRun) return runTask(button.dataset.taskRun);
       if (button.dataset.taskStatus) return setTaskStatus(button.dataset.taskId, button.dataset.taskStatus);
       if (button.dataset.taskCopy) return copyResult(button.dataset.taskCopy);
+      if (button.dataset.taskKnowledgeSave) {
+        return saveReference(button.dataset.taskKnowledgeSave, undefined, '参考知識を保存しました。');
+      }
+      if (button.dataset.taskReferenceAdd) {
+        const id = button.dataset.taskReferenceAdd;
+        const select = refs.tasksList.querySelector(`[data-task-reference-select="${cssEscape(id)}"]`);
+        return attachReferenceFile(id, select?.value || '');
+      }
+      if (button.dataset.taskReferenceRemove) {
+        return detachReferenceFile(button.dataset.taskId, button.dataset.taskReferenceRemove);
+      }
       if (button.dataset.taskDelete) {
         pendingDeleteId = button.dataset.taskDelete;
         return render();
@@ -678,6 +840,11 @@ function sortTasks(tasks) {
     || (PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority])
     || String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
   ));
+}
+
+/** タスクのidを属性セレクタに入れるための逃がし。idは英数字と `-` だけですが、選ぶのは値です。 */
+function cssEscape(value) {
+  return String(value).replace(/["\\]/g, '\\$&');
 }
 
 function isCommitted(task) {

@@ -61,7 +61,7 @@ import { followUpChatPrompt, initialChatPrompt } from './prompts/chat.js';
 import { BRIEF_SCHEMA, briefPrompt } from './prompts/manager.js';
 import { TASK_RESULT_SCHEMA, extractTasksPrompt, performTaskPrompt, taskExtractionSchema } from './prompts/tasks.js';
 import { PASSAGE_SCHEMA, TERM_SCHEMA, translationPrompt } from './prompts/translate.js';
-import { listReferenceFiles, readReferenceFiles } from './referenceFiles.js';
+import { listReferenceFiles, readReferenceEntries, readReferenceFiles } from './referenceFiles.js';
 import { deleteReviewSkill, listReviewSkills, readReviewSkill, readReviewSkills, saveReviewSkill } from './reviewSkills.js';
 import { readReview } from './reviewStore.js';
 
@@ -540,13 +540,17 @@ export class AiService {
    * @param {object} input.record その文書の記録（`readTasks`）。既存タスクと前回の解析を読みます。
    * @param {string[]} input.actions 任せている自動化。整理と今すべきことを頼むかがこれで決まります。
    * @param {string} input.instructions 特にしてほしいこと。
+   * @param {string} input.owner 対象の人。書いてあれば、その人がやることだけを起こさせます。
    * @param {boolean} input.captioned この起動中に字幕が届いたファイルか。
+   * @param {boolean} input.transcriptFile 文字起こし用のファイルか（`transcriptFiles.js`）。
    */
-  async extractTasks(documentPath, { record, actions = [], instructions = '', captioned = false } = {}, { onDelta, signal } = {}) {
+  async extractTasks(documentPath, {
+    record, actions = [], instructions = '', owner = '', captioned = false, transcriptFile = true
+  } = {}, { onDelta, signal } = {}) {
     const markdown = await fs.readFile(path.join(this.rootDir, documentPath), 'utf8');
     const source = {
       ...sliceTaskSource(markdown, record?.analysis),
-      sourceKind: detectSourceKind(markdown, { captioned })
+      sourceKind: detectSourceKind(markdown, { captioned, transcriptFile })
     };
     if (!source.text.trim()) throw new Error('タスクを起こせる本文がありません');
 
@@ -564,6 +568,7 @@ export class AiService {
         organize: actions.includes('organize'),
         focus: actions.includes('focus'),
         instructions,
+        owner,
         readingContextBlock: aiContextBlock(readingContext)
       }),
       outputSchema: taskExtractionSchema(existing.map(({ id }) => id)),
@@ -576,11 +581,16 @@ export class AiService {
   /**
    * 起こしたタスクを1つ実行します。書くのは調査メモ・コード例・回答案のいずれかで、
    * ファイルにもネットワークにも触りません。保存はしません（`autoTasks.js` の `applyTaskResult`）。
+   *
+   * そのタスクに添えられた参考知識と参照ファイルは、ここで読み直して渡します。保存して
+   * あるのはパスだけなので、添えたファイルを直したら、次の実行から直したあとの中身で
+   * 書かせられます（文書に添える参照ファイルと同じ扱いです）。
    */
   async performTask(documentPath, task, { instructions = '' } = {}, { onDelta, signal } = {}) {
     const markdown = await fs.readFile(path.join(this.rootDir, documentPath), 'utf8');
     const source = sliceTaskSource(markdown, null);
     const readingContext = await this.readingContext(documentPath);
+    const reference = task.reference || { knowledge: '', files: [] };
     const { answer } = await this.askForJson({
       feature: 'taskRun',
       prompt: performTaskPrompt({
@@ -588,6 +598,9 @@ export class AiService {
         materialText: source.text,
         omitted: source.omitted,
         instructions,
+        knowledge: reference.knowledge || '',
+        // 枠の終わりと同じ並びを潰してから渡します（`referenceFiles.js` の `safeText`）。
+        referenceFiles: readReferenceEntries(await readReferenceFiles(this.rootDir, documentPath, reference.files)),
         readingContextBlock: aiContextBlock(readingContext)
       }),
       outputSchema: TASK_RESULT_SCHEMA,

@@ -276,7 +276,7 @@ test('聞き直しの範囲は聞く前に引けて、聞くと要約と行動�
     },
     close() {}
   };
-  const { app } = createServer(root, { aiService, aiToken: 'recap-token' });
+  const { app } = createServer(root, { aiService, aiToken: 'recap-token', transcriptFiles: ['meeting.md'] });
   const server = app.listen(0);
   await new Promise((resolve, reject) => {
     server.once('listening', resolve);

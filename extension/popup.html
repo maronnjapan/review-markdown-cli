@@ -35,9 +35,10 @@
       </label>
       <label class="sync-settings__field" id="syncPathField">
         書き込み先ファイル（レビュー対象ディレクトリからの相対パス）
-        <input type="text" id="syncPath" list="syncPathOptions" placeholder="meeting-notes/today.md" />
+        <input type="text" id="syncPath" list="syncPathOptions" placeholder="meet-captions/today.md" />
         <datalist id="syncPathOptions"></datalist>
       </label>
+      <p id="syncTranscriptFiles" class="sync-settings__note"></p>
       <div class="sync-settings__actions">
         <button type="submit" class="btn">保存</button>
         <button type="button" class="btn" id="syncTest">接続を確認</button>

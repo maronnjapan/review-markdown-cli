@@ -45,6 +45,8 @@ const ACTIVITY_TTL_MS = 6 * 60 * 60 * 1000;
  * @param {string} options.rootDir レビュー対象ディレクトリの絶対パス。
  * @param {object} options.aiService `extractTasks` と `performTask` を持つもの。
  * @param {object} options.settings `autoTasks` を返すもの（`settings.js` の `createSettings`）。
+ * @param {object} [options.transcripts] 文字起こしに使える範囲（`transcriptFiles.js`）。
+ *   文字起こしとして読むかどうかだけに使います。見守る対象を絞るのには使いません。
  * @param {Function} [options.log] ターミナルへの1行。裏で何をしたかは、画面を見ていない人にも見せます。
  * @param {Function} [options.now] 現在時刻（ミリ秒）。テストで差し替えます。
  * @param {Function} [options.setTimer] / [options.clearTimer] タイマー。テストで差し替えます。
@@ -53,6 +55,7 @@ export function createAutoTaskRunner({
   rootDir,
   aiService,
   settings,
+  transcripts = { matches: () => true },
   log = () => {},
   now = () => Date.now(),
   setTimer = setTimeout,
@@ -162,12 +165,15 @@ export function createAutoTaskRunner({
           record,
           actions: options.actions,
           instructions: options.instructions,
-          captioned: activity.has(relativeFile)
+          owner: options.owner,
+          captioned: activity.has(relativeFile),
+          transcriptFile: transcripts.matches(relativeFile)
         }, { signal, onDelta });
         const before = record.tasks.length;
         record = await updateTasks(rootDir, relativeFile, (current) => applyExtraction(current, answer, source, {
           organize: options.actions.includes('organize'),
-          focus: options.actions.includes('focus')
+          focus: options.actions.includes('focus'),
+          owner: options.owner
         }, new Date(now())));
         const added = Math.max(0, record.tasks.length - before);
         log(`[自動タスク] ${relativeFile}: タスクを${added}件起こしました${answer.updates.length ? `（${answer.updates.length}件を整理）` : ''}`);
@@ -246,11 +252,15 @@ export function createAutoTaskRunner({
 
   /** 画面へ出す、この文書についての見守りの状態。 */
   function status(relativeFile, record = null) {
-    const { enabled, intervalSeconds, actions } = settings.autoTasks;
+    const { enabled, intervalSeconds, actions, owner } = settings.autoTasks;
     return {
       enabled,
       intervalSeconds,
       actions: [...actions],
+      // 誰のタスクを起こしているのかは、一覧を読む前に分かる必要があります。絞っていることを
+      // 画面に出さないと、他の人のタスクが「起こされなかった」のか「起こせなかった」のかを
+      // 見分けられません。
+      owner,
       captioned: activity.has(relativeFile),
       watching: enabled && (activity.has(relativeFile) || record?.watch === true),
       running: running.has(relativeFile),

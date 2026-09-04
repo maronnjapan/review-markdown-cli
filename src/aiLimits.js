@@ -370,3 +370,16 @@ export const MAX_TASK_QUESTIONS = 5;
  * 同じく、長くするほど毎回の入力が増えます。
  */
 export const MAX_AUTO_TASK_INSTRUCTIONS_CHARS = 2_000;
+
+/**
+ * 「対象の人」の長さ。名前と別名を並べるだけの欄なので短くしてあります。
+ * ここへ条件（「〇〇のときだけ」）を書きたくなったら、それは「特にしてほしいこと」の仕事です。
+ */
+export const MAX_AUTO_TASK_OWNER_CHARS = 200;
+
+/**
+ * タスク1件に添える「参考知識」の長さ。実行のときだけ、そのタスクの文面へ入ります。
+ * すべての実行に付く「特にしてほしいこと」と違って、付くのは頼んだ1件だけなので、
+ * 同じ長さを許しています。
+ */
+export const MAX_TASK_KNOWLEDGE_CHARS = 2_000;

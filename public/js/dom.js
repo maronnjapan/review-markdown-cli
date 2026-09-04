@@ -290,6 +290,7 @@ const SELECTORS = {
   settingsAutoTasksInterval: '#settings-auto-tasks-interval',
   settingsAutoTasksActions: '#settings-auto-tasks-actions',
   settingsAutoTasksInstructions: '#settings-auto-tasks-instructions',
+  settingsAutoTasksOwner: '#settings-auto-tasks-owner',
   settingsAiEmptyTarget: '#settings-ai-empty-target',
   settingsAiProvider: '#settings-ai-provider',
   settingsProviderHint: '#settings-provider-hint',

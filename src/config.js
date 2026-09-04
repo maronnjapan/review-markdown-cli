@@ -15,9 +15,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { normalizeAiContext } from './aiContext.js';
 import { AI_PROVIDERS, DEFAULT_AI_PROVIDER, unknownProviderMessage } from './aiProviders/index.js';
-import { normalizeAutoTaskActions, normalizeAutoTaskInstructions, normalizeAutoTaskInterval } from './autoTasks.js';
+import {
+  normalizeAutoTaskActions,
+  normalizeAutoTaskInstructions,
+  normalizeAutoTaskInterval,
+  normalizeAutoTaskOwner
+} from './autoTasks.js';
 import { AUTO_TASK_ACTION_IDS, DEFAULT_AUTO_TASK_INTERVAL_SECONDS } from './autoTaskVocabulary.js';
 import { normalizePatterns } from './pathFilter.js';
+import { DEFAULT_TRANSCRIPT_PATTERNS, normalizeTranscriptPatterns } from './transcriptFiles.js';
 
 export const CONFIG_FILE_NAME = '.review-markdown.json';
 
@@ -69,6 +75,11 @@ const CONFIG_KEY_SPECS = {
     parse: (value, source) => parseBoolean(value, source),
     help: '翻訳機能を有効にするかどうか（既定: false）'
   },
+  transcriptFiles: {
+    kind: 'list',
+    parse: (value, source) => normalizeTranscriptPatterns(value, source),
+    help: `文字起こしに使うファイルのパターン（一覧。既定: ${DEFAULT_TRANSCRIPT_PATTERNS.join(' / ')}）`
+  },
   autoTasks: {
     kind: 'scalar',
     parse: (value, source) => parseBoolean(value, source),
@@ -88,6 +99,11 @@ const CONFIG_KEY_SPECS = {
     kind: 'text',
     parse: (value, source) => normalizeAutoTaskInstructions(value, source),
     help: '自動タスクに特にしてほしいこと（文章）'
+  },
+  autoTasksOwner: {
+    kind: 'text',
+    parse: (value, source) => normalizeAutoTaskOwner(value, source),
+    help: '自動タスクの対象の人（名前。書くと、その人がやることだけを起こします）'
   },
   aiEmptyTarget: {
     kind: 'scalar',
@@ -385,11 +401,15 @@ export function applyConfigToOptions(options, config = {}) {
     manager: useManager ? config.manager : options.manager,
     translation: useTranslation ? config.translation : options.translation,
     autoTasks: useAutoTasks ? config.autoTasks : options.autoTasks,
-    // 自動タスクの間隔・任せること・特にしてほしいことは、コマンドラインに口を持ちません。
-    // 設定ファイルの値がそのまま届き、画面の「設定」からも変えられます。
+    // 自動タスクの間隔・任せること・特にしてほしいこと・対象の人は、コマンドラインに
+    // 口を持ちません。設定ファイルの値がそのまま届き、画面の「設定」からも変えられます。
     autoTasksInterval: config.autoTasksInterval,
     autoTasksActions: config.autoTasksActions,
     autoTasksInstructions: config.autoTasksInstructions,
+    autoTasksOwner: config.autoTasksOwner,
+    // 文字起こしに使えるファイル。未設定のときは既定へ落とすので、ここでは渡しません
+    // （既定かどうかを `createTranscriptScope` が見分けます）。
+    transcriptFiles: config.transcriptFiles,
     aiContext: options.aiContext ?? config.aiContext ?? '',
     // AIの選択とモデルの指定はコマンドラインに口を持たないので、設定ファイルの値が
     // そのまま届きます。どれも未設定なら、既定のAIをその既定のモデルで走らせます。

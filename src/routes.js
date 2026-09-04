@@ -32,6 +32,7 @@ import {
 } from './reviewStore.js';
 import { createSettings } from './settings.js';
 import { serveStatic } from './staticFiles.js';
+import { createTranscriptScope, transcriptScopeMessage } from './transcriptFiles.js';
 
 /**
  * Every route resolves the requested path against the review root first, so a
@@ -91,7 +92,10 @@ export function createRequestHandler({
   projectAiContext = '',
   settings = createSettings(),
   // 自動タスクの実行係（`autoTaskRunner.js`）。無いときは、その機能のルートだけが動きません。
-  autoTasks = null
+  autoTasks = null,
+  // 文字起こしに使えるファイルの範囲（`transcriptFiles.js`）。字幕の追記と聞き直しは、
+  // ここに当たるファイルだけで動きます。
+  transcripts = createTranscriptScope()
 }) {
   return async function handleRequest(request, response) {
     const url = new URL(request.url, 'http://localhost');
@@ -120,6 +124,7 @@ export function createRequestHandler({
       projectAiContext,
       settings,
       autoTasks,
+      transcripts,
       features: settings.features,
       request,
       response,
@@ -324,11 +329,22 @@ function reviseWithAi(context) {
  */
 function recapWithAi(context) {
   return streamAiRequest(context, {
-    run: ({ aiService, documentPath, body, signal, onDelta }) => (
-      aiService.recapCaptions(documentPath, body, { signal, onDelta })
-    ),
+    run: ({ aiService, documentPath, body, signal, onDelta }) => {
+      assertTranscriptFile(context, documentPath);
+      return aiService.recapCaptions(documentPath, body, { signal, onDelta });
+    },
     toEvent: (recap) => ({ recap })
   });
+}
+
+/**
+ * 聞き直せるのは文字起こし用のファイルだけです。
+ *
+ * 字幕を書き込めるファイルを絞った以上、読むほうも同じ線で絞ります。片方だけ絞ると、
+ * 「書き込めないのに、聞き直しのタブだけは出るファイル」ができます。
+ */
+function assertTranscriptFile({ transcripts }, documentPath) {
+  if (!transcripts.matches(documentPath)) throw httpError(transcriptScopeMessage(transcripts, documentPath), 400);
 }
 
 /**
@@ -340,6 +356,7 @@ async function readRecapWindow(context) {
   authorizeAiRequest(context);
   const documentPath = reviewTarget(rootDir, filter, url.searchParams.get('path'));
   if (!isMarkdownPath(documentPath)) throw httpError('文字起こしを読めるのはMarkdownだけです', 400);
+  assertTranscriptFile(context, documentPath);
   return sendJson(response, {
     window: await aiService.recapWindow(documentPath, {
       scope: url.searchParams.get('scope'),
@@ -376,7 +393,7 @@ async function changeAutoTasks(context) {
   const documentPath = tasksTarget(rootDir, filter, body.path);
   let change;
   try {
-    change = normalizeTasksChange(body);
+    change = normalizeTasksChange(body, documentPath);
   } catch (error) {
     throw httpError(error.message, 400);
   }
@@ -568,9 +585,15 @@ async function liveCaptionsTokenInfo({ request, response, liveCaptionsToken }) {
  * ためだけの窓口を分けておけば、設定を保存する前に、URLとトークンが合っているかと、
  * どのディレクトリへ書き込むことになるのかを見せられます。
  */
-async function liveCaptionsPing({ rootDir, request, response, liveCaptionsToken }) {
+async function liveCaptionsPing({ rootDir, transcripts, request, response, liveCaptionsToken }) {
   assertLiveCaptionsRequest(request, response, liveCaptionsToken);
-  return sendJson(response, { ok: true, rootDir: path.basename(rootDir), rootPath: rootDir });
+  // どこへ書けるのかは、書き込み先を決める前に要ります。繋がったかどうかと一緒に返します。
+  return sendJson(response, {
+    ok: true,
+    rootDir: path.basename(rootDir),
+    rootPath: rootDir,
+    transcriptFiles: [...transcripts.patterns]
+  });
 }
 
 /**
@@ -582,10 +605,12 @@ async function liveCaptionsPing({ rootDir, request, response, liveCaptionsToken 
  * 一覧はあくまで候補です。
  */
 async function liveCaptionsTargets(context) {
-  const { rootDir, filter, request, response, liveCaptionsToken } = context;
+  const { rootDir, filter, transcripts, request, response, liveCaptionsToken } = context;
   assertLiveCaptionsRequest(request, response, liveCaptionsToken);
-  const files = await listMarkdownFiles(rootDir, filter);
-  return sendJson(response, { rootDir: path.basename(rootDir), files });
+  // 候補に出すのは、字幕を書き込めるファイルだけです。書き込めないファイルを候補に並べると、
+  // 選んだうえで会議が始まってから断られることになります。
+  const files = (await listMarkdownFiles(rootDir, filter)).filter((file) => transcripts.matches(file));
+  return sendJson(response, { rootDir: path.basename(rootDir), files, transcriptFiles: [...transcripts.patterns] });
 }
 
 /**
@@ -610,11 +635,14 @@ function assertLiveCaptionsRequest(request, response, liveCaptionsToken) {
  * 一致することの2つで、この拡張機能以外からの書き込みを断ります。
  */
 async function appendLiveCaption(context) {
-  const { rootDir, request, response, liveCaptionsToken } = context;
+  const { rootDir, transcripts, request, response, liveCaptionsToken } = context;
   assertLiveCaptionsRequest(request, response, liveCaptionsToken);
   const body = await readJsonBody(request);
   const relativeFile = normalizeRelativePath(rootDir, body.path);
   if (!isMarkdownPath(relativeFile)) throw httpError('Only Markdown files can receive live captions', 400);
+  // 書き込み先を打ち間違えたまま繋ぐと、原稿の途中に発言が挟まっていきます。断る理由まで
+  // 返すのは、拡張機能の側からは「繋がっているのに1行も増えない」としか見えないからです。
+  if (!transcripts.matches(relativeFile)) throw httpError(transcriptScopeMessage(transcripts, relativeFile), 400);
 
   const entry = normalizeCaptionEntry(body);
   const result = await appendCaptionEntry(rootDir, relativeFile, entry);
@@ -664,7 +692,7 @@ async function listFiles({ rootDir, filter, features, response }) {
   });
 }
 
-async function openFile({ rootDir, filter, projectAiContext, features, url, response }) {
+async function openFile({ rootDir, filter, projectAiContext, features, transcripts, url, response }) {
   const relativeFile = reviewTarget(rootDir, filter, url.searchParams.get('path'));
   if (isPdfPath(relativeFile)) {
     const stats = await fs.stat(path.join(rootDir, relativeFile));
@@ -689,6 +717,9 @@ async function openFile({ rootDir, filter, projectAiContext, features, url, resp
     documentType: isMarkdownPath(relativeFile) ? 'markdown' : 'text',
     markdown,
     textBody: isTextDocumentPath(relativeFile),
+    // 文字起こしとして扱えるファイルか。画面はこれで「文字起こし」タブの出し方を決めます。
+    transcript: transcripts.matches(relativeFile),
+    transcriptFiles: [...transcripts.patterns],
     ...await renderBothViews(markdown, relativeFile, filter),
     review: visibleReview(review, features),
     projectAiContext,
