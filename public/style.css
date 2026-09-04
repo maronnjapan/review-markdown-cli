@@ -1838,6 +1838,27 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .task-result-label { font-size: 0.74rem; font-weight: 600; margin: 0.5rem 0 0.2rem; }
 .task-result-list { font-size: 0.76rem; margin: 0; padding-left: 1.1rem; }
 .task-result-meta { color: var(--muted); font-size: 0.7rem; margin: 0.4rem 0 0; }
+/* タスク1件に添える参考知識と参照ファイル。渡すのは、そのタスクを任せるときだけです。 */
+.task-reference {
+  background: #f8fafc;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  padding: 0.5rem 0.65rem;
+}
+.task-reference > summary { cursor: pointer; font-weight: 600; }
+.task-reference .ai-context-hint { margin: 0.4rem 0 0; }
+.task-reference .reference-file-form { margin-top: 0.45rem; }
+.task-reference > .muted { font-size: 0.74rem; margin: 0.45rem 0 0; }
+.task-knowledge {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font: inherit;
+  font-size: 0.78rem;
+  margin-top: 0.4rem;
+  padding: 0.4rem 0.5rem;
+  resize: vertical;
+  width: 100%;
+}
 .task-actions { margin-top: 0.15rem; }
 .tasks-settings-hint { padding: 0 1rem 0.75rem; }
 /* 設定ダイアログの「任せること」。外したものも消えず、何が走らないかが読める形で並べます。 */

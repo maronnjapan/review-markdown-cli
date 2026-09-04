@@ -97,16 +97,40 @@ test('POST /api/live-captions/append requires the live captions token and a chro
       Origin: extensionOrigin,
       'X-Review-Markdown-Live-Captions-Token': 'captions-token'
     },
-    body: JSON.stringify({ path: 'meeting.md', speaker: 'A', text: 'hi', time: '10:00:00' })
+    body: JSON.stringify({ path: 'meet-captions/meeting.md', speaker: 'A', text: 'hi', time: '10:00:00' })
   });
   assert.equal(created.status, 200);
   assert.equal(created.headers.get('access-control-allow-origin'), extensionOrigin);
   const createdBody = await created.json();
-  assert.deepEqual(createdBody, { ok: true, path: 'meeting.md', created: true, skipped: false });
+  assert.deepEqual(createdBody, { ok: true, path: 'meet-captions/meeting.md', created: true, skipped: false });
 
-  const opened = await fetch(`${baseUrl}/api/file?path=meeting.md`).then((response) => response.json());
+  const opened = await fetch(`${baseUrl}/api/file?path=meet-captions/meeting.md`).then((response) => response.json());
   assert.match(opened.markdown, /\*\*A\*\* `\[10:00:00\]`\nhi/);
+  assert.equal(opened.transcript, true, '文字起こし用のファイルであることは、画面にも返す');
+
+  // 文字起こし用でないファイルへは書き込めません。断る理由と、足し方まで返します。
+  const outside = await fetch(`${baseUrl}/api/live-captions/append`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: extensionOrigin,
+      'X-Review-Markdown-Live-Captions-Token': 'captions-token'
+    },
+    body: JSON.stringify({ path: 'guide.md', speaker: 'A', text: 'hi', time: '10:00:00' })
+  });
+  assert.equal(outside.status, 400);
+  assert.match((await outside.json()).error, /meet-captions.+transcriptFiles/s);
+  assert.equal(await exists(path.join(root, 'guide.md')), false, '断ったファイルは作らない');
 });
+
+async function exists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 test('GET /api/live-captions/token is only reachable from the app itself', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'live-captions-token-'));
@@ -149,8 +173,9 @@ test('GET /api/live-captions/token is only reachable from the app itself', async
 test('拡張機能は、書き込まずに繋がりを確かめられるし、書き込み先の候補も引ける', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'live-captions-ping-'));
   await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n', 'utf8');
-  await fs.mkdir(path.join(root, 'notes'));
-  await fs.writeFile(path.join(root, 'notes', 'today.md'), '# Today\n', 'utf8');
+  await fs.mkdir(path.join(root, 'meet-captions'));
+  await fs.writeFile(path.join(root, 'meet-captions', 'today.md'), '# Today\n', 'utf8');
+  await fs.writeFile(path.join(root, 'kickoff.transcript.md'), '# Kickoff\n', 'utf8');
   const aiService = { async status() { return { available: false }; }, close() {} };
   const { app } = createServer(root, { aiService, aiToken: 'ai-token', liveCaptionsToken: 'captions-token' });
   const server = app.listen(0);
@@ -172,14 +197,22 @@ test('拡張機能は、書き込まずに繋がりを確かめられるし、�
   const ping = await fetch(`${baseUrl}/api/live-captions/ping`, { headers: withToken });
   assert.equal(ping.status, 200);
   assert.equal(ping.headers.get('access-control-allow-origin'), extensionOrigin);
-  assert.equal((await ping.json()).rootDir, path.basename(root), 'どこへ書くのかを保存前に見せる');
+  const pinged = await ping.json();
+  assert.equal(pinged.rootDir, path.basename(root), 'どこへ書くのかを保存前に見せる');
+  assert.deepEqual(pinged.transcriptFiles, ['meet-captions', '*.transcript.md'], 'どこへ書けるのかも保存前に見せる');
 
   const targets = await fetch(`${baseUrl}/api/live-captions/targets`, { headers: withToken });
   assert.equal(targets.status, 200);
-  assert.deepEqual((await targets.json()).files, ['guide.md', 'notes/today.md']);
+  const listed = await targets.json();
+  assert.deepEqual(
+    listed.files,
+    ['kickoff.transcript.md', 'meet-captions/today.md'],
+    '候補に出すのは、字幕を書き込めるファイルだけ'
+  );
+  assert.deepEqual(listed.transcriptFiles, ['meet-captions', '*.transcript.md']);
 
   // 確かめただけでファイルが増えないこと。増えるなら、確かめる前に書き込んでいます。
-  assert.deepEqual((await fs.readdir(root)).sort(), ['guide.md', 'notes']);
+  assert.deepEqual((await fs.readdir(root)).sort(), ['guide.md', 'kickoff.transcript.md', 'meet-captions']);
 
   const preflight = await fetch(`${baseUrl}/api/live-captions/targets`, {
     method: 'OPTIONS',

@@ -229,6 +229,7 @@ async function testConnection() {
     }
     const info = await response.json();
     setSyncStatus(`繋がりました: ${info.rootDir} に書き込みます`, 'ok');
+    renderTranscriptFiles(info.transcriptFiles);
     await loadTargets(url, token);
   } catch {
     setSyncStatus('繋がりません。review-markdownが起動しているか確認してください', 'error');
@@ -237,7 +238,7 @@ async function testConnection() {
 
 /**
  * 書き込み先の候補。引けなくても黙って通します。候補はパスを楽に選ぶためのもので、
- * 無くても手で書けば書き込めます（存在しないパスは最初の発言で作られます）。
+ * 無くても手で書けば書き込めます（文字起こし用のファイルなら、無いパスは最初の発言で作られます）。
  */
 async function loadTargets(url, token) {
   try {
@@ -245,13 +246,26 @@ async function loadTargets(url, token) {
       headers: { [SYNC_TOKEN_HEADER]: token }
     });
     if (!response.ok) return;
-    const { files = [] } = await response.json();
+    const { files = [], transcriptFiles } = await response.json();
     document.getElementById('syncPathOptions').innerHTML = files
       .map((file) => `<option value="${file.replace(/"/g, '&quot;')}"></option>`)
       .join('');
+    renderTranscriptFiles(transcriptFiles);
   } catch {
     // 候補が出ないだけなので、確認の結果は上書きしません。
   }
+}
+
+/**
+ * 書き込めるファイルの決まり。review-markdownは、文字起こし用に決めたファイルにしか
+ * 字幕を書きません。保存する前に出しておかないと、会議が始まってから断られます。
+ */
+function renderTranscriptFiles(patterns) {
+  const note = document.getElementById('syncTranscriptFiles');
+  if (!Array.isArray(patterns)) return;
+  note.textContent = patterns.length
+    ? `書き込めるのは文字起こし用のファイルだけです（${patterns.join(' / ')}）。`
+    : '書き込めるファイルが設定されていません。review-markdown側の transcriptFiles に足してください。';
 }
 
 function bindSyncSettingsForm() {

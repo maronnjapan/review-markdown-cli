@@ -5,7 +5,7 @@ import { escapeHtml } from './util.js';
  * 設定ダイアログです。
  *
  * ここから変えられるのは3つ、翻訳機能の入り切り、自動タスク（入り切り・間隔・任せること・
- * 特にしてほしいこと）、用途ごとのモデルです。どれもこれまで設定ファイルとコマンドライン
+ * 特にしてほしいこと・対象の人）、用途ごとのモデルです。どれもこれまで設定ファイルとコマンドライン
  * だけで決まっていたもので、変えるには立ち上げ直しが要りました。読んでいる途中で「この節は
  * レビュー用の深いモデルで読み直したい」「裏の見守りを止めたい」と思ったときに、原稿を閉じずに
  * 変えられるようにしてあります。
@@ -114,6 +114,8 @@ export function createSettingsController({ refs, state, api, toaster, onApplied 
       autoTasksInterval: refs.settingsAutoTasksInterval.value,
       autoTasksActions: [...refs.settingsAutoTasksActions.querySelectorAll('input:checked')].map((input) => input.value),
       autoTasksInstructions: refs.settingsAutoTasksInstructions.value.trim(),
+      // 空は「絞らない」です。サーバー側では「設定しない」に戻り、全員ぶんを起こします。
+      autoTasksOwner: refs.settingsAutoTasksOwner.value.trim(),
       aiEmptyTarget: refs.settingsAiEmptyTarget.value
     };
     for (const field of MODEL_FIELDS) {
@@ -171,6 +173,7 @@ export function createSettingsController({ refs, state, api, toaster, onApplied 
         </label>`)
     ].join('');
     refs.settingsAutoTasksInstructions.value = settings.autoTasksInstructions || '';
+    refs.settingsAutoTasksOwner.value = settings.autoTasksOwner || '';
   }
 
   function renderProvider(ai) {

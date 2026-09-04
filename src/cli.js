@@ -57,6 +57,9 @@ Meet Captions Memo:
   Google Meetの字幕をレビュー対象のMarkdownへ流し込むChrome拡張機能を同梱しています。
   フォルダの場所と読み込ませ方は review-markdown extension で出ます。起動すると
   「連携コード」を1行で出すので、それを拡張機能の設定へ貼れば繋がります。
+  書き込めるのは文字起こし用に決めたファイルだけです（既定は meet-captions 配下と
+  *.transcript.md。設定ファイルの transcriptFiles で変えられます）。原稿のパスを
+  書いたまま繋いで、本文の途中に発言が挟まっていくのを防ぐためです。
 
 AI provider:
   どのAIで走らせるかは設定ファイルの aiProvider で選びます（codex / claude / langchain、
@@ -70,9 +73,11 @@ AI provider:
 Auto tasks:
   自動タスクは、文字起こしや書きかけの資料から「やること」をAIに起こさせ、任せられるもの
   （調査・サンプル実装・問い合わせ対応）を裏で済ませておく機能です。有効にした文書を一定間隔で
-  読み直し、増えた分からタスクを起こします。何を任せるか・間隔・特にしてほしいことは、
-  ブラウザ右上の「設定」か、設定ファイルの autoTasksActions / autoTasksInterval /
-  autoTasksInstructions で決めます。AIへ送る回数が増えるので、既定では無効です。
+  読み直し、増えた分からタスクを起こします。何を任せるか・間隔・特にしてほしいこと・
+  対象の人は、ブラウザ右上の「設定」か、設定ファイルの autoTasksActions /
+  autoTasksInterval / autoTasksInstructions / autoTasksOwner で決めます。
+  autoTasksOwner に名前を書くと、その人がやることだけをタスクに起こします。
+  AIへ送る回数が増えるので、既定では無効です。
 
 AI context:
   aiContext は、翻訳・AIチャット・指摘の配置で AI がこの原稿を読むときの前提です。

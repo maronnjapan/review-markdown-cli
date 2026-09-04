@@ -301,6 +301,8 @@ test('設定から翻訳を有効にすると、開いている文書の翻訳�
     // 何も設定していなければ全部に印が付いているので、全部を送ります。
     autoTasksActions: ['organize', 'focus', 'research', 'sample', 'inquiry'],
     autoTasksInstructions: '',
+    // 対象の人も空で送ります。空は「絞らない（全員ぶんを起こす）」です。
+    autoTasksOwner: '',
     aiEmptyTarget: 'document',
     aiModel: '',
     aiEffort: '',
@@ -2420,6 +2422,9 @@ test('文字起こしを開くと、押す前に読む範囲が出て、聞く�
       path: 'docs/meeting.md',
       markdown,
       ...await renderViews(markdown),
+      // 文字起こし用のファイルであることは、サーバーが文書ごとに返します。
+      transcript: true,
+      transcriptFiles: ['meet-captions', '*.transcript.md'],
       review: { targetFile: 'docs/meeting.md', comments: [] },
       reviewFile
     }),
@@ -2545,6 +2550,42 @@ test('文字起こしでない文書に、聞き直しのタブは出ない', as
   assert.deepEqual(windowRequests, [], '発言の無い文書では範囲も引きに行かない');
 });
 
+test('発言が並んでいても文字起こし用のファイルでなければ、タブは出るが聞き直せない理由が出る', async (t) => {
+  const markdown = [
+    '# 打ち合わせの引用', '', '---', '',
+    '**田中** `[10:00:00]`', '今日は再起動手順の確認です。', ''
+  ].join('\n');
+  const windowRequests = [];
+  const { document } = await startApp(t, 'http://localhost/#/review/docs%2Fnote.md', {
+    '/api/file': async () => ({
+      path: 'docs/note.md',
+      markdown,
+      ...await renderViews(markdown),
+      transcript: false,
+      transcriptFiles: ['meet-captions', '*.transcript.md'],
+      review: { targetFile: 'docs/note.md', comments: [] },
+      reviewFile: '.review/docs/note.md.review.json'
+    }),
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: true, provider: 'codex' }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/recap-window': (input) => {
+      windowRequests.push(String(input));
+      return { window: null };
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content h1'));
+
+  // 黙って消さずに、聞き直せない理由と直し方を出します。押せる状態のまま残すと、
+  // 押してから断られることになります。
+  assert.equal(document.querySelector('#recap-tab-button').classList.contains('hidden'), false);
+  document.querySelector('#recap-tab-button').click();
+  assert.match(document.querySelector('#recap-range').textContent, /文字起こし用のファイルではないので、聞き直せません/);
+  assert.match(document.querySelector('#recap-range').textContent, /meet-captions/);
+  assert.match(document.querySelector('#recap-range').textContent, /transcriptFiles/);
+  assert.equal(document.querySelector('#recap-run-button').disabled, true);
+  assert.deepEqual(windowRequests, [], '読めない文書では範囲も引きに行かない');
+});
+
 test('自動タスクが有効な文書ではタスクのタブが出て、整理すると一覧が並び、状態の変更は変えたことだけを送る', async (t) => {
   const markdown = [
     '# 定例会議',
@@ -2567,7 +2608,7 @@ test('自動タスクが有効な文書ではタスクのタブが出て、整�
     tasks: [],
     lastError: null
   };
-  const runner = { enabled: true, intervalSeconds: 120, actions: ['organize', 'focus', 'research'], captioned: false, watching: false, running: false, lastTickAt: null, nextTickAt: null };
+  const runner = { enabled: true, intervalSeconds: 120, actions: ['organize', 'focus', 'research'], owner: '田中', captioned: false, watching: false, running: false, lastTickAt: null, nextTickAt: null };
   const payload = () => ({ tasks: record, tasksFile: '.review/docs/meeting.md.tasks.json', runner: { ...runner, watching: record.watch } });
 
   const { document } = await startApp(t, 'http://localhost/#/review/docs%2Fmeeting.md', {
@@ -2581,6 +2622,7 @@ test('自動タスクが有効な文書ではタスクのタブが出て、整�
     }),
     '/api/ai/status': () => ({ token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model' }),
     '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/reference-files': () => ({ base: 'docs', total: 1, files: [{ path: 'docs/spec.md', kind: 'text' }] }),
     '/api/ai/recap-window': () => ({ window: { scope: 'since-last', appliedScope: 'minutes', fallback: 'no-mark', minutes: 10, entries: [{ index: 1 }], leadIn: [], dropped: 0, total: 2, chars: 20, from: '10:02:00', to: '10:02:00', reason: '' } }),
     '/api/tasks': (input, options) => {
       if (options.method === 'POST') {
@@ -2592,6 +2634,12 @@ test('自動タスクが有効な文書ではタスクのタブが出て、整�
         }
         for (const added of body.add || []) {
           record = { ...record, tasks: [...record.tasks, { id: `task-${record.tasks.length + 1}`, ...added, status: 'open', source: 'reviewer', priority: 'next', quote: '', owner: '' }] };
+        }
+        for (const { id, knowledge, files } of body.setReference || []) {
+          record = {
+            ...record,
+            tasks: record.tasks.map((task) => (task.id === id ? { ...task, reference: { knowledge, files } } : task))
+          };
         }
         return payload();
       }
@@ -2647,11 +2695,40 @@ test('自動タスクが有効な文書ではタスクのタブが出て、整�
   assert.match(cards[0].querySelector('.task-result-list').textContent, /どの環境か/);
   assert.match(cards[1].textContent, /担当: 田中/);
   assert.match(document.querySelector('#tasks-runner-hint').textContent, /文字起こしとして/);
+  assert.match(document.querySelector('#tasks-runner-hint').textContent, /対象の人は「田中」/, '誰のタスクを起こしているかを先に出す');
+
+  // タスク1件ごとに、参考知識と参照ファイルを添えられます。渡すのはそのタスクを任せるときだけです。
+  const reference = cards[1].querySelector('[data-task-reference="task-2"]');
+  reference.open = true;
+  reference.dispatchEvent(new document.defaultView.Event('toggle', { bubbles: true }));
+  const knowledge = reference.querySelector('[data-task-knowledge="task-2"]');
+  knowledge.value = '停止条件は運用チームの手順書が正。';
+  knowledge.dispatchEvent(new document.defaultView.Event('input', { bubbles: true }));
+  reference.querySelector('[data-task-knowledge-save="task-2"]').click();
+  await waitFor(() => changeRequests.length === 1);
+  assert.deepEqual(changeRequests[0][0], {
+    path: 'docs/meeting.md',
+    setReference: [{ id: 'task-2', knowledge: '停止条件は運用チームの手順書が正。', files: [] }]
+  });
+
+  // 添えるファイルは、文書に添える参照ファイルと同じ一覧（同階層以下）から選びます。
+  await waitFor(() => document.querySelector('[data-task-reference-select="task-2"] option[value="docs/spec.md"]'));
+  document.querySelector('[data-task-reference-select="task-2"]').value = 'docs/spec.md';
+  document.querySelector('[data-task-reference-add="task-2"]').click();
+  await waitFor(() => changeRequests.length === 2);
+  assert.deepEqual(changeRequests[1][0], {
+    path: 'docs/meeting.md',
+    setReference: [{ id: 'task-2', knowledge: '停止条件は運用チームの手順書が正。', files: ['docs/spec.md'] }]
+  });
+  await waitFor(() => document.querySelector('.task-card[data-task-id="task-2"] .reference-file-path'));
+  assert.equal(document.querySelector('.task-card[data-task-id="task-2"] .reference-file-path').textContent, 'docs/spec.md');
+  assert.match(document.querySelector('[data-task-reference="task-2"] summary').textContent, /参考知識あり／ファイル1件/);
 
   // 状態の変更は、一覧まるごとではなく変えたことだけを送ります。
-  cards[0].querySelector('[data-task-status="done"]').click();
-  await waitFor(() => changeRequests.length === 1);
-  assert.deepEqual(changeRequests[0][0], { path: 'docs/meeting.md', setStatus: [{ id: 'task-1', status: 'done' }] });
+  // 参考を保存した時点で一覧は描き直されているので、カードは引き直してから押します。
+  document.querySelector('.task-card[data-task-id="task-1"] [data-task-status="done"]').click();
+  await waitFor(() => changeRequests.length === 3);
+  assert.deepEqual(changeRequests[2][0], { path: 'docs/meeting.md', setStatus: [{ id: 'task-1', status: 'done' }] });
   await waitFor(() => document.querySelector('.task-card[data-task-id="task-1"]').dataset.status === 'done');
   assert.equal(document.querySelector('#tasks-tab-count').textContent, '1', '残っているものだけを数える');
 
@@ -2659,8 +2736,8 @@ test('自動タスクが有効な文書ではタスクのタブが出て、整�
   const watch = document.querySelector('#tasks-watch');
   watch.checked = true;
   watch.dispatchEvent(new document.defaultView.Event('change', { bubbles: true }));
-  await waitFor(() => changeRequests.length === 2);
-  assert.deepEqual(changeRequests[1][0], { path: 'docs/meeting.md', watch: true });
+  await waitFor(() => changeRequests.length === 4);
+  assert.deepEqual(changeRequests[3][0], { path: 'docs/meeting.md', watch: true });
 
   const addInput = document.querySelector('#tasks-add-input');
   addInput.value = '議事録を配る';
@@ -2668,8 +2745,8 @@ test('自動タスクが有効な文書ではタスクのタブが出て、整�
   assert.equal(document.querySelector('#tasks-add-submit').disabled, false);
   document.querySelector('#tasks-add-kind').value = 'action';
   document.querySelector('#tasks-add-form').requestSubmit();
-  await waitFor(() => changeRequests.length === 3);
-  assert.deepEqual(changeRequests[2][0], { path: 'docs/meeting.md', add: [{ title: '議事録を配る', kind: 'action' }] });
+  await waitFor(() => changeRequests.length === 5);
+  assert.deepEqual(changeRequests[4][0], { path: 'docs/meeting.md', add: [{ title: '議事録を配る', kind: 'action' }] });
   await waitFor(() => document.querySelectorAll('.task-card').length === 3);
   assert.match(document.querySelector('.task-card[data-task-id="task-3"]').textContent, /自分で足した/);
 

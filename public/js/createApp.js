@@ -551,6 +551,8 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     state.rawHtml = data.html || '';
     state.editableHtml = data.editableHtml || '';
     state.textBody = data.textBody === true;
+    state.transcript = data.transcript === true;
+    if (Array.isArray(data.transcriptFiles)) state.transcriptFiles = data.transcriptFiles;
     if (data.review?.comments) state.comments = data.review.comments;
     if (typeof data.projectAiContext === 'string') state.projectAiContext = data.projectAiContext;
     if (typeof data.directoryContextFile === 'string') state.directoryContextFile = data.directoryContextFile;
@@ -575,7 +577,9 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     bodyCopy.syncControl();
     // 文字起こしでない文書にはタブを出しません。本文が入れ替わるたびに見直すのは、
     // 会議中に書き足されたファイルを開き直したときも、その場でタブが出るようにするためです。
-    refs.recapTabButton.classList.toggle('hidden', !recap.available());
+    // 発言が並んでいるのに文字起こし用のファイルではない文書にはタブを出し、聞き直せない
+    // 理由をパネルに書きます。黙って消すと、機能ごと無いものとして読まれるからです。
+    refs.recapTabButton.classList.toggle('hidden', !recap.visible());
     recap.refresh();
     // 自動タスクのタブも、機能の有無と文書の種類（PDFでは出さない）で出し入れします。
     autoTasks.sync();

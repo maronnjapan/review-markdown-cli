@@ -23,7 +23,7 @@ if (options.help) {
   process.exit(0);
 }
 
-const { app, rootDir, filter, liveCaptionsToken } = buildServer();
+const { app, rootDir, filter, liveCaptionsToken, transcripts } = buildServer();
 const { server, port } = await startServer();
 const url = `http://localhost:${port}`;
 
@@ -46,6 +46,9 @@ console.log(`Open ${url}`);
 // まま繋ごうとして「連携エラー」になり、どちらを直せばよいかが画面から分かりません。
 console.log('Meet Captions Memo（Google Meetの字幕をこのCLIへ流し込むChrome拡張機能）');
 console.log(`  連携コード: ${encodePairingCode({ url, token: liveCaptionsToken })}`);
+// 書き込み先を決めるのは拡張機能の側なので、書ける場所は起動のたびに出しておきます。
+console.log(`  文字起こし用ファイル: ${transcripts.patterns.join(', ') || '（設定されていません）'}`
+  + `${transcripts.isDefault ? '（既定。transcriptFiles で変えられます）' : ''}`);
 console.log(`  拡張機能フォルダ: ${extensionDir()}`);
 console.log('  読み込ませ方は review-markdown extension、画面からは右上の「Meet連携」で出せます');
 if (options.open) openBrowser(url);

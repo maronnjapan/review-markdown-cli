@@ -8,6 +8,7 @@ import { sendError } from './http.js';
 import { createPathFilter } from './pathFilter.js';
 import { createRequestHandler } from './routes.js';
 import { createSettings, settingsFromOptions } from './settings.js';
+import { createTranscriptScope } from './transcriptFiles.js';
 
 export { listMarkdownFiles } from './markdownFiles.js';
 
@@ -27,7 +28,9 @@ export { listMarkdownFiles } from './markdownFiles.js';
  *   画面の設定から入り切りできます（`src/settings.js`）。
  * @param {boolean} [options.autoTasks] 自動タスクを有効にする。既定は無効。翻訳と同じく既定値で、
  *   画面の設定から入り切りできます。`autoTasksInterval` / `autoTasksActions` /
- *   `autoTasksInstructions` も同じく設定ファイルの値が起点です。
+ *   `autoTasksInstructions` / `autoTasksOwner` も同じく設定ファイルの値が起点です。
+ * @param {string[]} [options.transcriptFiles] 文字起こしに使えるファイルのパターン。
+ *   未指定なら既定（`transcriptFiles.js` の `DEFAULT_TRANSCRIPT_PATTERNS`）です。
  * @param {object} [options.settingsFile] 画面から変えた設定の保存先（`createSettingsFile`）。
  *   渡さないと、変更は今回の起動のあいだだけ効きます。
  *
@@ -43,6 +46,8 @@ export { listMarkdownFiles } from './markdownFiles.js';
 export function createServer(targetDir = '.', options = {}) {
   const rootDir = path.resolve(targetDir);
   const filter = createPathFilter(options);
+  // 字幕を書き込めるファイルと、聞き直せるファイル。どちらも同じ範囲から決めます。
+  const transcripts = createTranscriptScope(options.transcriptFiles);
   // 起動時の値を起点に、画面から変えられるぶんだけを持ちます。ルートは要求のたびに
   // ここを読むので、翻訳機能の入り切りは立ち上げ直さなくても次の要求から効きます。
   const settings = createSettings({
@@ -65,10 +70,11 @@ export function createServer(targetDir = '.', options = {}) {
     rootDir,
     aiService,
     settings,
+    transcripts,
     log: options.log || ((line) => console.log(line))
   });
   const handleRequest = createRequestHandler({
-    rootDir, filter, aiService, aiToken, liveCaptionsToken, projectAiContext, settings, autoTasks
+    rootDir, filter, aiService, aiToken, liveCaptionsToken, projectAiContext, settings, autoTasks, transcripts
   });
 
   const app = {
@@ -84,7 +90,7 @@ export function createServer(targetDir = '.', options = {}) {
       return server.listen(port, '127.0.0.1', callback);
     }
   };
-  return { app, rootDir, filter, aiService, settings, liveCaptionsToken, autoTasks };
+  return { app, rootDir, filter, aiService, settings, liveCaptionsToken, autoTasks, transcripts };
 }
 
 /**

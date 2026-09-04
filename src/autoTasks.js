@@ -3,9 +3,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
   MAX_AUTO_TASK_INSTRUCTIONS_CHARS,
+  MAX_AUTO_TASK_OWNER_CHARS,
   MAX_NEW_TASKS_PER_RUN,
   MAX_TASK_DETAIL_CHARS,
   MAX_TASK_FOLLOW_UPS,
+  MAX_TASK_KNOWLEDGE_CHARS,
   MAX_TASK_OWNER_CHARS,
   MAX_TASK_QUESTIONS,
   MAX_TASK_QUOTE_CHARS,
@@ -33,6 +35,7 @@ import {
   isTaskStatus
 } from './autoTaskVocabulary.js';
 import { parseCaptionEntries } from './captionRecap.js';
+import { normalizeReferenceFiles, readReferenceFilePaths } from './referenceFiles.js';
 import { REVIEW_DIR } from './reviewStore.js';
 
 /**
@@ -108,7 +111,7 @@ export function readTasksRecord(value, targetFile) {
   record.watch = value.watch === true;
   record.analysis = readAnalysis(value.analysis);
   record.focus = readFocus(value.focus);
-  record.tasks = Array.isArray(value.tasks) ? value.tasks.map(readTask).filter(Boolean) : [];
+  record.tasks = Array.isArray(value.tasks) ? value.tasks.map((task) => readTask(task, targetFile)).filter(Boolean) : [];
   record.lastError = readError(value.lastError);
   record.updatedAt = timestamp(value.updatedAt) || undefined;
   return record;
@@ -143,11 +146,12 @@ function readError(value) {
 }
 
 /** 題名の無いタスクは、残す意味がないので落とします（null を返します）。 */
-function readTask(value) {
+function readTask(value, targetFile = '') {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const title = text(value.title, MAX_TASK_TITLE_CHARS);
   if (!title) return null;
   const result = readResult(value.result);
+  const reference = readTaskReference(value.reference, targetFile);
   return {
     id: typeof value.id === 'string' && value.id ? value.id.slice(0, ID_CHARS) : createTaskId(),
     title,
@@ -162,6 +166,7 @@ function readTask(value) {
     ...(text(value.statusReason, MAX_REASON_CHARS) ? { statusReason: text(value.statusReason, MAX_REASON_CHARS) } : {}),
     ...(typeof value.parentId === 'string' && value.parentId ? { parentId: value.parentId.slice(0, ID_CHARS) } : {}),
     ...(result ? { result } : {}),
+    ...(reference ? { reference } : {}),
     ...(text(value.error, 600) ? { error: text(value.error, 600) } : {}),
     ...(timestamp(value.createdAt) ? { createdAt: timestamp(value.createdAt) } : {}),
     ...(timestamp(value.updatedAt) ? { updatedAt: timestamp(value.updatedAt) } : {})
@@ -181,6 +186,21 @@ function readResult(value) {
     questions: stringList(value.questions, MAX_TASK_QUESTIONS, MAX_REASON_CHARS),
     completedAt: timestamp(value.completedAt)
   };
+}
+
+/**
+ * そのタスクを実行するときだけ渡す「参考」。レビュアーが書いた知識と、添えたファイルです。
+ *
+ * 保存済みの値を読むところなので投げません。同階層以下から外れたパスは落とします
+ * （`readReferenceFilePaths` と同じ理由で、記録を手で直した1行のせいで、その文書の
+ * タスクが1件も読めなくなるのを避けます）。
+ */
+function readTaskReference(value, targetFile) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const knowledge = text(value.knowledge, MAX_TASK_KNOWLEDGE_CHARS);
+  const files = readReferenceFilePaths(value.files, targetFile);
+  if (!knowledge && files.length === 0) return null;
+  return { knowledge, files };
 }
 
 /* ---------------------------------------------------------------- *
@@ -269,9 +289,11 @@ export async function listWatchedFiles(rootDir) {
  * @param {Array<{id: string, status: string}>} [body.setStatus] 状態の変更。
  * @param {Array<{title: string, detail?: string, kind?: string, priority?: string}>} [body.add] 手で足すタスク。
  * @param {string[]} [body.remove] 消すタスクのid。
+ * @param {Array<{id: string, knowledge?: string, files?: string[]}>} [body.setReference] 参考知識と参照ファイル。
  * @param {boolean} [body.clearFocus] 今すべきことを消す。
+ * @param {string} [documentPath] タスクの対象文書。参照ファイルが同階層以下かをここで確かめます。
  */
-export function normalizeTasksChange(body = {}) {
+export function normalizeTasksChange(body = {}, documentPath = '') {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('変更はJSONオブジェクトで送ってください');
   const change = {};
   if (body.watch !== undefined) {
@@ -291,7 +313,15 @@ export function normalizeTasksChange(body = {}) {
   }
   if (body.add !== undefined) {
     if (!Array.isArray(body.add)) throw new Error('add は配列で指定してください');
-    change.add = body.add.map((entry) => normalizeTaskInput(entry));
+    change.add = body.add.map((entry) => normalizeTaskInput(entry, 'タスク', documentPath));
+  }
+  if (body.setReference !== undefined) {
+    if (!Array.isArray(body.setReference)) throw new Error('setReference は配列で指定してください');
+    change.setReference = body.setReference.map((entry) => {
+      const id = typeof entry?.id === 'string' ? entry.id.trim() : '';
+      if (!id) throw new Error('参考を変えるタスクのidが要ります');
+      return { id, ...normalizeTaskReference(entry, documentPath) };
+    });
   }
   if (body.remove !== undefined) {
     if (!Array.isArray(body.remove) || body.remove.some((id) => typeof id !== 'string' || !id)) {
@@ -304,7 +334,7 @@ export function normalizeTasksChange(body = {}) {
 }
 
 /** レビュアーが手で足すタスク。長すぎる題名は、切り詰めずに断ります。 */
-export function normalizeTaskInput(value, source = 'タスク') {
+export function normalizeTaskInput(value, source = 'タスク', documentPath = '') {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${source}はオブジェクトで指定してください`);
   const title = typeof value.title === 'string' ? value.title.trim() : '';
   if (!title) throw new Error(`${source}の題名を入力してください`);
@@ -315,12 +345,33 @@ export function normalizeTaskInput(value, source = 'タスク') {
   if (value.priority !== undefined && !isTaskPriority(value.priority)) {
     throw new Error(`${source}の優先度が読めません: ${value.priority}`);
   }
+  const reference = normalizeTaskReference(value, documentPath, source);
   return {
     title,
     detail,
     kind: value.kind || DEFAULT_TASK_KIND,
-    priority: value.priority || DEFAULT_TASK_PRIORITY
+    priority: value.priority || DEFAULT_TASK_PRIORITY,
+    ...(reference.knowledge || reference.files.length ? { reference } : {})
   };
+}
+
+/**
+ * タスク1件に添える「参考」。実行を頼むときだけ、そのタスクの文面へ入ります。
+ *
+ * 参照ファイルの確かめ方は、文書に添える参照ファイルと同じものを使います
+ * （`referenceFiles.js` の `normalizeReferenceFiles`）。同階層以下から外れたパスと、
+ * 上限を超えた件数は、切り詰めずに断ります。何件か落ちた状態で実行させると、
+ * 渡したはずの資料を読まずに書かれた成果を、渡した前提で読むことになるからです。
+ */
+export function normalizeTaskReference(value, documentPath = '', source = 'タスク') {
+  const knowledge = typeof value?.knowledge === 'string' ? value.knowledge.trim() : '';
+  if (knowledge.length > MAX_TASK_KNOWLEDGE_CHARS) {
+    throw new Error(`${source}の参考知識が長すぎます（${MAX_TASK_KNOWLEDGE_CHARS}文字まで）`);
+  }
+  const files = value?.files === undefined || value?.files === null
+    ? []
+    : normalizeReferenceFiles(value.files, documentPath, `${source}の参照ファイル`);
+  return { knowledge, files };
 }
 
 /** 変更を記録へ当てます。無いidへの変更は黙って飛ばします（裏で消えていただけなので）。 */
@@ -346,6 +397,16 @@ export function applyTasksChange(record, change, now = new Date()) {
       createdAt: at
     });
   }
+  for (const { id, knowledge, files } of change.setReference || []) {
+    next.tasks = next.tasks.map((task) => {
+      if (task.id !== id) return task;
+      const updated = { ...task, reference: { knowledge, files }, updatedAt: at };
+      // 空にしたら欄ごと消します。空の枠を残すと、記録にも実行の文面にも
+      // 「参考はある（中身は空）」として現れます。
+      if (!knowledge && files.length === 0) delete updated.reference;
+      return updated;
+    });
+  }
   if (change.remove?.length) {
     const removing = new Set(change.remove);
     next.tasks = next.tasks.filter((task) => !removing.has(task.id));
@@ -363,6 +424,59 @@ export function normalizeAutoTaskInstructions(value, source = 'autoTasksInstruct
     throw new Error(`${source} が長すぎます（${MAX_AUTO_TASK_INSTRUCTIONS_CHARS}文字まで）`);
   }
   return instructions;
+}
+
+/**
+ * 「対象の人」。書くと、その人がやることだけをタスクとして起こします。
+ *
+ * 会議の文字起こしからタスクを起こすと、その場にいた全員のやることが並びます。
+ * 一覧が長くなるだけでなく、他の人が引き受けた仕事まで「確認待ち」として自分の画面に
+ * 積み上がるので、自分の番のものを探す作業がもう1つ増えます。
+ *
+ * 別名は読点・カンマ・スラッシュで区切って並べられます（「田中, 田中太郎, たなか」）。
+ * 文字起こしの話者名は表記が揺れるので、1つに決めさせると取りこぼします。
+ */
+export function normalizeAutoTaskOwner(value, source = 'autoTasksOwner') {
+  if (value === undefined || value === null) return '';
+  if (typeof value !== 'string') throw new Error(`${source} は文字列で指定してください: ${JSON.stringify(value)}`);
+  const owner = value.trim();
+  if (owner.length > MAX_AUTO_TASK_OWNER_CHARS) {
+    throw new Error(`${source} が長すぎます（${MAX_AUTO_TASK_OWNER_CHARS}文字まで）`);
+  }
+  return owner;
+}
+
+/** 「対象の人」を、突き合わせに使う名前の並びへほどきます。 */
+export function taskOwnerNames(owner) {
+  return String(owner || '')
+    .split(/[,、\/／]/)
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+
+/**
+ * このタスクの担当が「対象の人」かどうか。
+ *
+ * 担当が書かれていないタスクは通します。文字起こしは担当を言わないまま「これ調べておいて」で
+ * 進むことが多く、書かれていないものを落とすと、肝心の「あなたがやること」が消えます。
+ * 書かれていて、それが対象の人でないときだけ落とします。
+ *
+ * 突き合わせは、空白を取り除いた上での部分一致です。「田中さん」「田中（運用）」のような
+ * 書かれ方をどれも同じ人として読むためで、完全一致にすると敬称ひとつで外れます。
+ */
+export function matchesTaskOwner(taskOwner, owner) {
+  const names = taskOwnerNames(owner);
+  if (names.length === 0) return true;
+  const actual = ownerKey(taskOwner);
+  if (!actual) return true;
+  return names.some((name) => {
+    const key = ownerKey(name);
+    return key && (actual.includes(key) || key.includes(actual));
+  });
+}
+
+function ownerKey(value) {
+  return String(value || '').replace(/[\s　]+/g, '').toLowerCase();
 }
 
 /** 自動化の一覧。配列でもカンマ区切りの文字列でも受け取り、知らない名前は断ります。 */
@@ -400,8 +514,13 @@ export function normalizeAutoTaskInterval(value, source = 'autoTasksInterval') {
 /**
  * 文字起こしかどうか。字幕拡張機能が書いた発言（`captionRecap.js` が読む形）が数件あれば
  * 文字起こしです。`captioned` は「この起動中に字幕が届いたファイル」で、発言の形を見なくても決まります。
+ *
+ * 文字起こし用のファイル（`transcriptFiles.js`）でなければ、発言の形をしていても資料として
+ * 読みます。字幕を書き込めるのがそのファイルだけになった以上、ほかの文書で同じ形が並んでいる
+ * のは、資料に会話を引用したときだからです。
  */
-export function detectSourceKind(markdown, { captioned = false } = {}) {
+export function detectSourceKind(markdown, { captioned = false, transcriptFile = true } = {}) {
+  if (!transcriptFile) return 'document';
   if (captioned) return 'transcript';
   return parseCaptionEntries(markdown).length >= CAPTION_ENTRIES_FOR_TRANSCRIPT ? 'transcript' : 'document';
 }
@@ -473,8 +592,13 @@ export function shouldAnalyze(markdown, analysis, { now = Date.now(), staleAfter
  * 増えるのを防ぐためで、完了したものと同じ題名は改めて足します。蒸し返されたのなら、
  * それは新しいタスクです）。既存タスクの状態変更（`updates`）は、整理を任せているときだけ
  * 当てます。今すべきことは、任せているときだけ置き換えます。
+ *
+ * 「対象の人」（`owner`）を決めているときは、担当が別の人だと書かれたタスクをここで落とします。
+ * 頼むのはモデルにも頼んでいます（`prompts/tasks.js`）が、指示だけに任せると、
+ * 何かの拍子に混ざった1件がそのまま記録へ残ります。設定は「起こさない」という指定なので、
+ * 記録へ入る手前でも同じ線を引きます。
  */
-export function applyExtraction(record, answer, source, { organize = true, focus = true } = {}, now = new Date()) {
+export function applyExtraction(record, answer, source, { organize = true, focus = true, owner = '' } = {}, now = new Date()) {
   const at = now.toISOString();
   const next = { ...record, tasks: [...record.tasks], lastError: null };
   const existingIds = new Set(next.tasks.map((task) => task.id));
@@ -496,6 +620,7 @@ export function applyExtraction(record, answer, source, { organize = true, focus
   }
 
   for (const task of (answer.tasks || []).slice(0, MAX_NEW_TASKS_PER_RUN)) {
+    if (!matchesTaskOwner(task.owner, owner)) continue;
     const key = titleKey(task.title);
     if (live.has(key)) continue;
     live.add(key);
