@@ -184,6 +184,8 @@ const SELECTORS = {
   tasksAddKind: '#tasks-add-kind',
   tasksAddInput: '#tasks-add-input',
   tasksAddSubmit: '#tasks-add-submit',
+  tasksFilter: '.tasks-filter',
+  tasksPlanSummary: '#tasks-plan-summary',
   tasksList: '#tasks-list',
 
   contextView: '#context-view',
