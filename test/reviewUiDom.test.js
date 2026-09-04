@@ -2251,7 +2251,9 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
     '#ai-context', '#ai-target', '#translation-result', '#ai-messages',
     '#placement-form', '#placement-results',
     '#review-skill-list', '#review-persona', '#review-results',
-    '#revise-form', '#revise-results'
+    '#revise-form', '#revise-results',
+    '#recap-form', '#recap-results',
+    '#tasks-run-form', '#tasks-list'
   ]) {
     assert.ok(
       document.querySelector(selector)?.closest('.pane-scroll'),
@@ -2264,9 +2266,35 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
 
   for (const panel of [
     '#comments-panel', '#manager-panel', '#ai-panel',
-    '#placement-panel', '#review-panel', '#revise-panel'
+    '#placement-panel', '#review-panel', '#revise-panel',
+    '#recap-panel', '#tasks-panel'
   ]) {
     assert.equal(document.querySelectorAll(`${panel} .pane-scroll`).length, 1, `${panel} のスクロール領域は1つ`);
+  }
+  // 文書メニューだけは、目次そのもの（.outline-list）がスクロールします。
+  assert.equal(document.querySelectorAll('#outline-panel .outline-list').length, 1);
+
+  /*
+   * スクロールする領域を持っていても、パネル自体の高さが決まっていなければ、中身は
+   * パネルの外で切り落とされて読めません。だからパネルは、手で並べた一覧ではなく
+   * markupから数えて、高さを決めているCSSの一覧と突き合わせます。一覧を手で持つと、
+   * パネルを足した人が書き足し忘れたときに、この検査ごと素通りします。聞き直しの
+   * パネルが実際にそうなり、押しても結果がパネルの下で切れたままになっていました。
+   */
+  const panels = [...document.querySelectorAll('#side-pane > section')];
+  assert.equal(panels.length, 9, 'サイドパネルのタブを数え漏らしていない');
+
+  const withoutComments = styles.replace(/\/\*[\s\S]*?\*\//g, '');
+  const [, selectorList, declarations] = /([^{}]*#comments-panel[^{}]*)\{([^}]*)\}/.exec(withoutComments);
+  assert.match(declarations, /min-height: 0;/);
+  assert.match(declarations, /overflow: hidden;/);
+  const selectors = selectorList.split(',').map((selector) => selector.trim()).filter(Boolean);
+
+  for (const panel of panels) {
+    assert.ok(
+      selectors.some((selector) => panel.matches(selector)),
+      `#${panel.id} も高さの決まったパネルとして並べる（漏れると中身が切れて、スクロールもできなくなる）`
+    );
   }
   assert.match(styles, /\.pane-scroll \{[^}]*overflow-y: auto;/, '.pane-scroll が実際にスクロールする');
 });
@@ -2503,10 +2531,16 @@ test('文字起こしを開くと、押す前に読む範囲が出て、聞く�
   assert.equal(windowRequests[1].scope, 'all');
   assert.match(document.querySelector('#recap-range').textContent, /会議の最初からの1発言/);
 
+  // 出したものは、押した人の目の前へ持ってきます。決め方の選択と問いの欄でパネルの
+  // 上半分は埋まるので、押した位置のままでは答えがパネルの下に隠れたままになります。
+  const revealed = [];
+  document.querySelector('#recap-results').scrollIntoView = (options) => revealed.push(options);
+
   const question = document.querySelector('#recap-question');
   question.value = '「前提」って何のことですか？';
   document.querySelector('#recap-form').requestSubmit();
   await waitFor(() => document.querySelector('.recap-section'));
+  assert.deepEqual(revealed, [{ block: 'nearest' }, { block: 'nearest' }], '待っている間と、出そろったときの2回');
 
   assert.deepEqual(recapRequests[0][0], {
     path: 'docs/meeting.md',
@@ -2641,6 +2675,24 @@ test('自動タスクが有効な文書ではタスクのタブが出て、整�
             tasks: record.tasks.map((task) => (task.id === id ? { ...task, reference: { knowledge, files } } : task))
           };
         }
+        // サーバー側の `applyTasksChange` と同じで、送られた欄だけを当てます。
+        for (const patch of body.plan || []) {
+          record = { ...record, tasks: record.tasks.map((task) => {
+            if (task.id !== patch.id) return task;
+            const plan = {
+              commitment: patch.commitment ?? task.plan?.commitment ?? 'undecided',
+              due: patch.due ?? task.plan?.due ?? '',
+              note: patch.note ?? task.plan?.note ?? '',
+              decidedAt: '2026-09-03T02:00:00.000Z'
+            };
+            const next = { ...task };
+            if (plan.commitment === 'undecided' && !plan.due && !plan.note) delete next.plan;
+            else next.plan = plan;
+            if (patch.priority !== undefined) next.priority = patch.priority;
+            if (patch.owner !== undefined) next.owner = patch.owner;
+            return next;
+          }) };
+        }
         return payload();
       }
       readRequests.push(String(input));
@@ -2755,6 +2807,46 @@ test('自動タスクが有効な文書ではタスクのタブが出て、整�
   assert.match(document.querySelector('.task-card[data-task-id="task-3"]').textContent, /削除しますか/);
   document.querySelector('[data-task-cancel-delete]').click();
   assert.equal(document.querySelector('[data-task-confirm-delete]'), null);
+
+  // やると決めたタスクは印が付き、件数の行が出て、絞り込みで取り出せます。
+  document.querySelector('.task-card[data-task-id="task-2"] [data-task-commit]').click();
+  await waitFor(() => changeRequests.length === 6);
+  assert.deepEqual(changeRequests[5][0], { path: 'docs/meeting.md', plan: [{ id: 'task-2', commitment: 'committed' }] });
+  await waitFor(() => document.querySelector('.task-card[data-task-id="task-2"]').dataset.committed === 'true');
+  assert.equal(document.querySelector('.task-card[data-task-id="task-2"] .task-commitment').textContent, 'やる');
+  assert.match(document.querySelector('#tasks-plan-summary').textContent, /やると決めたこと 1件/);
+
+  const committedFilter = document.querySelector('[data-tasks-filter="committed"]');
+  assert.equal(committedFilter.textContent, 'やると決めた（1）');
+  committedFilter.click();
+  assert.deepEqual(
+    [...document.querySelectorAll('.task-card')].map((card) => card.dataset.taskId),
+    ['task-2'],
+    '決めたものだけを出す'
+  );
+
+  // 段取り（期限・優先度・担当・メモ）は、決めたタスクにだけ付きます。
+  assert.equal(document.querySelector('.task-card[data-task-id="task-2"] .task-plan') !== null, true);
+  const planForm = document.querySelector('[data-task-plan-form="task-2"]');
+  planForm.elements.due.value = '2026-09-10';
+  planForm.elements.priority.value = 'now';
+  planForm.elements.note.value = '手順を出す前に';
+  planForm.requestSubmit();
+  await waitFor(() => changeRequests.length === 7);
+  assert.deepEqual(changeRequests[6][0], {
+    path: 'docs/meeting.md',
+    plan: [{ id: 'task-2', due: '2026-09-10', priority: 'now', owner: '田中', note: '手順を出す前に' }]
+  });
+  await waitFor(() => document.querySelector('.task-card[data-task-id="task-2"] .task-due'));
+  assert.match(document.querySelector('.task-card[data-task-id="task-2"] .task-due').textContent, /期限 2026-09-10/);
+  assert.match(document.querySelector('.task-card[data-task-id="task-2"] .task-plan-note').textContent, /自分のメモ: 手順を出す前に/);
+
+  // 決めたのを取り消すと、印も段取りの欄も消えます。
+  document.querySelector('.task-card[data-task-id="task-2"] [data-task-uncommit]').click();
+  await waitFor(() => changeRequests.length === 8);
+  assert.deepEqual(changeRequests[7][0], { path: 'docs/meeting.md', plan: [{ id: 'task-2', commitment: 'undecided' }] });
+  await waitFor(() => document.querySelector('#tasks-plan-summary').hidden === true);
+  assert.match(document.querySelector('#tasks-list').textContent, /やると決めたタスクはまだありません/, '絞り込みは押したまま、空だと言う');
 });
 
 async function renderViews(markdown) {

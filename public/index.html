@@ -442,7 +442,7 @@
                 </div>
                 <span id="tasks-state" class="ai-context-state">0件</span>
               </div>
-              <p class="placement-hint">文字起こしや書きかけの資料から、まだやること（対応・判断・調査・サンプル実装・問い合わせ対応）をAIが起こします。調査・サンプル実装・問い合わせ対応は、任せてあればAIが裏で書き、「確認待ち」として並びます。読んで採るかどうかを決めるのはあなたです。</p>
+              <p class="placement-hint">文字起こしや書きかけの資料から、まだやること（対応・判断・調査・サンプル実装・問い合わせ対応）をAIが起こします。調査・サンプル実装・問い合わせ対応は、任せてあればAIが裏で書き、「確認待ち」として並びます。読んで採るかどうかを決めるのはあなたです。「やると決める」を押したタスクは期限とメモを持て、AIの整理で見送られません。</p>
               <p id="tasks-runner-hint" class="placement-hint" hidden></p>
 
               <section class="tasks-watch">
@@ -480,6 +480,13 @@
                 </form>
               </details>
 
+              <div class="tasks-filter" role="group" aria-label="タスクの絞り込み">
+                <button type="button" data-tasks-filter="all" aria-pressed="true">すべて</button>
+                <button type="button" data-tasks-filter="committed" aria-pressed="false">やると決めた</button>
+                <button type="button" data-tasks-filter="undecided" aria-pressed="false">未定</button>
+                <button type="button" data-tasks-filter="finished" aria-pressed="false">終わったもの</button>
+              </div>
+              <p id="tasks-plan-summary" class="tasks-plan-summary" hidden></p>
               <div id="tasks-list" class="tasks-list"></div>
               <p class="ai-context-hint tasks-settings-hint">何を任せるか（整理・今すべきこと・調査・サンプル実装・問い合わせ対応）と見守りの間隔、特にしてほしいことは、画面右上の「設定」で変えられます。費用を抑えたいときは、そこで自動タスクを切ってください。</p>
             </div>

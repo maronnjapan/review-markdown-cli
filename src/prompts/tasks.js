@@ -16,6 +16,12 @@ import { fileLegendFor, referenceFilesFrame } from './readingContext.js';
  * タスクではない、と毎回言います。根拠の一文（quote）を必ず添えさせるのは、
  * 「そんな話はしていない」をレビュアーがその場で確かめられるようにするためです。
  *
+ * ── 決めたものは、AIに取り下げさせないこと ──────────────────
+ * レビュアーが「やる」と決めたタスクは `commitment` 付きで渡し、整理で見送りにさせません
+ * （当てる側の歯止めは `autoTasks.js` の `applyExtraction` にもあります）。決めたはずの
+ * タスクが翌朝には消えている、が一度でも起きると、この一覧は決める場所として使われなくなります。
+ * 「今すべきこと」も、決めたものが当てはまるならそこから選ばせます。
+ *
  * ── 追記だけを読ませる ─────────────────────────────────
  * 文字起こしは追記されるだけなので、前回読んだところから増えた分と、その手前の少しだけを
  * 渡します（切り出しは `src/autoTasks.js` の `sliceTaskSource`）。前に起こしたタスクは
@@ -145,14 +151,18 @@ export function extractTasksPrompt({
     owner
       ? 'Where the material does name them as the one to do it, put their name in "owner" as the material writes it.'
       : '',
-    'Tasks already recorded are in <existing_tasks>, with their id and status. Never report one of them again, even reworded.',
+    'Tasks already recorded are in <existing_tasks>, with their id and status. A task with "commitment": "committed" is one the reviewer has read and decided to do. Never report one of them again, even reworded.',
     organize
       ? 'Where the material shows an existing task has been done, dropped or superseded, report it in "updates" with its id, the new status ("done" or "dismissed", or "open" to reopen one) and a reason quoting the material. Leave a task alone when the material says nothing about it.'
       : 'Leave "updates" empty.',
+    // 決めたのに消える、が一度でも起きると、この一覧は「決めた場所」として使われなくなります。
+    organize
+      ? 'Never report "dismissed" for a task marked "commitment": "committed". Dropping what the reviewer decided to do is their call, not yours. Report "done" for such a task only where the material shows it was actually finished.'
+      : '',
     focus
       ? (owner
-        ? 'Set "focus.now" to the one thing the person named in <task_owner> should do right now, given where the material has got to, in one sentence, and say in "focus.reason" why now, from the material. Leave both empty when the material gives no ground for it.'
-        : 'Set "focus.now" to the one thing the person working on this should do right now, given where the material has got to, in one sentence, and say in "focus.reason" why now, from the material. Leave both empty when the material gives no ground for it.')
+        ? 'Set "focus.now" to the one thing the person named in <task_owner> should do right now, given where the material has got to, in one sentence, and say in "focus.reason" why now, from the material. Where a task marked "commitment": "committed" fits what the material calls for now, choose that one. Leave both empty when the material gives no ground for it.'
+        : 'Set "focus.now" to the one thing the person working on this should do right now, given where the material has got to, in one sentence, and say in "focus.reason" why now, from the material. Where a task marked "commitment": "committed" fits what the material calls for now, choose that one. Leave both empty when the material gives no ground for it.')
       : 'Leave "focus.now" and "focus.reason" empty.',
     `Report at most ${MAX_NEW_TASKS_PER_RUN} new tasks. Report every real one, and nothing to fill the list: an empty list is the right answer for material that asks for nothing.`,
     'Write "summary" as one or two sentences on what the material has settled and what is still open.',

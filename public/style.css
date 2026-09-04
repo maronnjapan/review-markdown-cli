@@ -440,7 +440,14 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   color: var(--primary);
   font-weight: 700;
 }
-#comments-panel, .manager-panel, .ai-panel, .placement-panel, .review-panel, .revise-panel, .outline-panel, .tasks-panel {
+/*
+ * タブで切り替わるパネルは、すべてここに並べます。サイドパネル自体は画面の高さで
+ * 頭打ちになる（.comments-pane が overflow: hidden）ので、ここから漏れたパネルは
+ * 伸びたぶんがパネルの外で切り落とされ、中の .pane-scroll も高さが決まらないため
+ * スクロールバーが出ません。下に出したものが、どうやっても読めなくなります。
+ */
+#comments-panel, .manager-panel, .ai-panel, .placement-panel, .review-panel, .revise-panel,
+.outline-panel, .recap-panel, .tasks-panel {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -1759,6 +1766,36 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .tasks-focus-reason { color: #475467; font-size: 0.78rem; margin: 0; }
 .tasks-focus-updated { color: var(--muted); font-size: 0.7rem; margin: 0; }
 .tasks-panel .ai-context { border-top: 1px solid var(--border); }
+.tasks-filter {
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0.6rem 1rem 0;
+}
+.tasks-filter button {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: #475467;
+  cursor: pointer;
+  font-size: 0.72rem;
+  padding: 0.2rem 0.6rem;
+}
+.tasks-filter button[aria-pressed="true"] {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.tasks-filter button:disabled { cursor: default; opacity: 0.5; }
+.tasks-plan-summary {
+  color: #475467;
+  font-size: 0.76rem;
+  font-weight: 600;
+  margin: 0;
+  padding: 0.5rem 1rem 0;
+}
+.tasks-plan-summary[data-state="overdue"] { color: #b42318; }
 .tasks-list {
   border-top: 1px solid var(--border);
   display: grid;
@@ -1784,7 +1821,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   flex-wrap: wrap;
   gap: 0.35rem;
 }
-.task-status, .task-kind, .task-priority {
+.task-status, .task-kind, .task-priority, .task-commitment, .task-due {
   border-radius: 999px;
   font-size: 0.68rem;
   font-weight: 600;
@@ -1803,7 +1840,43 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .task-priority { background: #f8fafc; color: var(--muted); }
 .task-priority[data-priority="now"] { background: #fdecea; color: #b42318; }
 .task-priority[data-priority="next"] { background: #fdf3e2; color: #8a5b00; }
+.task-commitment { background: #e7edff; color: #2557d6; font-weight: 700; }
+.task-due { background: #f8fafc; border: 1px solid var(--border); color: #475467; }
+.task-due[data-due="today"] { background: #fdf3e2; border-color: #f0d3a0; color: #8a5b00; }
+.task-due[data-due="overdue"] { background: #fdecea; border-color: #f3c0bb; color: #b42318; }
+.task-card[data-committed="true"] { border-left: 3px solid #2557d6; }
 .task-owner, .task-source { color: var(--muted); font-size: 0.7rem; }
+.task-plan-note { color: #344054; font-size: 0.78rem; margin: 0; white-space: pre-wrap; }
+.task-plan {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  padding: 0.45rem 0.6rem;
+}
+.task-plan > summary { cursor: pointer; font-weight: 600; }
+.task-plan-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+.task-plan-form label {
+  color: #475467;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.72rem;
+  gap: 0.15rem;
+}
+.task-plan-form input, .task-plan-form select, .task-plan-form textarea {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.4rem;
+  width: 100%;
+}
+.task-plan-form textarea { resize: vertical; }
 .task-title { font-size: 0.9rem; font-weight: 600; margin: 0; }
 .task-detail { color: #344054; font-size: 0.8rem; margin: 0; white-space: pre-wrap; }
 .task-quote {

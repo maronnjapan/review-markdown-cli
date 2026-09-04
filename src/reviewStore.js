@@ -2,10 +2,10 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { normalizeAiContext } from './aiContext.js';
 import { SEVERITY_LABELS } from './aiVocabulary.js';
+import { committedTasks, isTaskCommitted, sortTasksForDisplay } from './autoTasks.js';
 import {
   TASK_KIND_LABELS,
   TASK_PRIORITY_LABELS,
-  TASK_PRIORITY_ORDER,
   TASK_STATUS_LABELS
 } from './autoTaskVocabulary.js';
 import { CONTEXT_NOTE_LABELS, normalizeContextNotes, readContextNotes } from './contextNotes.js';
@@ -302,6 +302,11 @@ function appendReferenceFiles(lines, referenceFiles) {
  * 「何が残っているか」を、コメントを読む前に掴めるようにします。結果の本文は写しません。
  * 長いうえに、採るかどうかをまだレビュアーが決めていないものだからです。
  * 有効でないときは `tasks` が来ないので、この節ごと出ません。
+ *
+ * 「やると決めたこと」を先に、別の見出しで書き出します。渡された側がまず知りたいのは、
+ * AIが起こした候補ではなく、書いた本人がやると決めたことだからです。同じタスクを下の
+ * 一覧にも出すのは、候補と決めたものを1本の並びで追えるようにするためで、下では
+ * 「やる」の印を付けます。
  */
 function appendAutoTasks(lines, tasks) {
   if (!tasks || (!tasks.focus && tasks.tasks.length === 0)) return;
@@ -309,24 +314,43 @@ function appendAutoTasks(lines, tasks) {
   if (tasks.focus) {
     lines.push(...indentedListItem(`今すべきこと: ${tasks.focus.now}${tasks.focus.reason ? `（${tasks.focus.reason}）` : ''}`), '');
   }
-  const statusOrder = { ready: 0, open: 1, running: 2, done: 3, dismissed: 4 };
-  const sorted = [...tasks.tasks].sort((a, b) => (
-    (statusOrder[a.status] - statusOrder[b.status])
-    || (TASK_PRIORITY_ORDER[a.priority] - TASK_PRIORITY_ORDER[b.priority])
-  ));
-  for (const task of sorted) {
+  const committed = committedTasks(tasks.tasks);
+  if (committed.length) {
+    lines.push('### やると決めたこと', '');
+    for (const task of sortTasksForDisplay(committed)) {
+      const body = [
+        `[ ] ${task.title}（${taskHead(task)}）`,
+        task.plan?.note || ''
+      ].filter(Boolean).join('\n');
+      lines.push(...indentedListItem(body));
+    }
+    lines.push('', '### すべてのタスク', '');
+  }
+  for (const task of sortTasksForDisplay(tasks.tasks)) {
     const box = task.status === 'done' ? '[x]' : '[ ]';
-    const head = `${TASK_STATUS_LABELS[task.status] || task.status}／${TASK_KIND_LABELS[task.kind] || task.kind}／${TASK_PRIORITY_LABELS[task.priority] || task.priority}`;
     // 2行目以降の字下げは indentedListItem に任せます。ここで下げると二重に下がります。
     const body = [
-      `${box} ${task.title}（${head}${task.owner ? `／担当: ${task.owner}` : ''}）`,
+      `${box} ${task.title}（${taskHead(task)}）`,
       task.detail || '',
       task.quote ? `引用: ${task.quote}` : '',
+      task.plan?.note ? `自分のメモ: ${task.plan.note}` : '',
       task.result?.summary ? `AIの結果: ${task.result.summary}` : ''
     ].filter(Boolean).join('\n');
     lines.push(...indentedListItem(body));
   }
   lines.push('');
+}
+
+/** タスク1件の見出し。状態・種類・優先度に、決めたもの（やる・期限）と担当を足します。 */
+function taskHead(task) {
+  return [
+    TASK_STATUS_LABELS[task.status] || task.status,
+    TASK_KIND_LABELS[task.kind] || task.kind,
+    TASK_PRIORITY_LABELS[task.priority] || task.priority,
+    isTaskCommitted(task) ? 'やる' : '',
+    task.plan?.due ? `期限: ${task.plan.due}` : '',
+    task.owner ? `担当: ${task.owner}` : ''
+  ].filter(Boolean).join('／');
 }
 
 function appendCommentGroup(lines, title, comments, renderer, statusLabels) {

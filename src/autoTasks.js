@@ -9,6 +9,7 @@ import {
   MAX_TASK_FOLLOW_UPS,
   MAX_TASK_KNOWLEDGE_CHARS,
   MAX_TASK_OWNER_CHARS,
+  MAX_TASK_PLAN_NOTE_CHARS,
   MAX_TASK_QUESTIONS,
   MAX_TASK_QUOTE_CHARS,
   MAX_TASK_RESULT_CHARS,
@@ -22,6 +23,7 @@ import {
   AUTO_TASK_ACTION_IDS,
   AUTO_TASK_KIND_IDS,
   DEFAULT_AUTO_TASK_ACTIONS,
+  DEFAULT_TASK_COMMITMENT,
   DEFAULT_TASK_KIND,
   DEFAULT_TASK_PRIORITY,
   DEFAULT_TASK_STATUS,
@@ -30,6 +32,7 @@ import {
   REVIEWER_TASK_STATUSES,
   TASK_PRIORITY_ORDER,
   isAutoTaskAction,
+  isTaskCommitment,
   isTaskKind,
   isTaskPriority,
   isTaskStatus
@@ -46,6 +49,13 @@ import { REVIEW_DIR } from './reviewStore.js';
  *   - タスクの一覧。AIが起こしたものと、レビュアーが手で足したもの。状態と結果を持ちます。
  *   - 今すべきこと。文字起こしの流れから、いま手を付けるべきことを1つ選んだもの。
  *   - 解析の記録。どこまで読んだか（長さと版）で、次に読むのは増えた分だけで済ませます。
+ *
+ * ── 「やると決めた」を、状態とは別に持つ理由 ──────────────────
+ * AIが起こしたタスクは、読まれる前から一覧に並びます。そのままでは、まだ目を通していない
+ * 候補と、読んで自分がやると決めたものが、どちらも「未着手」に混ざります。管理したいのは
+ * 後者だけなので、採否（`plan.commitment`）を状態とは別の軸として持ちます。決めたタスクは
+ * 期限と自分のメモを持て、一覧から取り出せて、AIの整理に見送られません（`applyExtraction`）。
+ * `plan` はレビュアーが書く欄です。AIの答えからは決して入りません。
  *
  * ── 保存先をレビューファイルと分けている理由 ──────────────────
  * レビューファイル（`.review/<target>.review.json`）はレビュアーが書いた前提とコメントの
@@ -71,6 +81,9 @@ const ID_CHARS = 80;
 const MAX_SUMMARY_CHARS = 600;
 const MAX_FOCUS_CHARS = 600;
 const MAX_REASON_CHARS = 400;
+
+/** 期限は日付だけ（YYYY-MM-DD）です。時刻まで持たせても、タスクの締め切りには使いません。 */
+const DUE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 /** 文字起こしと見なす発言の数。1〜2件では、太字と時刻を偶然含む資料と見分けられません。 */
 const CAPTION_ENTRIES_FOR_TRANSCRIPT = 3;
@@ -152,6 +165,7 @@ function readTask(value, targetFile = '') {
   if (!title) return null;
   const result = readResult(value.result);
   const reference = readTaskReference(value.reference, targetFile);
+  const plan = readPlan(value.plan);
   return {
     id: typeof value.id === 'string' && value.id ? value.id.slice(0, ID_CHARS) : createTaskId(),
     title,
@@ -165,12 +179,28 @@ function readTask(value, targetFile = '') {
     owner: text(value.owner, MAX_TASK_OWNER_CHARS),
     ...(text(value.statusReason, MAX_REASON_CHARS) ? { statusReason: text(value.statusReason, MAX_REASON_CHARS) } : {}),
     ...(typeof value.parentId === 'string' && value.parentId ? { parentId: value.parentId.slice(0, ID_CHARS) } : {}),
+    ...(plan ? { plan } : {}),
     ...(result ? { result } : {}),
     ...(reference ? { reference } : {}),
     ...(text(value.error, 600) ? { error: text(value.error, 600) } : {}),
     ...(timestamp(value.createdAt) ? { createdAt: timestamp(value.createdAt) } : {}),
     ...(timestamp(value.updatedAt) ? { updatedAt: timestamp(value.updatedAt) } : {})
   };
+}
+
+/**
+ * レビュアーが決めたこと。何も決めていないタスクには付きません（null を返します）。
+ *
+ * 期限は「YYYY-MM-DD」だけを通します。読めない日付を切り詰めて残すと、画面の日付欄が
+ * 空になったまま値が残り、保存し直すまで消えないからです。
+ */
+function readPlan(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const commitment = isTaskCommitment(value.commitment) ? value.commitment : DEFAULT_TASK_COMMITMENT;
+  const due = DUE_DATE_PATTERN.test(String(value.due || '')) ? String(value.due) : '';
+  const note = text(value.note, MAX_TASK_PLAN_NOTE_CHARS);
+  if (commitment === DEFAULT_TASK_COMMITMENT && !due && !note) return null;
+  return { commitment, due, note, decidedAt: timestamp(value.decidedAt) };
 }
 
 function readResult(value) {
@@ -287,6 +317,8 @@ export async function listWatchedFiles(rootDir) {
  * @param {object} body
  * @param {boolean} [body.watch] 見守りの入り切り。
  * @param {Array<{id: string, status: string}>} [body.setStatus] 状態の変更。
+ * @param {Array<{id: string, commitment?: string, due?: string, note?: string, priority?: string, owner?: string}>} [body.plan]
+ *   やると決めたかどうかと、その段取り（期限・自分のメモ・優先度・担当）の変更。
  * @param {Array<{title: string, detail?: string, kind?: string, priority?: string}>} [body.add] 手で足すタスク。
  * @param {string[]} [body.remove] 消すタスクのid。
  * @param {Array<{id: string, knowledge?: string, files?: string[]}>} [body.setReference] 参考知識と参照ファイル。
@@ -310,6 +342,10 @@ export function normalizeTasksChange(body = {}, documentPath = '') {
       }
       return { id, status: entry.status };
     });
+  }
+  if (body.plan !== undefined) {
+    if (!Array.isArray(body.plan)) throw new Error('plan は配列で指定してください');
+    change.plan = body.plan.map((entry) => normalizePlanInput(entry));
   }
   if (body.add !== undefined) {
     if (!Array.isArray(body.add)) throw new Error('add は配列で指定してください');
@@ -374,17 +410,65 @@ export function normalizeTaskReference(value, documentPath = '', source = 'タ�
   return { knowledge, files };
 }
 
+/**
+ * 「やると決めた」と、その段取り。送られた欄だけを変えます。
+ *
+ * 空文字は「消す」です（期限を外す、メモを消す）。欄ごと送らなければ、いまの値のままです。
+ * 優先度と担当がここにあるのは、決めたあとに動かすのがこの2つだからです。どちらもタスク
+ * そのものの欄なので、`plan` の中ではなく元の位置へ書きます（`applyTasksChange`）。
+ */
+export function normalizePlanInput(value, source = '段取り') {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${source}はオブジェクトで指定してください`);
+  const id = typeof value.id === 'string' ? value.id.trim() : '';
+  if (!id) throw new Error(`${source}を変えるタスクのidが要ります`);
+  const plan = { id };
+  if (value.commitment !== undefined) {
+    if (!isTaskCommitment(value.commitment)) throw new Error(`${source}の採否が読めません: ${value.commitment}`);
+    plan.commitment = value.commitment;
+  }
+  if (value.due !== undefined) {
+    const due = typeof value.due === 'string' ? value.due.trim() : '';
+    if (due && !DUE_DATE_PATTERN.test(due)) throw new Error(`${source}の期限は YYYY-MM-DD で指定してください: ${value.due}`);
+    if (due && Number.isNaN(Date.parse(`${due}T00:00:00Z`))) throw new Error(`${source}の期限が日付として読めません: ${value.due}`);
+    plan.due = due;
+  }
+  if (value.note !== undefined) {
+    if (typeof value.note !== 'string') throw new Error(`${source}のメモは文字列で指定してください`);
+    const note = value.note.trim();
+    if (note.length > MAX_TASK_PLAN_NOTE_CHARS) throw new Error(`${source}のメモが長すぎます（${MAX_TASK_PLAN_NOTE_CHARS}文字まで）`);
+    plan.note = note;
+  }
+  if (value.priority !== undefined) {
+    if (!isTaskPriority(value.priority)) throw new Error(`${source}の優先度が読めません: ${value.priority}`);
+    plan.priority = value.priority;
+  }
+  if (value.owner !== undefined) {
+    if (typeof value.owner !== 'string') throw new Error(`${source}の担当は文字列で指定してください`);
+    const owner = value.owner.trim();
+    if (owner.length > MAX_TASK_OWNER_CHARS) throw new Error(`${source}の担当が長すぎます（${MAX_TASK_OWNER_CHARS}文字まで）`);
+    plan.owner = owner;
+  }
+  return plan;
+}
+
 /** 変更を記録へ当てます。無いidへの変更は黙って飛ばします（裏で消えていただけなので）。 */
 export function applyTasksChange(record, change, now = new Date()) {
   const at = now.toISOString();
   const next = { ...record, tasks: [...record.tasks] };
   if (change.watch !== undefined) next.watch = change.watch;
   for (const { id, status } of change.setStatus || []) {
-    next.tasks = next.tasks.map((task) => (
-      task.id === id && task.status !== 'running'
-        ? { ...task, status, updatedAt: at, ...(status === 'open' ? {} : {}) }
-        : task
-    ));
+    next.tasks = next.tasks.map((task) => {
+      if (task.id !== id || task.status === 'running') return task;
+      const moved = { ...task, status, updatedAt: at };
+      // 見送るのは「やっぱりやらない」ことなので、やると決めた印もここで外します。
+      // 残すと、やると決めた一覧に見送ったタスクが並び続けます。
+      return status === 'dismissed' && isTaskCommitted(moved)
+        ? withPlan(moved, { commitment: DEFAULT_TASK_COMMITMENT }, at)
+        : moved;
+    });
+  }
+  for (const patch of change.plan || []) {
+    next.tasks = next.tasks.map((task) => (task.id === patch.id ? withPlan(task, patch, at) : task));
   }
   for (const input of change.add || []) {
     next.tasks.push({
@@ -413,6 +497,42 @@ export function applyTasksChange(record, change, now = new Date()) {
   }
   if (change.clearFocus) next.focus = null;
   return pruneTasks(next);
+}
+
+/**
+ * 「やると決めた」と、その段取りを1つのタスクへ当てます。送られた欄だけを変えます。
+ *
+ * 見送っていたタスクを「やる」と決めたら、未着手へ戻します。やると決めたのに見送りのまま、
+ * という食い違いを記録に残さないためです（逆向きは `applyTasksChange` の setStatus 側）。
+ */
+function withPlan(task, patch, at) {
+  const current = task.plan || { commitment: DEFAULT_TASK_COMMITMENT, due: '', note: '', decidedAt: '' };
+  const commitment = patch.commitment ?? current.commitment;
+  const committing = commitment === 'committed';
+  const plan = readPlan({
+    commitment,
+    due: patch.due ?? current.due,
+    note: patch.note ?? current.note,
+    // 決めた日時が動くのは決めた回だけです。期限やメモを直しても、決めた日は決めた日のままです。
+    decidedAt: committing ? (current.commitment === 'committed' ? current.decidedAt : at) : ''
+  });
+  const next = { ...task, updatedAt: at };
+  if (plan) next.plan = plan;
+  else delete next.plan;
+  if (patch.priority !== undefined) next.priority = patch.priority;
+  if (patch.owner !== undefined) next.owner = patch.owner;
+  if (committing && next.status === 'dismissed') next.status = DEFAULT_TASK_STATUS;
+  return next;
+}
+
+/** レビュアーが「やる」と決めたタスクか。並べ替えと、AIの整理から守るかどうかの判定に使います。 */
+export function isTaskCommitted(task) {
+  return task?.plan?.commitment === 'committed';
+}
+
+/** やると決めていて、まだ済んでいないタスク。画面とレビューMarkdownの「やると決めたこと」です。 */
+export function committedTasks(tasks) {
+  return tasks.filter((task) => isTaskCommitted(task) && task.status !== 'done' && task.status !== 'dismissed');
 }
 
 /** 「特にしてほしいこと」。長すぎるものは受け付けません。 */
@@ -593,6 +713,11 @@ export function shouldAnalyze(markdown, analysis, { now = Date.now(), staleAfter
  * それは新しいタスクです）。既存タスクの状態変更（`updates`）は、整理を任せているときだけ
  * 当てます。今すべきことは、任せているときだけ置き換えます。
  *
+ * ただし、やると決めたタスク（`plan.commitment` が `committed`）は、整理で見送りにしません。
+ * 見送りは「やらない」という判断で、それはレビュアーが決めたことを打ち消すからです。完了に
+ * するのは通します。材料に「済んだ」と書いてあるなら、それはやらない判断ではなく事実で、
+ * 間違っていれば画面から未着手へ戻せます。
+ *
  * 「対象の人」（`owner`）を決めているときは、担当が別の人だと書かれたタスクをここで落とします。
  * 頼むのはモデルにも頼んでいます（`prompts/tasks.js`）が、指示だけに任せると、
  * 何かの拍子に混ざった1件がそのまま記録へ残ります。設定は「起こさない」という指定なので、
@@ -612,7 +737,10 @@ export function applyExtraction(record, answer, source, { organize = true, focus
     for (const update of answer.updates || []) {
       if (!existingIds.has(update.id)) continue;
       next.tasks = next.tasks.map((task) => (
-        task.id === update.id && task.status !== 'running' && task.status !== update.status
+        task.id === update.id
+        && task.status !== 'running'
+        && task.status !== update.status
+        && !(update.status === 'dismissed' && isTaskCommitted(task))
           ? { ...task, status: update.status, statusReason: update.reason, updatedAt: at }
           : task
       ));
@@ -737,25 +865,46 @@ export function markTaskRunning(record, taskId, now = new Date()) {
 
 /**
  * 次にAIへ実行させるタスク。未着手で、AIが実行できる種類で、その自動化を任せられているもの。
- * 優先度の高い順、同じなら古い順です。
+ * やると決めたものが先で、次に優先度の高い順、同じなら古い順です。
+ *
+ * 1回の見守りで実行するのは数件までなので（`MAX_TASK_RUNS_PER_TICK`）、この並びが
+ * 「どれが後回しになるか」をそのまま決めます。やると決めたものを先に片付けさせます。
  */
 export function runnableTasks(record, actions = DEFAULT_AUTO_TASK_ACTIONS) {
   return record.tasks
     .filter((task) => task.status === 'open' && AUTO_TASK_KIND_IDS.includes(task.kind) && actions.includes(task.kind))
     .sort((a, b) => (
-      (TASK_PRIORITY_ORDER[a.priority] - TASK_PRIORITY_ORDER[b.priority])
+      (commitmentOrder(a) - commitmentOrder(b))
+      || (TASK_PRIORITY_ORDER[a.priority] - TASK_PRIORITY_ORDER[b.priority])
       || String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
     ));
 }
 
-/** 画面とレビューMarkdownに出す順。状態は「確認待ち → 未着手 → 実行中 → 完了 → 見送り」。 */
+/**
+ * 画面とレビューMarkdownに出す順。状態は「確認待ち → 未着手 → 実行中 → 完了 → 見送り」で、
+ * 同じ状態ではやると決めたものが先、次に期限の近い順、優先度の順です。
+ *
+ * 期限を優先度より先に見るのは、期限が「レビュアーが自分で入れた日付」だからです。
+ * 優先度はAIが付けた見立てで、決めたタスクの並びは、決めた本人の日付で決まるべきです。
+ */
 export function sortTasksForDisplay(tasks) {
   const statusOrder = { ready: 0, open: 1, running: 2, done: 3, dismissed: 4 };
   return [...tasks].sort((a, b) => (
     (statusOrder[a.status] - statusOrder[b.status])
+    || (commitmentOrder(a) - commitmentOrder(b))
+    || dueOrder(a).localeCompare(dueOrder(b))
     || (TASK_PRIORITY_ORDER[a.priority] - TASK_PRIORITY_ORDER[b.priority])
     || String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
   ));
+}
+
+function commitmentOrder(task) {
+  return isTaskCommitted(task) ? 0 : 1;
+}
+
+/** 期限の無いタスクを後ろへ回すための並び順。日付は文字列のまま比べられます（YYYY-MM-DD）。 */
+function dueOrder(task) {
+  return task?.plan?.due || '9999-99-99';
 }
 
 export function createTaskId() {

@@ -172,6 +172,7 @@ export function createCaptionRecapController({
       onStart() {
         state.recap = { status: 'loading' };
         render();
+        revealResults();
       },
       onPrepared: () => setRunning(true),
       run: ({ documentPath, signal }) => api.recapWithAi({
@@ -183,9 +184,12 @@ export function createCaptionRecapController({
       onResult(result) {
         state.recap = { status: 'ready', ...result.recap };
       },
+      // ここだけ onSettled を通りません（頼めていないので後始末する対象がない）。
+      // 断られた理由も結果の欄に出るので、見えるところまで持ってくるのはここで行います。
       onUnavailable(error) {
         state.recap = { status: 'error', error };
         render();
+        revealResults();
       },
       // 中断は失敗ではないので、何も残さず元の状態へ戻します。
       onAbort: () => { state.recap = null; },
@@ -193,10 +197,24 @@ export function createCaptionRecapController({
       onSettled() {
         setRunning(false);
         render();
+        revealResults();
         // 聞いたぶんだけ「前回の位置」が進むので、次に読む範囲も変わります。
         refreshRange();
       }
     });
+  }
+
+  /**
+   * 出したものを、押した人の目の前へ持ってきます。
+   *
+   * 決め方の選択と問いの欄でパネルの上半分は埋まるので、答えはその下に出ます。押した
+   * ままの位置では、変わったのは「停止」が出たことだけで、答えは画面の外にあります。
+   * 会議中に押すものなので、出たかどうかを自分でスクロールして確かめさせると、
+   * 探している間の発言を聞き逃します。押した直後（待っている表示）と、出そろったとき
+   * の2回動かすのは、待っている間に読む場所と、答えが出る場所を同じにするためです。
+   */
+  function revealResults() {
+    refs.recapResults.scrollIntoView?.({ block: 'nearest' });
   }
 
   /** 要約と行動を、そのまま貼れる文章にして渡します。 */

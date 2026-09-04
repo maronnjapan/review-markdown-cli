@@ -13,6 +13,7 @@ import {
   applyTaskFailure,
   applyTaskResult,
   applyTasksChange,
+  committedTasks,
   detectSourceKind,
   listWatchedFiles,
   matchesTaskOwner,
@@ -25,6 +26,7 @@ import {
   runnableTasks,
   shouldAnalyze,
   sliceTaskSource,
+  sortTasksForDisplay,
   tasksPathFor,
   updateTasks
 } from '../src/autoTasks.js';
@@ -138,6 +140,94 @@ test('タスクには参考知識と参照ファイルを添えられて、同�
     tasks: [{ id: 't1', title: 'A', reference: { knowledge: '前提', files: ['docs/spec.md', '../secret.md', 3] } }]
   }, 'docs/plan.md');
   assert.deepEqual(read.tasks[0].reference, { knowledge: '前提', files: ['docs/spec.md'] });
+});
+
+/* ---------------------------------------------------------------- *
+ * やると決めたタスク
+ * ---------------------------------------------------------------- */
+
+test('やると決めると段取りを持ち、見送っていたタスクは未着手へ戻る', () => {
+  assert.throws(() => normalizeTasksChange({ plan: [{ commitment: 'committed' }] }), /idが要ります/);
+  assert.throws(() => normalizeTasksChange({ plan: [{ id: 't1', commitment: 'maybe' }] }), /採否が読めません/);
+  assert.throws(() => normalizeTasksChange({ plan: [{ id: 't1', due: '9/10' }] }), /YYYY-MM-DD/);
+  assert.throws(() => normalizeTasksChange({ plan: [{ id: 't1', due: '2026-13-40' }] }), /日付として読めません/);
+  assert.throws(() => normalizeTasksChange({ plan: [{ id: 't1', priority: 'urgent' }] }), /優先度が読めません/);
+  assert.throws(() => normalizeTasksChange({ plan: [{ id: 't1', note: 'あ'.repeat(1001) }] }), /メモが長すぎます/);
+
+  const record = readTasksRecord({
+    tasks: [
+      { id: 't1', title: '前提を調べる', kind: 'research', status: 'open', priority: 'later' },
+      { id: 't2', title: '見送ったもの', kind: 'action', status: 'dismissed', priority: 'next' }
+    ]
+  }, 'a.md');
+  const at = new Date('2026-09-03T00:00:00.000Z');
+  const decided = applyTasksChange(record, normalizeTasksChange({
+    plan: [
+      { id: 't1', commitment: 'committed', due: '2026-09-10', note: ' 停止条件が決まってから ', priority: 'now', owner: '自分' },
+      { id: 't2', commitment: 'committed' }
+    ]
+  }), at);
+
+  const [first, second] = decided.tasks;
+  assert.deepEqual(first.plan, {
+    commitment: 'committed', due: '2026-09-10', note: '停止条件が決まってから', decidedAt: at.toISOString()
+  });
+  assert.deepEqual([first.priority, first.owner], ['now', '自分'], '優先度と担当は、決めたあとに動かすのでタスク本体へ書く');
+  assert.equal(second.status, 'open', 'やると決め直したタスクは、見送りのままにしない');
+  assert.deepEqual(committedTasks(decided.tasks).map((task) => task.id), ['t1', 't2']);
+
+  // 期限とメモだけを直しても、決めた日は決めた日のまま。
+  const later = applyTasksChange(decided, normalizeTasksChange({ plan: [{ id: 't1', due: '2026-09-12' }] }), new Date('2026-09-05T00:00:00.000Z'));
+  assert.deepEqual(
+    [later.tasks[0].plan.due, later.tasks[0].plan.note, later.tasks[0].plan.decidedAt],
+    ['2026-09-12', '停止条件が決まってから', at.toISOString()]
+  );
+
+  // 見送るのは「やっぱりやらない」ので、やると決めた印もここで外れる。
+  const dropped = applyTasksChange(later, normalizeTasksChange({ setStatus: [{ id: 't1', status: 'dismissed' }] }), at);
+  assert.equal(dropped.tasks[0].plan.commitment, 'undecided');
+  assert.deepEqual(committedTasks(dropped.tasks).map((task) => task.id), ['t2']);
+
+  // 決めていない状態へ戻し、期限もメモも空にすると、段取りごと消える。
+  const cleared = applyTasksChange(decided, normalizeTasksChange({ plan: [{ id: 't1', commitment: 'undecided', due: '', note: '' }] }), at);
+  assert.equal(cleared.tasks[0].plan, undefined);
+});
+
+test('やると決めたタスクは、AIの整理で見送られない', () => {
+  const record = readTasksRecord({
+    tasks: [
+      { id: 't1', title: '前提を調べる', kind: 'research', status: 'open', priority: 'now', plan: { commitment: 'committed', due: '2026-09-10' } },
+      { id: 't2', title: '決めていないもの', kind: 'action', status: 'open', priority: 'now' }
+    ]
+  }, 'a.md');
+  const source = { revision: 'rev', length: 10, sourceKind: 'transcript' };
+  const at = new Date('2026-09-03T00:00:00.000Z');
+
+  const dismissed = applyExtraction(record, {
+    summary: '', focus: { now: '', reason: '' }, tasks: [],
+    updates: [{ id: 't1', status: 'dismissed', reason: '話に出なくなった' }, { id: 't2', status: 'dismissed', reason: '同上' }]
+  }, source, { organize: true, focus: false }, at);
+  assert.equal(dismissed.tasks[0].status, 'open', 'レビュアーが決めたことを、整理で打ち消さない');
+  assert.equal(dismissed.tasks[1].status, 'dismissed', '決めていないタスクは、これまでどおり見送られる');
+
+  const done = applyExtraction(record, {
+    summary: '', focus: { now: '', reason: '' }, tasks: [],
+    updates: [{ id: 't1', status: 'done', reason: '調べ終えたと言った' }]
+  }, source, { organize: true, focus: false }, at);
+  assert.equal(done.tasks[0].status, 'done', '済んだという事実は通す（間違いなら画面から戻せる）');
+  assert.equal(done.tasks[0].plan.commitment, 'committed', '完了にしても、決めたことは残る');
+});
+
+test('やると決めたタスクは、AIの実行でも画面の並びでも先に来る', () => {
+  const record = readTasksRecord({
+    tasks: [
+      { id: 'a', title: '優先度の高い候補', kind: 'research', status: 'open', priority: 'now', createdAt: '2026-09-01T00:00:00.000Z' },
+      { id: 'b', title: '決めたもの', kind: 'research', status: 'open', priority: 'later', createdAt: '2026-09-02T00:00:00.000Z', plan: { commitment: 'committed', due: '2026-09-20' } },
+      { id: 'c', title: '期限の近い決めたもの', kind: 'research', status: 'open', priority: 'later', createdAt: '2026-09-03T00:00:00.000Z', plan: { commitment: 'committed', due: '2026-09-10' } }
+    ]
+  }, 'a.md');
+  assert.deepEqual(runnableTasks(record, ['research']).map((task) => task.id), ['b', 'c', 'a'], '決めたものから片付けさせる');
+  assert.deepEqual(sortTasksForDisplay(record.tasks).map((task) => task.id), ['c', 'b', 'a'], '決めたものが先で、期限の近い順');
 });
 
 test('同じファイルへの書き込みは1本の列に並ぶので、同時の変更が消えない', async (t) => {
@@ -636,6 +726,29 @@ test('レビューMarkdownの自動タスクの節は、有効でないときは
     }
   });
   assert.match(withTasks, /- \[ \] 調べる（確認待ち／調査／いま／担当: 田中）\n  前提を洗う\n  引用: 当番は読めません\n  AIの結果: 3つ/);
+  assert.equal(/やると決めたこと/.test(withTasks), false, '決めたものが1件も無ければ、その見出しは出ない');
+});
+
+test('レビューMarkdownは、やると決めたことを先に書き出す', () => {
+  const markdown = buildReviewMarkdown({
+    targetFile: 'a.md',
+    comments: [],
+    tasks: {
+      focus: null,
+      tasks: [
+        { id: 't1', title: '停止条件を確認する', kind: 'action', status: 'open', priority: 'later', detail: '運用チームへ', quote: '', owner: '田中', plan: { commitment: 'committed', due: '2026-09-10', note: '手順を出す前に' } },
+        { id: 't2', title: '決めていないもの', kind: 'research', status: 'open', priority: 'now', detail: '', quote: '', owner: '' },
+        { id: 't3', title: '済んだもの', kind: 'action', status: 'done', priority: 'now', detail: '', quote: '', owner: '', plan: { commitment: 'committed', due: '', note: '' } }
+      ]
+    }
+  });
+  assert.match(markdown, /### やると決めたこと\n\n- \[ \] 停止条件を確認する（未着手／対応／あとで／やる／期限: 2026-09-10／担当: 田中）\n  手順を出す前に/);
+  assert.equal(/### やると決めたこと\n\n[\s\S]*決めていないもの[\s\S]*### すべてのタスク/.test(markdown), false, '決めたものだけを先に出す');
+  assert.equal(/### やると決めたこと\n\n[\s\S]*済んだもの[\s\S]*### すべてのタスク/.test(markdown), false, '済んだものは、やることとしては出さない');
+  const all = markdown.slice(markdown.indexOf('### すべてのタスク'));
+  assert.match(all, /- \[ \] 停止条件を確認する（未着手／対応／あとで／やる／期限: 2026-09-10／担当: 田中）/, '下の一覧でも「やる」と期限が分かる');
+  assert.match(all, /自分のメモ: 手順を出す前に/);
+  assert.match(all, /- \[x\] 済んだもの/);
 });
 
 /* ---------------------------------------------------------------- *

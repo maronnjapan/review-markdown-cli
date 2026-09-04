@@ -6,9 +6,12 @@ const MAX_TASK_TITLE_CHARS = 200;
 const MAX_TASK_KNOWLEDGE_CHARS = 2000;
 const MAX_REFERENCE_FILES = 8;
 
+/** サーバー側の上限と同じです（src/aiLimits.js の MAX_TASK_PLAN_NOTE_CHARS）。 */
+const MAX_TASK_PLAN_NOTE_CHARS = 1_000;
+
 /**
- * タスクの種類・状態・優先度と、任せられる自動化。`src/autoTaskVocabulary.js` と同じ並び・
- * 同じidです。ビルドを持たない構成では `src/` を `public/` から import できないので、
+ * タスクの種類・状態・優先度・採否と、任せられる自動化。`src/autoTaskVocabulary.js` と
+ * 同じ並び・同じidです。ビルドを持たない構成では `src/` を `public/` から import できないので、
  * `contextNotes.js` と同じ理由でここへもう一組置いています。片方を変えたらもう片方も。
  */
 const KINDS = [
@@ -21,8 +24,21 @@ const KINDS = [
 const KIND_LABELS = Object.fromEntries(KINDS.map(({ id, label }) => [id, label]));
 const STATUS_LABELS = { open: '未着手', running: '実行中', ready: '確認待ち', done: '完了', dismissed: '見送り' };
 const STATUS_ORDER = { ready: 0, open: 1, running: 2, done: 3, dismissed: 4 };
+const PRIORITY_IDS = ['now', 'next', 'later'];
 const PRIORITY_LABELS = { now: 'いま', next: '次に', later: 'あとで' };
 const PRIORITY_ORDER = { now: 0, next: 1, later: 2 };
+const COMMITMENT_LABELS = { undecided: '未定', committed: 'やる' };
+
+/**
+ * 一覧の絞り込み。AIが起こしたタスクは読まれる前から並ぶので、「すべて」のままでは
+ * やると決めたものが候補に埋もれます。決めたものだけを取り出せるようにするための行です。
+ */
+const FILTERS = [
+  { id: 'all', label: 'すべて', match: () => true, empty: 'この文書のタスクはまだありません。' },
+  { id: 'committed', label: 'やると決めた', match: (task) => isCommitted(task) && !isFinished(task), empty: 'やると決めたタスクはまだありません。タスクの「やると決める」を押すと、ここに並びます。' },
+  { id: 'undecided', label: '未定', match: (task) => !isCommitted(task) && !isFinished(task), empty: 'やるかどうかを決めていないタスクはありません。' },
+  { id: 'finished', label: '終わったもの', match: isFinished, empty: '完了・見送りにしたタスクはまだありません。' }
+];
 export const AUTO_TASK_ACTIONS = [
   { id: 'organize', label: 'タスクの整理', hint: '済んだタスクを完了にし、蒸し返しをまとめる' },
   { id: 'focus', label: '今すべきこと', hint: '文字起こしの流れから、いま手を付けることを1つ選ぶ' },
@@ -40,6 +56,9 @@ const STATUS_MESSAGES = {
   saved: '保存しました。',
   running: 'タスクを起こしています…'
 };
+
+/** 端末の時間帯での「今日」を取るためだけの値です（`dueState`）。期限は日付だけで比べます。 */
+const MINUTE_MS = 60_000;
 
 /**
  * 自動タスクのパネル。
@@ -61,7 +80,14 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
   const window = refs.tasksPanel.ownerDocument.defaultView;
   let pendingDeleteId = null;
   let openResultIds = new Set();
-  // 開いている「参考」の欄と、まだ保存していない参考知識。一覧は保存のたびに描き直すので、
+  let openPlanIds = new Set();
+  /**
+   * 段取りの書きかけ。一覧は裏の見守りに合わせて20秒ごとに描き直すので、書きかけの
+   * 期限やメモを持っておかないと、入力の途中で消えます。保存できたぶんから捨てます。
+   */
+  let planDrafts = new Map();
+  let filterId = 'all';
+  // 開いている「参考」の欄と、まだ保存していない参考知識。段取りと同じ理由で、
   // 書きかけの文字と開いている欄を、描き直しをまたいで持ちます。
   let openReferenceIds = new Set();
   let knowledgeDrafts = new Map();
@@ -75,6 +101,9 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
   function load() {
     pendingDeleteId = null;
     openResultIds = new Set();
+    openPlanIds = new Set();
+    planDrafts = new Map();
+    filterId = 'all';
     openReferenceIds = new Set();
     knowledgeDrafts = new Map();
     stopRefreshing();
@@ -263,6 +292,47 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
     return change({ setStatus: [{ id, status }] }, labels[status]);
   }
 
+  /**
+   * 「やると決める」／その取り消し。決めたタスクは絞り込みで取り出せて、期限とメモを持てて、
+   * AIの整理で見送られません。見送っていたタスクを決め直すと、サーバー側で未着手へ戻ります。
+   */
+  function setCommitment(id, commitment) {
+    return change({ plan: [{ id, commitment }] }, commitment === 'committed'
+      ? 'やると決めました。「やると決めた」で絞り込めます。'
+      : 'やると決めたのを取り消しました。');
+  }
+
+  /** 決めたタスクの段取り（期限・優先度・担当・自分のメモ）。書きかけは保存できてから捨てます。 */
+  async function savePlan(id, form) {
+    const note = form.elements.note.value;
+    if (note.trim().length > MAX_TASK_PLAN_NOTE_CHARS) {
+      toaster.error(`メモは${MAX_TASK_PLAN_NOTE_CHARS}文字までです。`);
+      return;
+    }
+    const saved = await change({
+      plan: [{
+        id,
+        due: form.elements.due.value,
+        priority: form.elements.priority.value,
+        owner: form.elements.owner.value,
+        note
+      }]
+    }, '段取りを保存しました。');
+    if (!saved) return;
+    planDrafts.delete(id);
+    render();
+  }
+
+  /** 描き直しで消えないように、書きかけの段取りを控えます。 */
+  function rememberPlanDraft(form) {
+    planDrafts.set(form.dataset.taskPlanForm, {
+      due: form.elements.due.value,
+      priority: form.elements.priority.value,
+      owner: form.elements.owner.value,
+      note: form.elements.note.value
+    });
+  }
+
   function confirmDelete(id) {
     pendingDeleteId = null;
     return change({ remove: [id] }, 'タスクを削除しました。');
@@ -399,9 +469,47 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
     refs.tasksAddSubmit.disabled = busy || refs.tasksAddInput.value.trim() === '';
 
     renderFocus(record?.focus);
-    refs.tasksList.innerHTML = record
-      ? (tasks.length ? sortTasks(tasks).map((task) => taskHtml(task, busy)).join('') : emptyHtml(record))
-      : '<p class="muted">タスクを読み込んでいます…</p>';
+    renderFilter(tasks, Boolean(record));
+    renderPlanSummary(tasks);
+    if (!record) {
+      refs.tasksList.innerHTML = '<p class="muted">タスクを読み込んでいます…</p>';
+      return;
+    }
+    if (!tasks.length) {
+      refs.tasksList.innerHTML = emptyHtml(record);
+      return;
+    }
+    const shown = tasks.filter(currentFilter().match);
+    refs.tasksList.innerHTML = shown.length
+      ? sortTasks(shown).map((task) => taskHtml(task, busy)).join('')
+      : `<p class="muted">${escapeHtml(currentFilter().empty)}</p>`;
+  }
+
+  function currentFilter() {
+    return FILTERS.find(({ id }) => id === filterId) || FILTERS[0];
+  }
+
+  /** 絞り込みの行。押したものだけを `aria-pressed` にし、それぞれの件数をラベルへ出します。 */
+  function renderFilter(tasks, loaded) {
+    for (const button of refs.tasksFilter.querySelectorAll('[data-tasks-filter]')) {
+      const filter = FILTERS.find(({ id }) => id === button.dataset.tasksFilter);
+      if (!filter) continue;
+      const count = tasks.filter(filter.match).length;
+      button.textContent = filter.id === 'all' ? filter.label : `${filter.label}（${count}）`;
+      button.setAttribute('aria-pressed', String(filter.id === filterId));
+      button.disabled = !loaded;
+    }
+  }
+
+  /** やると決めたことの件数。期限を過ぎたものがあれば、その数も出します。 */
+  function renderPlanSummary(tasks) {
+    const committed = tasks.filter((task) => isCommitted(task) && !isFinished(task));
+    const overdue = committed.filter((task) => dueState(task) === 'overdue').length;
+    refs.tasksPlanSummary.hidden = committed.length === 0;
+    refs.tasksPlanSummary.dataset.state = overdue ? 'overdue' : 'set';
+    refs.tasksPlanSummary.textContent = committed.length
+      ? `やると決めたこと ${committed.length}件${overdue ? `（期限を過ぎたもの ${overdue}件）` : ''}`
+      : '';
   }
 
   function watchHint(record, runner) {
@@ -451,9 +559,11 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
     const result = task.result;
     const resultOpen = openResultIds.has(task.id);
     return `
-      <article class="task-card" data-task-id="${escapeHtml(task.id)}" data-status="${escapeHtml(task.status)}">
+      <article class="task-card" data-task-id="${escapeHtml(task.id)}" data-status="${escapeHtml(task.status)}" data-committed="${isCommitted(task)}">
         <header class="task-card-head">
           <span class="task-status" data-status="${escapeHtml(task.status)}">${escapeHtml(STATUS_LABELS[task.status] || task.status)}</span>
+          ${isCommitted(task) ? `<span class="task-commitment">${escapeHtml(COMMITMENT_LABELS.committed)}</span>` : ''}
+          ${dueHtml(task)}
           <span class="task-kind" data-kind="${escapeHtml(task.kind)}">${escapeHtml(KIND_LABELS[task.kind] || task.kind)}</span>
           <span class="task-priority" data-priority="${escapeHtml(task.priority)}">${escapeHtml(PRIORITY_LABELS[task.priority] || task.priority)}</span>
           ${task.owner ? `<span class="task-owner">担当: ${escapeHtml(task.owner)}</span>` : ''}
@@ -462,8 +572,10 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
         <p class="task-title">${escapeHtml(task.title)}</p>
         ${task.detail ? `<p class="task-detail">${escapeHtml(task.detail)}</p>` : ''}
         ${task.quote ? `<blockquote class="task-quote">${escapeHtml(task.quote)}</blockquote>` : ''}
+        ${task.plan?.note ? `<p class="task-plan-note">自分のメモ: ${escapeHtml(task.plan.note)}</p>` : ''}
         ${task.statusReason ? `<p class="task-reason">${escapeHtml(task.statusReason)}</p>` : ''}
         ${task.error ? `<p class="ai-error task-error">実行できませんでした: ${escapeHtml(task.error)}</p>` : ''}
+        ${isCommitted(task) ? planHtml(task, busy) : ''}
         ${referenceHtml(task, busy)}
         ${result ? resultHtml(task, result, resultOpen) : ''}
         <div class="context-note-item-actions task-actions">
@@ -534,6 +646,39 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
     return options.map((entry) => `<option value="${escapeHtml(entry.path)}">${escapeHtml(entry.path)}</option>`).join('');
   }
 
+  /**
+   * 決めたタスクの段取り。期限・優先度・担当・自分のメモを、その場で書き換えます。
+   *
+   * 畳んであるのは、決めたタスクが増えても一覧が読める長さで収まるようにするためです。
+   * 開いたかどうかと書きかけは、描き直しをまたいで持ちます（`openPlanIds` / `planDrafts`）。
+   */
+  function planHtml(task, busy) {
+    const id = escapeHtml(task.id);
+    const disabled = busy ? ' disabled' : '';
+    const draft = planDrafts.get(task.id) || {
+      due: task.plan?.due || '',
+      priority: task.priority,
+      owner: task.owner || '',
+      note: task.plan?.note || ''
+    };
+    const options = PRIORITY_IDS
+      .map((priority) => `<option value="${priority}"${priority === draft.priority ? ' selected' : ''}>${escapeHtml(PRIORITY_LABELS[priority])}</option>`)
+      .join('');
+    return `
+      <details class="task-plan"${openPlanIds.has(task.id) ? ' open' : ''} data-task-plan="${id}">
+        <summary>段取り（期限・優先度・担当・メモ）</summary>
+        <form class="task-plan-form" data-task-plan-form="${id}">
+          <label>期限<input type="date" name="due" value="${escapeHtml(draft.due)}"${disabled}></label>
+          <label>優先度<select name="priority"${disabled}>${options}</select></label>
+          <label>担当<input type="text" name="owner" value="${escapeHtml(draft.owner)}" placeholder="例: 自分"${disabled}></label>
+          <label>自分のメモ<textarea name="note" rows="2" placeholder="決めたときに分かっていたこと">${escapeHtml(draft.note)}</textarea></label>
+          <div class="context-note-actions">
+            <button type="submit"${disabled}>段取りを保存</button>
+          </div>
+        </form>
+      </details>`;
+  }
+
   /** 結果の本文はMarkdownですが、そのまま文字として出します。AIが書いたHTMLを画面へ流し込まないためです。 */
   function resultHtml(task, result, open) {
     return `
@@ -556,6 +701,12 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
     const id = escapeHtml(task.id);
     const buttons = [];
     if (task.status === 'running') return '<span class="task-running">AIが実行中です…</span>';
+    // 済んだタスクに「やると決める」は出しません。決めるのはこれからやることだけです。
+    if (task.status !== 'done') {
+      buttons.push(isCommitted(task)
+        ? `<button type="button" data-task-uncommit="${id}"${disabled}>やるのを取り消す</button>`
+        : `<button type="button" data-task-commit="${id}"${disabled}>やると決める</button>`);
+    }
     if (task.status === 'open' || task.status === 'ready') {
       buttons.push(`<button type="button" data-task-run="${id}"${disabled}>${task.status === 'ready' ? 'もう一度実行' : 'AIに任せる'}</button>`);
       buttons.push(`<button type="button" data-task-status="done" data-task-id="${id}"${disabled}>完了にする</button>`);
@@ -601,31 +752,52 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
       event.preventDefault();
       add();
     });
+    refs.tasksFilter.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-tasks-filter]');
+      if (!button || button.dataset.tasksFilter === filterId) return;
+      filterId = button.dataset.tasksFilter;
+      render();
+    });
     refs.tasksList.addEventListener('toggle', (event) => {
       const details = event.target;
       if (details?.dataset?.taskResult) {
         if (details.open) openResultIds.add(details.dataset.taskResult);
         else openResultIds.delete(details.dataset.taskResult);
-        return;
       }
-      if (!details?.dataset?.taskReference) return;
-      if (details.open) {
-        openReferenceIds.add(details.dataset.taskReference);
-        // 開いたときに引きます。タスクを1件も任せない文書で、一覧を引きに行かないためです。
-        loadCandidates();
-      } else {
-        openReferenceIds.delete(details.dataset.taskReference);
+      if (details?.dataset?.taskPlan) {
+        if (details.open) openPlanIds.add(details.dataset.taskPlan);
+        else openPlanIds.delete(details.dataset.taskPlan);
+      }
+      if (details?.dataset?.taskReference) {
+        if (details.open) {
+          openReferenceIds.add(details.dataset.taskReference);
+          // 開いたときに引きます。タスクを1件も任せない文書で、一覧を引きに行かないためです。
+          loadCandidates();
+        } else {
+          openReferenceIds.delete(details.dataset.taskReference);
+        }
       }
     }, true);
-    // 書きかけの参考知識は、保存するまで持っておきます。裏の見守りが足したタスクで
-    // 一覧が描き直されても、書いている途中の文字が消えないようにするためです。
-    refs.tasksList.addEventListener('input', (event) => {
-      const id = event.target?.dataset?.taskKnowledge;
-      if (id) knowledgeDrafts.set(id, event.target.value);
+    // 書きかけを控えるのは、描き直しで消さないためです（`planDrafts` / `knowledgeDrafts`）。
+    for (const type of ['input', 'change']) {
+      refs.tasksList.addEventListener(type, (event) => {
+        const form = event.target.closest('[data-task-plan-form]');
+        if (form) rememberPlanDraft(form);
+        const knowledgeId = event.target?.dataset?.taskKnowledge;
+        if (knowledgeId) knowledgeDrafts.set(knowledgeId, event.target.value);
+      });
+    }
+    refs.tasksList.addEventListener('submit', (event) => {
+      const form = event.target.closest('[data-task-plan-form]');
+      if (!form) return;
+      event.preventDefault();
+      savePlan(form.dataset.taskPlanForm, form);
     });
     refs.tasksList.addEventListener('click', (event) => {
       const button = event.target.closest('button');
       if (!button) return;
+      if (button.dataset.taskCommit) return setCommitment(button.dataset.taskCommit, 'committed');
+      if (button.dataset.taskUncommit) return setCommitment(button.dataset.taskUncommit, 'undecided');
       if (button.dataset.taskRun) return runTask(button.dataset.taskRun);
       if (button.dataset.taskStatus) return setTaskStatus(button.dataset.taskId, button.dataset.taskStatus);
       if (button.dataset.taskCopy) return copyResult(button.dataset.taskCopy);
@@ -655,10 +827,16 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
   return { load, sync, render, refresh, available };
 }
 
-/** 画面の並び。確認待ち → 未着手 → 実行中 → 完了 → 見送り。同じ状態では優先度、次に新しい順です。 */
+/**
+ * 画面の並び。確認待ち → 未着手 → 実行中 → 完了 → 見送り。同じ状態では、やると決めたものが
+ * 先で、次に期限の近い順、優先度の順、新しい順です。`src/autoTasks.js` の
+ * `sortTasksForDisplay` と同じ並びで、レビューMarkdownと画面が食い違わないようにしています。
+ */
 function sortTasks(tasks) {
   return [...tasks].sort((a, b) => (
     (STATUS_ORDER[a.status] - STATUS_ORDER[b.status])
+    || (commitmentOrder(a) - commitmentOrder(b))
+    || dueOrder(a).localeCompare(dueOrder(b))
     || (PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority])
     || String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
   ));
@@ -667,6 +845,40 @@ function sortTasks(tasks) {
 /** タスクのidを属性セレクタに入れるための逃がし。idは英数字と `-` だけですが、選ぶのは値です。 */
 function cssEscape(value) {
   return String(value).replace(/["\\]/g, '\\$&');
+}
+
+function isCommitted(task) {
+  return task?.plan?.commitment === 'committed';
+}
+
+function isFinished(task) {
+  return task.status === 'done' || task.status === 'dismissed';
+}
+
+function commitmentOrder(task) {
+  return isCommitted(task) ? 0 : 1;
+}
+
+/** 期限の無いタスクを後ろへ回すための並び順。日付は文字列のまま比べられます（YYYY-MM-DD）。 */
+function dueOrder(task) {
+  return task?.plan?.due || '9999-99-99';
+}
+
+/** 期限が過ぎたか、今日か、まだ先か。日付だけで比べます（時刻は持ちません）。 */
+function dueState(task, now = new Date()) {
+  const due = task?.plan?.due;
+  if (!due) return '';
+  const today = new Date(now.getTime() - now.getTimezoneOffset() * MINUTE_MS).toISOString().slice(0, 10);
+  if (due < today) return 'overdue';
+  return due === today ? 'today' : 'soon';
+}
+
+/** 期限の札。過ぎているものと今日のものは、その場で分かるように言葉を添えます。 */
+function dueHtml(task) {
+  const state = dueState(task);
+  if (!state) return '';
+  const suffix = { overdue: '（過ぎています）', today: '（今日）', soon: '' }[state];
+  return `<span class="task-due" data-due="${state}">期限 ${escapeHtml(task.plan.due)}${suffix}</span>`;
 }
 
 function timeLabel(iso) {
