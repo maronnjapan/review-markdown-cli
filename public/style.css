@@ -440,7 +440,14 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   color: var(--primary);
   font-weight: 700;
 }
-#comments-panel, .manager-panel, .ai-panel, .placement-panel, .review-panel, .revise-panel, .outline-panel, .tasks-panel {
+/*
+ * タブで切り替わるパネルは、すべてここに並べます。サイドパネル自体は画面の高さで
+ * 頭打ちになる（.comments-pane が overflow: hidden）ので、ここから漏れたパネルは
+ * 伸びたぶんがパネルの外で切り落とされ、中の .pane-scroll も高さが決まらないため
+ * スクロールバーが出ません。下に出したものが、どうやっても読めなくなります。
+ */
+#comments-panel, .manager-panel, .ai-panel, .placement-panel, .review-panel, .revise-panel,
+.outline-panel, .recap-panel, .tasks-panel {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
