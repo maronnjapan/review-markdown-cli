@@ -15,7 +15,7 @@ import {
   TERM_MAX_WORDS
 } from './aiLimits.js';
 import { AiStore, defaultAiDataDir, translationCacheKey } from './aiStore.js';
-import { detectSourceKind, readExtractionAnswer, readTaskResult, sliceTaskSource } from './autoTasks.js';
+import { detectSourceKind, isTaskCommitted, readExtractionAnswer, readTaskResult, sliceTaskSource } from './autoTasks.js';
 import {
   RECAP_SCHEMA,
   buildRecap,
@@ -804,11 +804,22 @@ const DEFAULT_CONVERSATION_CONTEXT = ['comments', 'reading', 'brief', 'notes', '
  * 「もう起こしたタスク」としてモデルへ渡す形。id・題名・種類・状態・優先度だけで、
  * 詳細も引用も渡しません。見送ったものも渡します。渡さないと、見送るたびに同じタスクが
  * 次の回で起こされます。多すぎるときは新しいものから数えます。
+ *
+ * やると決めたタスクにだけ `commitment` を添えます。決めていないものにまで書くと、
+ * 60件ぶんの「決めていない」を毎回読ませることになるので、付くのは決めたものだけです。
+ * 期限もメモも渡しません。どちらもレビュアーの手元の段取りで、何を起こすかには効きません。
  */
 function existingTasksForPrompt(tasks) {
   return tasks
     .slice(-MAX_EXISTING_TASKS_IN_PROMPT)
-    .map(({ id, title, kind, status, priority }) => ({ id, title, kind, status, priority }));
+    .map((task) => ({
+      id: task.id,
+      title: task.title,
+      kind: task.kind,
+      status: task.status,
+      priority: task.priority,
+      ...(isTaskCommitted(task) ? { commitment: 'committed' } : {})
+    }));
 }
 
 function normalizeConversationContext(value) {

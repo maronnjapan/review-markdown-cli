@@ -2593,6 +2593,24 @@ test('自動タスクが有効な文書ではタスクのタブが出て、整�
         for (const added of body.add || []) {
           record = { ...record, tasks: [...record.tasks, { id: `task-${record.tasks.length + 1}`, ...added, status: 'open', source: 'reviewer', priority: 'next', quote: '', owner: '' }] };
         }
+        // サーバー側の `applyTasksChange` と同じで、送られた欄だけを当てます。
+        for (const patch of body.plan || []) {
+          record = { ...record, tasks: record.tasks.map((task) => {
+            if (task.id !== patch.id) return task;
+            const plan = {
+              commitment: patch.commitment ?? task.plan?.commitment ?? 'undecided',
+              due: patch.due ?? task.plan?.due ?? '',
+              note: patch.note ?? task.plan?.note ?? '',
+              decidedAt: '2026-09-03T02:00:00.000Z'
+            };
+            const next = { ...task };
+            if (plan.commitment === 'undecided' && !plan.due && !plan.note) delete next.plan;
+            else next.plan = plan;
+            if (patch.priority !== undefined) next.priority = patch.priority;
+            if (patch.owner !== undefined) next.owner = patch.owner;
+            return next;
+          }) };
+        }
         return payload();
       }
       readRequests.push(String(input));
@@ -2678,6 +2696,46 @@ test('自動タスクが有効な文書ではタスクのタブが出て、整�
   assert.match(document.querySelector('.task-card[data-task-id="task-3"]').textContent, /削除しますか/);
   document.querySelector('[data-task-cancel-delete]').click();
   assert.equal(document.querySelector('[data-task-confirm-delete]'), null);
+
+  // やると決めたタスクは印が付き、件数の行が出て、絞り込みで取り出せます。
+  document.querySelector('.task-card[data-task-id="task-2"] [data-task-commit]').click();
+  await waitFor(() => changeRequests.length === 4);
+  assert.deepEqual(changeRequests[3][0], { path: 'docs/meeting.md', plan: [{ id: 'task-2', commitment: 'committed' }] });
+  await waitFor(() => document.querySelector('.task-card[data-task-id="task-2"]').dataset.committed === 'true');
+  assert.equal(document.querySelector('.task-card[data-task-id="task-2"] .task-commitment').textContent, 'やる');
+  assert.match(document.querySelector('#tasks-plan-summary').textContent, /やると決めたこと 1件/);
+
+  const committedFilter = document.querySelector('[data-tasks-filter="committed"]');
+  assert.equal(committedFilter.textContent, 'やると決めた（1）');
+  committedFilter.click();
+  assert.deepEqual(
+    [...document.querySelectorAll('.task-card')].map((card) => card.dataset.taskId),
+    ['task-2'],
+    '決めたものだけを出す'
+  );
+
+  // 段取り（期限・優先度・担当・メモ）は、決めたタスクにだけ付きます。
+  assert.equal(document.querySelector('.task-card[data-task-id="task-2"] .task-plan') !== null, true);
+  const planForm = document.querySelector('[data-task-plan-form="task-2"]');
+  planForm.elements.due.value = '2026-09-10';
+  planForm.elements.priority.value = 'now';
+  planForm.elements.note.value = '手順を出す前に';
+  planForm.requestSubmit();
+  await waitFor(() => changeRequests.length === 5);
+  assert.deepEqual(changeRequests[4][0], {
+    path: 'docs/meeting.md',
+    plan: [{ id: 'task-2', due: '2026-09-10', priority: 'now', owner: '田中', note: '手順を出す前に' }]
+  });
+  await waitFor(() => document.querySelector('.task-card[data-task-id="task-2"] .task-due'));
+  assert.match(document.querySelector('.task-card[data-task-id="task-2"] .task-due').textContent, /期限 2026-09-10/);
+  assert.match(document.querySelector('.task-card[data-task-id="task-2"] .task-plan-note').textContent, /自分のメモ: 手順を出す前に/);
+
+  // 決めたのを取り消すと、印も段取りの欄も消えます。
+  document.querySelector('.task-card[data-task-id="task-2"] [data-task-uncommit]').click();
+  await waitFor(() => changeRequests.length === 6);
+  assert.deepEqual(changeRequests[5][0], { path: 'docs/meeting.md', plan: [{ id: 'task-2', commitment: 'undecided' }] });
+  await waitFor(() => document.querySelector('#tasks-plan-summary').hidden === true);
+  assert.match(document.querySelector('#tasks-list').textContent, /やると決めたタスクはまだありません/, '絞り込みは押したまま、空だと言う');
 });
 
 async function renderViews(markdown) {

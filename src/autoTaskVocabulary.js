@@ -42,6 +42,21 @@ export const TASK_STATUS_LABELS = Object.freeze({
 export const REVIEWER_TASK_STATUSES = Object.freeze(['open', 'done', 'dismissed']);
 export const DEFAULT_TASK_STATUS = 'open';
 
+/**
+ * 「やる」と決めたかどうか（採否）。状態（`TASK_STATUSES`）とは別の軸です。
+ *
+ * 状態は「どこまで進んだか」で、こちらは「やると決めたか」です。分けてあるのは、
+ * AIが起こしただけのタスクと、読んで自分がやると決めたタスクが、どちらも「未着手」に
+ * 並んでしまうと、一覧から「自分がやること」を取り出せなくなるからです。決めたものは
+ * `committed` になり、期限と自分のメモを持てます（`autoTasks.js` の `plan`）。
+ *
+ * 「やらないと決めた」に当たる値は置いていません。それは状態の `dismissed`（見送り）
+ * だからです。同じことを2か所で言えるようにすると、どちらが本当かを決める規則が要ります。
+ */
+export const TASK_COMMITMENTS = Object.freeze(['undecided', 'committed']);
+export const TASK_COMMITMENT_LABELS = Object.freeze({ undecided: '未定', committed: 'やる' });
+export const DEFAULT_TASK_COMMITMENT = 'undecided';
+
 /** 優先度。並び順そのものです。 */
 export const TASK_PRIORITIES = Object.freeze(['now', 'next', 'later']);
 export const TASK_PRIORITY_ORDER = Object.freeze({ now: 0, next: 1, later: 2 });
@@ -87,6 +102,10 @@ export function isTaskStatus(value) {
 
 export function isTaskPriority(value) {
   return TASK_PRIORITIES.includes(value);
+}
+
+export function isTaskCommitment(value) {
+  return TASK_COMMITMENTS.includes(value);
 }
 
 export function isAutoTaskAction(value) {
