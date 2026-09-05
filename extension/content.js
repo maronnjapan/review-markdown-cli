@@ -8,8 +8,8 @@
 //   Google側のUI変更で突然動かなくなることがある。
 //   動かなくなった場合は README.md の「字幕が取得できなくなったとき」を参照。
 // - 字幕自体の精度はGoogle側の音声認識に依存する(誤変換・省略・句読点なしなど)。
-// - 記録は「字幕(CC)がオンになっている間」だけ行われる。CCのオン/オフは
-//   Meetの通常のUIから手動で行う(この拡張機能は自動でCCをオンにはしない)。
+// - 記録は「字幕(CC)がオンになっている間」だけ行われる。会議に入ったときのCCは
+//   autoCaptions.js が自動でオンにする(拡張機能の設定で止められる)。
 
 (() => {
   const INDEX_KEY = 'meetCaptionsMemo_index';
@@ -39,6 +39,11 @@
   let lastSyncFailed = false;
   // 直し方が違うので、トークン切れ（403）だけは分けて覚えます。
   let lastSyncStale = false;
+  // 連携先を探している最中かどうか。バッジに出すためだけに持ちます。
+  let pairing = false;
+  // 繋がるまでのあいだ、発言のたびに探しに行かせないための頭打ち。
+  const PAIRING_RETRY_MS = 30000;
+  let lastPairingAt = 0;
 
   // ---------- ストレージ ----------
 
@@ -239,7 +244,12 @@
   // そのもの（chrome.storage.localへの保存）は止めない。
 
   async function syncLineToReviewMarkdown(memo, { speaker, text, time }) {
-    if (!syncSettings || !syncSettings.enabled) return;
+    if (!syncSettings || !syncSettings.enabled) {
+      // まだ繋がっていないなら、ここでも探します。会議に入ったあとでreview-markdownを
+      // 立ち上げた人が、タブを開き直さなくても途中から繋がるようにするためです。
+      requestPairing();
+      return;
+    }
     const { serverUrl, token } = syncSettings;
     const targetPath = resolveTargetPath(memo);
     // 有効なのに設定が不完全な場合を「連携中」と表示しないでください。旧版では空の
@@ -286,6 +296,26 @@
         else resolve(response);
       });
     });
+  }
+
+  /**
+   * 動いているreview-markdownを探してもらいます。探すのはservice worker側
+   * （`background.js`）で、見つかった連携先は設定へ書き込まれます。こちらは
+   * chrome.storage の変更で受け取るので、ここでは結果を待つだけです。
+   */
+  async function requestPairing() {
+    if (syncSettings?.autoPair === false) return;
+    if (Date.now() - lastPairingAt < PAIRING_RETRY_MS) return;
+    lastPairingAt = Date.now();
+    pairing = true;
+    updateBadge();
+    try {
+      await sendRuntimeMessage({ type: 'REQUEST_PAIRING', force: true });
+    } catch {
+      // service workerが眠っていただけのこともあります。次の発言の送信でまた試されます。
+    }
+    pairing = false;
+    updateBadge();
   }
 
   /**
@@ -382,7 +412,9 @@
     document.body.appendChild(badgeEl);
     badgeEl.addEventListener('click', async () => {
       recording = !recording;
-      await storageSet({ [SETTINGS_KEY]: { recording } });
+      // 同じ場所に入っている他の設定（字幕の自動オンなど）を消さないよう、読んでから書き戻します。
+      const { [SETTINGS_KEY]: settings = {} } = await storageGet(SETTINGS_KEY);
+      await storageSet({ [SETTINGS_KEY]: { ...settings, recording } });
       updateBadge();
     });
     updateBadge();
@@ -394,12 +426,20 @@
     return lastSyncFailed ? '連携エラー' : '連携中';
   }
 
+  /**
+   * まだ繋がっていないときは、探している最中だと出します。何も出さないと、連携を
+   * 忘れているのか、探している途中なのかが、見ている側から区別できません。
+   */
+  function syncSuffix() {
+    if (syncSettings?.enabled) return ` ・${syncLabel()}`;
+    return pairing ? ' ・review-markdownを探しています' : '';
+  }
+
   function updateBadge(lineCount) {
     if (!badgeEl) return;
     const count = typeof lineCount === 'number' ? lineCount : activeEntries.size;
-    const syncSuffix = syncSettings?.enabled ? ` ・${syncLabel()}` : '';
     badgeEl.textContent = recording
-      ? `字幕メモ: 記録中 (${count}行)${syncSuffix}`
+      ? `字幕メモ: 記録中 (${count}行)${syncSuffix()}`
       : '字幕メモ: 一時停止中(クリックで再開)';
   }
 
@@ -436,6 +476,9 @@
       }
     });
     createBadge();
+    // 会議が始まる前に繋いでおきます。連携コードは起動のたびに変わるので、貼って運ぶ限り
+    // 「貼り直し忘れた回だけ記録が残らない」が起きます。ここで取りに行けば忘れようがありません。
+    requestPairing();
     setInterval(tick, POLL_INTERVAL_MS);
     window.addEventListener('pagehide', () => {
       flushActive();

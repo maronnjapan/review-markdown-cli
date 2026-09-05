@@ -1,5 +1,6 @@
 const INDEX_KEY = 'meetCaptionsMemo_index';
 const MEMO_KEY_PREFIX = 'meetCaptionsMemo_memo_';
+const SETTINGS_KEY = 'meetCaptionsMemo_settings';
 const SYNC_SETTINGS_KEY = 'meetCaptionsMemo_liveSync';
 
 function storageGet(keys) {
@@ -188,6 +189,8 @@ function renderPathField() {
 async function loadSyncSettings() {
   const { [SYNC_SETTINGS_KEY]: sync = {} } = await storageGet(SYNC_SETTINGS_KEY);
   document.getElementById('syncEnabled').checked = sync.enabled === true;
+  // 自動で探すのが既定です。切った人だけが、切ったままになります。
+  document.getElementById('syncAutoPair').checked = sync.autoPair !== false;
   // 保存済みのURLとトークンからコードを組み直して出します。前に貼ったコードがそのまま
   // 見えるので、立ち上げ直したあと「貼り直したか」を見分けられます。
   document.getElementById('syncCode').value = sync.serverUrl && sync.token
@@ -291,6 +294,11 @@ function bindSyncSettingsForm() {
     }
     const sync = {
       enabled,
+      // 自分で選んだという印です。これがあると、連携先を探し当てても「有効にする」を
+      // 勝手に戻しません（`background.js` の savePairing）。切った設定が復活するのは、
+      // 直したつもりのものが直っていないのと同じです。
+      enabledByUser: true,
+      autoPair: document.getElementById('syncAutoPair').checked,
       serverUrl: url,
       token,
       path,
@@ -305,7 +313,59 @@ function bindSyncSettingsForm() {
   });
 }
 
+/**
+ * 字幕(CC)の自動オン。
+ *
+ * 押し忘れると、その会議は1行も記録されません。押す作業を無くすのが既定で、
+ * ここは「自分で押したい人」のための切り替えです。
+ */
+async function loadAutoCaptions() {
+  const { [SETTINGS_KEY]: settings = {} } = await storageGet(SETTINGS_KEY);
+  document.getElementById('autoCaptions').checked = settings.autoCaptions !== false;
+}
+
+function bindAutoCaptions() {
+  document.getElementById('autoCaptions').addEventListener('change', async (event) => {
+    // 記録の一時停止など、同じ場所にある設定を消さないように読んでから書き戻します。
+    const { [SETTINGS_KEY]: settings = {} } = await storageGet(SETTINGS_KEY);
+    await storageSet({ [SETTINGS_KEY]: { ...settings, autoCaptions: event.target.checked } });
+  });
+}
+
+function sendMessage(message) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      // service workerが眠っていただけのこともあるので、失敗は「見つからなかった」に混ぜます。
+      void chrome.runtime.lastError;
+      resolve(response);
+    });
+  });
+}
+
+/**
+ * 開いた時点で、動いているreview-markdownを探してもらいます。
+ *
+ * 探すのはservice worker側（`background.js`）です。見つかれば連携コードの欄はその場で
+ * 埋まるので、ポップアップを開いた人が貼る作業は残りません。見つからなかったときだけ、
+ * 貼る道が要ることを伝えます。
+ */
+async function autoPair() {
+  const { [SYNC_SETTINGS_KEY]: sync = {} } = await storageGet(SYNC_SETTINGS_KEY);
+  if (sync.autoPair === false) return;
+  setSyncStatus('review-markdownを探しています…');
+  const found = await sendMessage({ type: 'REQUEST_PAIRING', force: true });
+  if (!found?.ok) {
+    setSyncStatus('review-markdownが見つかりません。起動してから開き直すか、連携コードを貼ってください', 'error');
+    return;
+  }
+  await loadSyncSettings();
+  renderTranscriptFiles(found.transcriptFiles);
+  setSyncStatus(`繋がりました: ${found.rootDir} に書き込みます`, 'ok');
+}
+
 loadStatus();
 loadMemoList();
-loadSyncSettings();
+loadAutoCaptions();
+bindAutoCaptions();
+loadSyncSettings().then(autoPair);
 bindSyncSettingsForm();

@@ -71,6 +71,7 @@ const ROUTES = [
   { methods: ['POST'], pathname: '/api/ai/tasks/extract', feature: 'autoTasks', handle: extractTasksWithAi },
   { methods: ['POST'], pathname: '/api/ai/tasks/run', feature: 'autoTasks', handle: runTaskWithAi },
   { methods: ['GET'], pathname: '/api/live-captions/token', handle: liveCaptionsTokenInfo },
+  { methods: ['GET'], pathname: '/api/live-captions/pairing', handle: liveCaptionsPairing },
   { methods: ['GET'], pathname: '/api/live-captions/ping', handle: liveCaptionsPing },
   { methods: ['GET'], pathname: '/api/live-captions/targets', handle: liveCaptionsTargets },
   { methods: ['POST'], pathname: '/api/live-captions/append', handle: appendLiveCaption }
@@ -576,6 +577,53 @@ async function liveCaptionsTokenInfo({ request, response, liveCaptionsToken }) {
     // 画面から辿れるようにここで返します。
     extensionDir: extensionDir()
   });
+}
+
+/**
+ * 拡張機能が、連携コードを自分で取りに来る窓口です。
+ *
+ * 連携コードは起動のたびに変わります。人が運ぶ限り、貼り直しを忘れた回だけ記録が
+ * 残りません。しかも気づくのは会議が終わってからです。忘れようのない形にするには、
+ * 人ではなく拡張機能に取りに来させるしかないので、トークン無しで答える窓口を1つ開けます。
+ *
+ * 開ける相手は絞ります。localhost宛てであることに加えて、Originが付いているなら
+ * `chrome-extension://` だけを通します。ブラウザで開いた普通のページからは、この応答は
+ * 読めません（CORSのヘッダーを返すのも拡張機能のオリジンだけです）。
+ *
+ * 同じ端末で動いている別のプログラムには読めますが、そのプログラムは同じファイルを
+ * 直接書ける立場にいます。トークンが守っているのは「文字起こし用のファイルへの追記」
+ * だけなので、ここで渡せる権限は、渡す相手が既に持っているものを超えません。
+ * それでも渡したくないときは、拡張機能側の「自動で連携する」を切ってください。
+ */
+async function liveCaptionsPairing({ rootDir, transcripts, request, response, liveCaptionsToken }) {
+  applyLiveCaptionsCors(request, response);
+  assertLiveCaptionsHost(request);
+  assertExtensionOrigin(request);
+  response.setHeader('Cache-Control', 'no-store');
+  const serverUrl = `http://${request.headers.host}`;
+  return sendJson(response, {
+    ok: true,
+    serverUrl,
+    // 拡張機能が使うのはトークンです。連携コードは、貼り付けで繋ぐ道を残すために添えます。
+    token: liveCaptionsToken,
+    pairingCode: encodePairingCode({ url: serverUrl, token: liveCaptionsToken }),
+    // どこへ書き込むことになるのかは、繋いだ側の画面に出します。絶対パスは返しません
+    // （トークンを渡す窓口なので、要らないものは置きません）。
+    rootDir: path.basename(rootDir),
+    transcriptFiles: [...transcripts.patterns]
+  });
+}
+
+/**
+ * 連携コードを渡す相手を拡張機能に絞ります。Originが無い要求（この画面自身や、
+ * ブラウザ以外からの要求）は通します。ブラウザが付けたOriginがあるのに拡張機能の
+ * ものでないなら、それはWebページからの読み取りなので断ります。
+ */
+function assertExtensionOrigin(request) {
+  const origin = request.headers.origin;
+  if (typeof origin === 'string' && origin && !origin.startsWith('chrome-extension://')) {
+    throw httpError('This endpoint is for the browser extension only', 403);
+  }
 }
 
 /**

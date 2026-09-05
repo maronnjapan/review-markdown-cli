@@ -11,15 +11,29 @@
     <div id="status" class="status">状態を確認中…</div>
   </header>
 
+  <section class="options">
+    <label class="options__row">
+      <input type="checkbox" id="autoCaptions" />
+      会議に入ったら字幕(CC)を自動でオンにする
+    </label>
+    <p class="options__hint">
+      記録できるのは字幕が出ているあいだだけです。オンにし忘れると、気づくのは会議が終わってからになります。
+    </p>
+  </section>
+
   <details id="syncSettings" class="sync-settings">
     <summary>review-markdown連携</summary>
     <p class="sync-settings__hint">
       発言を記録するたびに、review-markdownが開いているMarkdownファイルへも書き足します。
-      review-markdownを起動し、画面右上の「Meet連携」（またはターミナルの起動ログ）から
-      連携コードをコピーして貼り付けてください。トークンは起動のたびに変わるので、
-      立ち上げ直したら貼り直します。
+      同じ端末でreview-markdownが動いていれば、連携コードは自動で取り込みます
+      （立ち上げ直してトークンが変わったときも、そのまま繋ぎ直します）。
+      貼り付けが要るのは、自動で見つからないとき——既定と違うポートで動かしているときなど——だけです。
     </p>
     <form id="syncForm">
+      <label class="sync-settings__row">
+        <input type="checkbox" id="syncAutoPair" />
+        review-markdownを自動で見つけて連携する
+      </label>
       <label class="sync-settings__row">
         <input type="checkbox" id="syncEnabled" />
         連携を有効にする

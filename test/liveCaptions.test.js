@@ -170,6 +170,53 @@ test('GET /api/live-captions/token is only reachable from the app itself', async
   assert.equal(otherOrigin.status, 403);
 });
 
+/**
+ * 連携コードは起動のたびに変わります。人が貼って運ぶ限り、貼り直しを忘れた回だけ記録が
+ * 残りません。拡張機能が自分で取りに来られる窓口を用意して、忘れる場所を無くします。
+ */
+test('拡張機能は、連携コードを自分で取りに来られる', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'live-captions-pairing-'));
+  const aiService = { async status() { return { available: false }; }, close() {} };
+  const { app } = createServer(root, { aiService, aiToken: 'ai-token', liveCaptionsToken: 'captions-token' });
+  const server = app.listen(0);
+  await new Promise((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const extensionOrigin = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop';
+
+  // トークンを持っていないから取りに来ます。ここで持っていることを求めたら、鶏と卵になります。
+  const response = await fetch(`${baseUrl}/api/live-captions/pairing`, {
+    headers: { Origin: extensionOrigin }
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('access-control-allow-origin'), extensionOrigin);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+
+  const info = await response.json();
+  assert.equal(info.serverUrl, baseUrl);
+  assert.equal(info.token, 'captions-token', '拡張機能が使うのはトークン');
+  assert.equal(info.rootDir, path.basename(root), 'どこへ書き込むことになるかも一緒に返す');
+  assert.deepEqual(info.transcriptFiles, ['meet-captions', '*.transcript.md']);
+  assert.deepEqual(
+    decodePairingCode(info.pairingCode),
+    { url: baseUrl, token: 'captions-token' },
+    '貼り付けで繋ぐ道も残す（自動で見つからないとき用）'
+  );
+
+  // 普通のWebページからは読めません（ブラウザのCORSに加えて、ここでも断ります）。
+  const fromWebPage = await fetch(`${baseUrl}/api/live-captions/pairing`, {
+    headers: { Origin: 'https://meet.google.com' }
+  });
+  assert.equal(fromWebPage.status, 403);
+});
+
 test('拡張機能は、書き込まずに繋がりを確かめられるし、書き込み先の候補も引ける', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'live-captions-ping-'));
   await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n', 'utf8');

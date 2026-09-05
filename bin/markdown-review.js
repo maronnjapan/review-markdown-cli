@@ -42,10 +42,13 @@ if (port !== options.port) {
   console.log(`Port ${options.port} is already in use; using ${port} instead.`);
 }
 console.log(`Open ${url}`);
-// 拡張機能へ渡すのはこの1本だけです。URLとトークンを別々に運ばせると、片方だけ古い
-// まま繋ごうとして「連携エラー」になり、どちらを直せばよいかが画面から分かりません。
+// 拡張機能は、このURLを自分で見つけて繋ぎます。連携コードは、自動で見つからなかった
+// ときのために出しておきます（既定と違うポートで動かしているときなど）。運ぶのが1本
+// なのは、URLとトークンを別々に運ばせると、片方だけ古いまま繋ごうとして「連携エラー」に
+// なり、どちらを直せばよいかが画面から分からないからです。
 console.log('Meet Captions Memo（Google Meetの字幕をこのCLIへ流し込むChrome拡張機能）');
-console.log(`  連携コード: ${encodePairingCode({ url, token: liveCaptionsToken })}`);
+console.log('  連携: 拡張機能を読み込んでいれば、ここを自動で見つけて繋ぎます（字幕も会議に入ると自動でオンになります）');
+console.log(`  連携コード: ${encodePairingCode({ url, token: liveCaptionsToken })}（自動で見つからないときに貼る用）`);
 // 書き込み先を決めるのは拡張機能の側なので、書ける場所は起動のたびに出しておきます。
 console.log(`  文字起こし用ファイル: ${transcripts.patterns.join(', ') || '（設定されていません）'}`
   + `${transcripts.isDefault ? '（既定。transcriptFiles で変えられます）' : ''}`);

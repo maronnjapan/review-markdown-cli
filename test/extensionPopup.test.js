@@ -6,6 +6,7 @@ import { JSDOM } from 'jsdom';
 import { extensionDir } from '../src/extensionCommand.js';
 import { encodePairingCode } from '../src/pairing.js';
 
+const SETTINGS_KEY = 'meetCaptionsMemo_settings';
 const SYNC_SETTINGS_KEY = 'meetCaptionsMemo_liveSync';
 
 /**
@@ -42,6 +43,8 @@ test('連携コードを貼ると接続先が出て、確認してから保存�
   );
 
   document.getElementById('syncEnabled').checked = true;
+  document.getElementById('syncAutoPath').checked = false;
+  document.getElementById('syncAutoPath').dispatchEvent(new document.defaultView.Event('change'));
   document.getElementById('syncPath').value = 'notes/today.md';
   document.getElementById('syncForm').dispatchEvent(new document.defaultView.Event('submit', { cancelable: true }));
   await waitFor(() => stored[SYNC_SETTINGS_KEY]);
@@ -49,6 +52,8 @@ test('連携コードを貼ると接続先が出て、確認してから保存�
   // ブラウザ側のrealmで作られた物なので、こちらへ写してから比べます。
   assert.deepEqual({ ...stored[SYNC_SETTINGS_KEY] }, {
     enabled: true,
+    enabledByUser: true,
+    autoPair: true,
     serverUrl: 'http://localhost:3210',
     token: 'captions-token',
     path: 'notes/today.md',
@@ -82,6 +87,7 @@ test('保存済みの設定は、貼ったコードの形に戻して見せる',
 
   assert.equal(document.getElementById('syncCode').value, code, '立ち上げ直したあと、貼り直したかを見分けられる');
   assert.equal(document.getElementById('syncEnabled').checked, true);
+  assert.equal(document.getElementById('syncAutoPair').checked, true, '自動で探すのが既定');
   assert.equal(document.getElementById('syncAutoPath').checked, true);
   assert.equal(
     document.getElementById('syncPathField').hidden,
@@ -108,16 +114,75 @@ test('初回は会議ごとのファイルを選び、空の手動パスでは�
   assert.equal(stored[SYNC_SETTINGS_KEY], undefined, '送信不能な設定を連携中として保存しない');
 });
 
+/**
+ * 貼る作業が残っていると、貼り忘れた回だけ記録が残りません。開いた時点で繋がっている
+ * ことを確かめます。
+ */
+test('開いただけで連携先が見つかり、コードは貼らずに埋まる', async () => {
+  const { document, messages, stored } = await openPopup({}, {
+    pairing: {
+      ok: true,
+      serverUrl: 'http://127.0.0.1:3001',
+      token: 'found-token',
+      rootDir: 'book',
+      transcriptFiles: ['meet-captions']
+    }
+  });
+
+  // ブラウザ側のrealmで作られた物なので、こちらへ写してから比べます。
+  assert.deepEqual(
+    messages.map((message) => ({ ...message })),
+    [{ type: 'REQUEST_PAIRING', force: true }],
+    '開いたら探しに行く'
+  );
+  assert.match(document.getElementById('syncStatus').textContent, /繋がりました: book に書き込みます/);
+  assert.equal(
+    document.getElementById('syncCode').value,
+    encodePairingCode({ url: 'http://127.0.0.1:3001', token: 'found-token' }),
+    '見つかった連携先が、貼ったのと同じ形で見える'
+  );
+  assert.equal(document.getElementById('syncEnabled').checked, true);
+  assert.equal(stored[SYNC_SETTINGS_KEY].token, 'found-token');
+});
+
+test('自動で探すのを切っていたら、開いても探しに行かない', async () => {
+  const { messages, document } = await openPopup({ [SYNC_SETTINGS_KEY]: { autoPair: false } });
+
+  assert.deepEqual(messages, []);
+  assert.equal(document.getElementById('syncAutoPair').checked, false, '切った選択がそのまま見える');
+});
+
+test('字幕の自動オンは既定で入っていて、切っても記録の設定は消えない', async () => {
+  const { document, stored } = await openPopup({ [SETTINGS_KEY]: { recording: false } });
+
+  const autoCaptions = document.getElementById('autoCaptions');
+  assert.equal(autoCaptions.checked, true, '押し忘れを無くすのが既定');
+
+  autoCaptions.checked = false;
+  autoCaptions.dispatchEvent(new document.defaultView.Event('change'));
+  await waitFor(() => stored[SETTINGS_KEY].autoCaptions === false);
+
+  assert.equal(stored[SETTINGS_KEY].recording, false, '同じ場所にある記録の設定を消さない');
+});
+
 /* ---------------------------------------------------------------- *
  * 差し替え口
  * ---------------------------------------------------------------- */
 
-/** ポップアップを、本物のHTMLとスクリプトのまま開きます。chrome APIとfetchだけを差し替えます。 */
-async function openPopup(initialStorage = {}) {
+/**
+ * ポップアップを、本物のHTMLとスクリプトのまま開きます。chrome APIとfetchだけを差し替えます。
+ *
+ * @param {object} [initialStorage] chrome.storage.local の初期値。
+ * @param {object} [options]
+ * @param {object} [options.pairing] service workerが返す「探した結果」。既定は見つからなかったとき。
+ */
+async function openPopup(initialStorage = {}, { pairing = { ok: false, reason: 'not-found' } } = {}) {
   const directory = extensionDir();
   const html = await fs.readFile(path.join(directory, 'popup.html'), 'utf8');
   const stored = { ...initialStorage };
   const requests = [];
+
+  const messages = [];
 
   const dom = new JSDOM(html, { runScripts: 'outside-only', url: 'chrome-extension://test/popup.html' });
   const { window } = dom;
@@ -141,7 +206,24 @@ async function openPopup(initialStorage = {}) {
     },
     // メモ一覧とMeetタブの状態は、この確認の対象ではありません。空で答えます。
     tabs: { query: (_query, callback) => callback([]), sendMessage: () => {} },
-    runtime: { lastError: null },
+    runtime: {
+      lastError: null,
+      // 探すのはservice worker（background.js）の仕事です。ここでは結果だけを返し、
+      // 見つかったときは本物と同じように連携設定を書き込みます。
+      sendMessage(message, callback) {
+        messages.push(message);
+        if (pairing.ok) {
+          stored[SYNC_SETTINGS_KEY] = {
+            enabled: true,
+            serverUrl: pairing.serverUrl,
+            token: pairing.token,
+            path: '',
+            autoPath: true
+          };
+        }
+        callback(pairing);
+      }
+    },
     downloads: { download: () => {} }
   };
   window.fetch = async (url, options = {}) => {
@@ -157,7 +239,12 @@ async function openPopup(initialStorage = {}) {
     window.eval(await fs.readFile(path.join(directory, file), 'utf8'));
   }
   await waitFor(() => window.document.getElementById('syncPairing').textContent !== '');
-  return { document: window.document, window, stored, requests };
+  // 開くと同時に連携先を探しに行きます。探し終わるまで待たないと、そのあとの操作の結果と
+  // 混ざって、どちらの表示を見ているのか分からなくなります。
+  if (stored[SYNC_SETTINGS_KEY]?.autoPair !== false) {
+    await waitFor(() => window.document.getElementById('syncStatus').dataset.state !== undefined);
+  }
+  return { document: window.document, window, stored, requests, messages };
 }
 
 function jsonResponse(body) {

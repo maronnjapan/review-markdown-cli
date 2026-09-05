@@ -10,6 +10,9 @@ import { fileURLToPath } from 'node:url';
  *
  * `--path` を付けると、パスだけを1行で出します。`open $(review-markdown extension --path)` の
  * ように、そのまま別のコマンドへ渡せるようにするためです。
+ *
+ * 読み込ませたあとに人がすることはありません。連携コードは拡張機能が自分で取りに来ます
+ * （`src/routes.js` の `liveCaptionsPairing`）。
  */
 
 export const EXTENSION_USAGE = `Usage: review-markdown extension [--path]
@@ -23,8 +26,14 @@ Options:
 読み込ませ方:
   1. chrome://extensions を開き、右上の「デベロッパーモード」をオンにする
   2. 「パッケージ化されていない拡張機能を読み込む」で、上のフォルダを選ぶ
-  3. review-markdown を起動し、ブラウザ画面右上の「Meet連携」から連携コードをコピーする
-  4. 拡張機能のアイコンを開き、連携コードを貼って保存する`;
+  3. review-markdown を起動する
+
+これで繋がります。拡張機能が動いている review-markdown を自分で見つけて連携し、
+Meetの会議に入ると字幕(CC)も自動でオンになります。設定を運ぶ手作業はありません。
+
+自動で見つからないとき（既定（3000番台）と違うポートで動かしているときなど）は、
+ブラウザ画面右上の「Meet連携」から連携コードをコピーし、拡張機能のアイコンを開いて
+貼り付けてください。`;
 
 /** リポジトリに同梱している拡張機能フォルダ。パッケージにも `extension/` として入ります。 */
 export function extensionDir() {
@@ -55,8 +64,10 @@ export function runExtensionCommand(argv = []) {
       '読み込ませ方:',
       '  1. chrome://extensions を開き、右上の「デベロッパーモード」をオンにする',
       '  2. 「パッケージ化されていない拡張機能を読み込む」で、上のフォルダを選ぶ',
-      '  3. review-markdown を起動し、ブラウザ画面右上の「Meet連携」から連携コードをコピーする',
-      '  4. 拡張機能のアイコンを開き、連携コードを貼って保存する'
+      '  3. review-markdown を起動する（拡張機能が自動で見つけて繋ぎます）',
+      '',
+      'Meetの会議に入ると字幕(CC)も自動でオンになります。自動で見つからないときだけ、',
+      'ブラウザ画面右上の「Meet連携」から連携コードをコピーして貼り付けてください。'
     ],
     stderr: [],
     exitCode: 0

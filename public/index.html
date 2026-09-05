@@ -802,7 +802,7 @@
 
         <p id="live-captions-error" class="load-error" hidden></p>
 
-        <p class="ai-context-hint">Google Meetの字幕を、このディレクトリのMarkdownへ1行ずつ書き足すChrome拡張機能を同梱しています。下の連携コードを拡張機能へ貼れば繋がります。コードはトークンと同じ扱いで、同じ端末の自分の拡張機能にだけ渡してください。</p>
+        <p class="ai-context-hint">Google Meetの字幕を、このディレクトリのMarkdownへ1行ずつ書き足すChrome拡張機能を同梱しています。拡張機能を読み込んでいれば、連携コードは拡張機能が自分で取りに来るので、貼る作業はありません。Meetの字幕(CC)も、会議に入ると自動でオンになります。下のコードは、自動で見つからないとき（既定（3000番台）と違うポートで動かしているときなど）に貼るためのものです。コードはトークンと同じ扱いで、同じ端末の自分の拡張機能にだけ渡してください。</p>
 
         <section class="settings-section">
           <h3 class="settings-section-title">1. 拡張機能を読み込む</h3>
@@ -814,8 +814,8 @@
         </section>
 
         <section class="settings-section">
-          <h3 class="settings-section-title">2. 連携コードを貼る</h3>
-          <p class="ai-context-hint">拡張機能のアイコンを開き、「review-markdown連携」の連携コード欄へ貼って保存します。トークンは起動のたびに変わるので、立ち上げ直したら貼り直してください。</p>
+          <h3 class="settings-section-title">2. 自動で見つからないときだけ、連携コードを貼る</h3>
+          <p class="ai-context-hint">拡張機能のアイコンを開き、「review-markdown連携」の連携コード欄へ貼って保存します。ふだんは要りません（立ち上げ直してトークンが変わったときも、拡張機能が繋ぎ直します）。</p>
           <div class="copy-field">
             <input id="live-captions-code" type="text" readonly aria-label="連携コード">
             <button id="live-captions-copy-code" type="button">コピー</button>
