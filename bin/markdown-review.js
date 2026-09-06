@@ -23,7 +23,7 @@ if (options.help) {
   process.exit(0);
 }
 
-const { app, rootDir, filter, liveCaptionsToken, transcripts } = buildServer();
+const { app, rootDir, filter, liveCaptionsToken, transcripts, automationAppTarget } = buildServer();
 const { server, port } = await startServer();
 const url = `http://localhost:${port}`;
 
@@ -36,6 +36,11 @@ if (options.manager) console.log('  manager: enabled');
 if (options.translation) console.log('  translation: enabled');
 // 裏でAIを動かし続ける機能なので、どの間隔で何を任せているかまで起動時に見せます。
 if (options.autoTasks) console.log(`  auto tasks: enabled (${autoTasksSummary(options)})`);
+if (options.automationApp) {
+  console.log(automationAppTarget
+    ? `  automation-app: enabled (${automationAppTarget.baseUrl})`
+    : '  automation-app: enabled, but automationAppUrl / automationAppToken is not set yet');
+}
 // モデルを名指ししたときだけ出します。自動で選んだモデルは /api/ai/status が画面へ出します。
 for (const [label, value] of aiModelLines(options)) console.log(`  ${label}: ${value}`);
 if (port !== options.port) {

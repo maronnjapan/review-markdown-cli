@@ -302,6 +302,30 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
       : 'やると決めたのを取り消しました。');
   }
 
+  /**
+   * このタスクを、連携先のAutomation Appへ下書きのToDoとして登録します。
+   * 確定・承認・Agentの作成は向こうの画面で人が押す操作なので、ここでは行いません。
+   */
+  async function pushToAutomationApp(id) {
+    const documentPath = state.currentPath;
+    if (!documentPath) return false;
+    setStatus('saving');
+    try {
+      const result = await api.pushTaskToAutomationApp({ path: documentPath, id });
+      if (state.currentPath !== documentPath) return false;
+      adopt(result);
+      setStatus('saved');
+      render();
+      toaster.info('Automation Appへ登録しました。確定はAutomation Appの画面で行ってください。');
+      return true;
+    } catch (error) {
+      if (state.currentPath !== documentPath) return false;
+      setStatus('error', `登録できませんでした: ${error.message}`);
+      render();
+      return false;
+    }
+  }
+
   /** 決めたタスクの段取り（期限・優先度・担当・自分のメモ）。書きかけは保存できてから捨てます。 */
   async function savePlan(id, form) {
     const note = form.elements.note.value;
@@ -568,6 +592,7 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
           <span class="task-priority" data-priority="${escapeHtml(task.priority)}">${escapeHtml(PRIORITY_LABELS[task.priority] || task.priority)}</span>
           ${task.owner ? `<span class="task-owner">担当: ${escapeHtml(task.owner)}</span>` : ''}
           ${task.source === 'reviewer' ? '<span class="task-source">自分で足した</span>' : ''}
+          ${task.automationApp?.workDefinitionId ? '<span class="task-automation-app">Automation Appへ登録済み</span>' : ''}
         </header>
         <p class="task-title">${escapeHtml(task.title)}</p>
         ${task.detail ? `<p class="task-detail">${escapeHtml(task.detail)}</p>` : ''}
@@ -714,6 +739,11 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
     } else {
       buttons.push(`<button type="button" data-task-status="open" data-task-id="${id}"${disabled}>未着手に戻す</button>`);
     }
+    // やると決めたタスクだけを出す口です。決めていないものまで送れると、読まれる前の
+    // 候補までAutomation Appへ流れてしまいます。
+    if (state.features.automationApp === true && isCommitted(task) && task.status !== 'done' && task.status !== 'dismissed') {
+      buttons.push(`<button type="button" data-task-push-automation-app="${id}"${disabled}>Automation Appへ登録</button>`);
+    }
     buttons.push(`<button type="button" data-task-delete="${id}"${disabled}>削除</button>`);
     return buttons.join('\n');
   }
@@ -801,6 +831,7 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
       if (button.dataset.taskRun) return runTask(button.dataset.taskRun);
       if (button.dataset.taskStatus) return setTaskStatus(button.dataset.taskId, button.dataset.taskStatus);
       if (button.dataset.taskCopy) return copyResult(button.dataset.taskCopy);
+      if (button.dataset.taskPushAutomationApp) return pushToAutomationApp(button.dataset.taskPushAutomationApp);
       if (button.dataset.taskKnowledgeSave) {
         return saveReference(button.dataset.taskKnowledgeSave, undefined, '参考知識を保存しました。');
       }

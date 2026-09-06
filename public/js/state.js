@@ -12,7 +12,7 @@ export function createState() {
 
     // Optional features are opt-in. The server repeats these flags with each
     // document response so a direct URL and a file-list navigation behave alike.
-    features: { manager: false, translation: false, autoTasks: false },
+    features: { manager: false, translation: false, autoTasks: false, automationApp: false },
     // 設定ダイアログが最後に受け取ったもの（`public/js/settings.js`）。開くまでは null です。
     settings: null,
 

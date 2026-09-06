@@ -150,6 +150,23 @@ const CONFIG_KEY_SPECS = {
     kind: 'scalar',
     parse: (value, source) => parseIdentifier(value, source),
     help: '同上の推論強度。費用と待ち時間が一番大きく変わるつまみ'
+  },
+  automationApp: {
+    kind: 'scalar',
+    parse: (value, source) => parseBoolean(value, source),
+    help: 'やると決めたタスクをAutomation App（agent-xaa-platform）へ登録できるようにするかどうか（既定: false）'
+  },
+  automationAppUrl: {
+    kind: 'scalar',
+    scope: 'user',
+    parse: (value, source) => parseHttpUrl(value, source),
+    help: '連携先Automation AppのURL（例: https://automation-app-xxxxx.a.run.app）'
+  },
+  automationAppToken: {
+    kind: 'scalar',
+    scope: 'user',
+    parse: (value, source) => parseIdentifier(value, source),
+    help: 'Automation Appへ渡すアクセストークン（Human IdPで agent:operate スコープを要求して取得。環境変数 AUTOMATION_APP_ACCESS_TOKEN でも上書きできます）'
   }
 };
 
@@ -310,6 +327,21 @@ export function normalizePatternList(value, source = 'patterns') {
   return normalizePatterns(values);
 }
 
+/** URLとして読める `http` / `https` の値だけを通します。末尾の `/` は結合しやすいよう落とします。 */
+export function parseHttpUrl(value, source = 'url') {
+  const text = parseIdentifier(value, source);
+  let parsed;
+  try {
+    parsed = new URL(text);
+  } catch {
+    throw new Error(`${source} はURLとして読めません: ${value}`);
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error(`${source} は http:// か https:// のURLで指定してください: ${value}`);
+  }
+  return text.replace(/\/+$/, '');
+}
+
 export function parsePort(value, source = 'port') {
   const port = typeof value === 'number' ? value : Number(String(value).trim());
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -415,7 +447,13 @@ export function applyConfigToOptions(options, config = {}) {
     // そのまま届きます。どれも未設定なら、既定のAIをその既定のモデルで走らせます。
     aiProvider: config.aiProvider ?? DEFAULT_AI_PROVIDER,
     aiModelProvider: config.aiModelProvider,
-    aiModels: aiModelsFromConfig(config)
+    aiModels: aiModelsFromConfig(config),
+    // Automation Appの連携先も、どのAIで走らせるかと同じくコマンドラインに口を持たず、
+    // 設定ファイルの値がそのまま届きます。URLとトークンは `scope: 'user'` なので、
+    // 探索で見つけたプロジェクト設定からは（`CONFIG_KEY_SPECS` の説明の通り）届きません。
+    automationApp: config.automationApp === true,
+    automationAppUrl: config.automationAppUrl,
+    automationAppToken: config.automationAppToken
   };
 }
 
