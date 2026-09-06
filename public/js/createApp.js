@@ -5,7 +5,7 @@ import { createAutosave } from './autosave.js';
 import { createAutoTasksController } from './autoTasks.js';
 import { createBodyCopier } from './bodyCopy.js';
 import { createCaptionRecapController } from './captionRecap.js';
-import { commentIndexesAt, renderCommentHighlights } from './commentAnchors.js';
+import { commentIndexesAt, refreshCommentAttachment, renderCommentHighlights } from './commentAnchors.js';
 import {
   copyCommentTarget,
   createCommentDialog,
@@ -220,8 +220,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     onDocumentUpdated(data) {
       adoptSavedDocument(data);
     },
-    // 編集中も見出しの一覧は隣のプレビューから引きます。書いた見出しがそのまま出ます。
-    onPreviewRendered: renderOutline
+    onOutlineChanged: renderOutline
   });
   const linkNavigator = createLinkNavigator({
     root: content,
@@ -635,9 +634,11 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       renderComments();
       return;
     }
-    content.classList.remove('preview');
     content.innerHTML = state.rawHtml;
     decorateReviewTargets();
+    // 印を付ける前に引き直します。外れたコメントは編集モードだけの話ではないので、
+    // 読むときにも「もう指す先が無い」と分かる必要があります。
+    refreshCommentAttachment(content, state.comments);
     renderOutline();
     renderComments();
     renderDiagrams(content, { isStillCurrent: () => state.mode === 'comment' });
@@ -734,17 +735,11 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
   }
 
   function renderOutline() {
-    const pdfPages = state.documentType === 'pdf'
-      ? [...content.querySelectorAll('.pdf-page[data-page-number]')]
-      : [];
-    const headings = state.documentType === 'pdf'
-      ? []
-      : [...content.querySelectorAll('h1, h2, h3, h4, h5, h6')];
-    const targets = state.documentType === 'pdf' ? pdfPages : headings;
-    refs.outlineCount.textContent = String(targets.length);
+    const entries = outlineEntries();
+    refs.outlineCount.textContent = String(entries.length);
     refs.outlineList.replaceChildren();
 
-    if (targets.length === 0) {
+    if (entries.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'muted';
       empty.textContent = state.documentType === 'pdf'
@@ -754,29 +749,53 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       return;
     }
 
-    targets.forEach((target, index) => {
-      const pageNumber = target.dataset.pageNumber;
-      const level = pageNumber ? 1 : Number(target.tagName.slice(1));
-      const label = pageNumber ? `ページ ${pageNumber}` : targetTextOf(target).trim();
+    entries.forEach((entry, index) => {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'outline-item';
-      button.dataset.level = String(level);
+      button.dataset.level = String(entry.level);
 
       const number = document.createElement('span');
       number.className = 'outline-item-number';
-      number.textContent = pageNumber || String(index + 1);
+      number.textContent = entry.badge || String(index + 1);
       const text = document.createElement('span');
       text.className = 'outline-item-label';
-      text.textContent = label || `見出し ${index + 1}`;
+      text.textContent = entry.label || `見出し ${index + 1}`;
       button.append(number, text);
       button.addEventListener('click', () => {
-        target.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
         closeSidePane();
-        focusReviewElement(target);
+        entry.reveal();
       });
       refs.outlineList.append(button);
     });
+  }
+
+  /**
+   * 目次に並べるもの。どこから拾うかは画面によって違います。
+   *
+   * 編集モードだけは、組み上がりではなく書いているMarkdownそのものから拾います。
+   * いま打った見出しがその場で並ぶのと、押した先がカーソルの行になるためです。
+   */
+  function outlineEntries() {
+    if (state.documentType === 'pdf') {
+      return [...content.querySelectorAll('.pdf-page[data-page-number]')].map((page) => ({
+        level: 1,
+        badge: page.dataset.pageNumber,
+        label: `ページ ${page.dataset.pageNumber}`,
+        reveal: () => revealOutlineTarget(page)
+      }));
+    }
+    if (state.mode === 'edit') return editor.outlineEntries();
+    return [...content.querySelectorAll('h1, h2, h3, h4, h5, h6')].map((heading) => ({
+      level: Number(heading.tagName.slice(1)),
+      label: targetTextOf(heading).trim(),
+      reveal: () => revealOutlineTarget(heading)
+    }));
+  }
+
+  function revealOutlineTarget(target) {
+    target.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+    focusReviewElement(target);
   }
 
   function scrollToDocumentTop() {

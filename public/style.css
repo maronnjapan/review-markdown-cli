@@ -224,7 +224,6 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   background: #fff;
 }
 .editor-toolbar button { min-width: 2.4rem; padding: 0.4rem 0.6rem; }
-.editor-toolbar-spacer { flex: 1; }
 .editor-toolbar select {
   background: #fff;
   border: 1px solid var(--border);
@@ -250,15 +249,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .markdown-body :is(h1, h2, h3, h4, h5, h6), .pdf-page {
   scroll-margin-top: calc(var(--app-header-height) + var(--document-toolbar-height, 75px) + 1rem);
 }
-.editor-shell { min-width: 0; }
-.review-layout.editing-mode .editor-shell {
-  align-items: start;
-  display: grid;
-  gap: 0;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-}
-.review-layout.editing-mode .editor-shell.preview-hidden { grid-template-columns: minmax(0, 1fr); }
-.review-layout.editing-mode .editor-shell.preview-hidden #markdown-content { display: none; }
+/* 編集中は本文をこの1枚に譲ります。組み上がりはコメントモードが1枚で出します。 */
+.review-layout.editing-mode #markdown-content { display: none; }
 .markdown-source {
   background: #fbfcfe;
   border: none;
@@ -269,10 +261,10 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   /* 画面の高さいっぱいまで。上に居座る見出し・書式・保存の3段ぶんを引いています。 */
   min-height: calc(100vh - var(--app-header-height) - var(--document-toolbar-height, 75px) - 9rem);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Noto Sans Mono CJK JP", monospace;
-  font-size: 0.88rem;
-  line-height: 1.85;
+  font-size: 0.9rem;
+  line-height: 1.9;
   outline: none;
-  padding: 1rem 1.25rem 2rem;
+  padding: 1rem 1.6rem 2rem;
   resize: none;
   tab-size: 2;
   white-space: pre-wrap;
@@ -285,15 +277,6 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   outline: 2px solid rgba(37, 87, 214, 0.35);
   outline-offset: -2px;
 }
-.review-layout.editing-mode .editor-shell:not(.preview-hidden) .markdown-source {
-  border-right: 1px solid var(--border);
-}
-/* 編集中の隣は読むためだけのものです。押せそうな見た目にはしません。 */
-.markdown-body.preview {
-  background: #fff;
-  max-width: none;
-}
-.markdown-body.preview .comment-marker { pointer-events: none; }
 .editor-comment-anchor {
   background: #fff0a8;
   border-radius: 3px;
@@ -1981,13 +1964,6 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   .document-toolbar-actions > button { flex: 1 1 11rem; }
   #document-title { max-width: 45vw; }
   .toast-region { bottom: 4.75rem; }
-  /* 狭い画面では横に並べません。書く欄が細くなりすぎて、どちらも読めなくなります。 */
-  .review-layout.editing-mode .editor-shell { grid-template-columns: minmax(0, 1fr); }
-  .review-layout.editing-mode .editor-shell:not(.preview-hidden) .markdown-source {
-    border-bottom: 1px solid var(--border);
-    border-right: none;
-    min-height: 55vh;
-  }
 }
 
 @media (max-width: 640px) {

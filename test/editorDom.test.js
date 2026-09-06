@@ -37,9 +37,6 @@ test('edit mode writes back only the range that changed, and says which comment 
     if (url.startsWith('/api/file?')) {
       return jsonResponse(await filePayload(currentMarkdown, currentComments));
     }
-    if (url === '/api/render' && options.method === 'POST') {
-      return jsonResponse({ html: await renderMarkdown(JSON.parse(options.body).markdown) });
-    }
     if (url === '/api/file' && options.method === 'POST') {
       const body = JSON.parse(options.body);
       requests.push(body);
@@ -98,11 +95,15 @@ test('edit mode writes back only the range that changed, and says which comment 
   assert.equal(currentMarkdown, '# Title\n\nUpdated text.\n\n:::message\n触っていない囲み\n:::\n');
   // 追いかけられなくなったコメントは、黙って別の場所に付け替えず、外れたと言います。
   await waitFor(() => document.querySelector('#comments-list .comment-card.detached'));
-  assert.equal(requests[1].comments[0].targetDetached, true);
-  assert.equal(requests[1].comments[0].comment, 'Keep this comment');
+  assert.equal(requests[1].comments[0].comment, 'Keep this comment', 'コメント自体は消さない');
+
+  // 外れたことは読むときにも分かります。編集モードだけの話にはしません。
+  document.querySelector('#comment-mode-button').click();
+  await waitFor(() => document.querySelector('#markdown-content aside.msg'));
+  assert.equal(document.querySelectorAll('#comments-list .comment-card.detached').length, 1);
 });
 
-test('the toolbar and the keyboard write Markdown, and the preview follows', async (t) => {
+test('the toolbar and the keyboard write Markdown, and the outline follows', async (t) => {
   const indexHtml = await fs.readFile(path.join(projectDir, 'public', 'index.html'), 'utf8');
   const dom = new JSDOM(indexHtml, {
     url: 'http://localhost/#/review/example.md',
@@ -119,9 +120,6 @@ test('the toolbar and the keyboard write Markdown, and the preview follows', asy
   globalThis.fetch = async (input, options = {}) => {
     const url = String(input);
     if (url.startsWith('/api/file?')) return jsonResponse(await filePayload(currentMarkdown));
-    if (url === '/api/render' && options.method === 'POST') {
-      return jsonResponse({ html: await renderMarkdown(JSON.parse(options.body).markdown) });
-    }
     if (url === '/api/file' && options.method === 'POST') {
       const body = JSON.parse(options.body);
       requests.push(body);
@@ -174,12 +172,16 @@ test('the toolbar and the keyboard write Markdown, and the preview follows', asy
   source.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
   assert.equal(source.value, '- First paragraph.\n\n\nSecond paragraph.\n');
 
-  await waitFor(() => document.querySelector('#markdown-content li'), 1600);
-  assert.match(document.querySelector('#markdown-content li').textContent, /First paragraph\./);
+  // 見出しの目次は、組み上がりではなく書いているMarkdownから引きます。
+  source.setSelectionRange(0, 0);
+  source.value = `## 追加した見出し\n${source.value}`;
+  source.dispatchEvent(new window.Event('input', { bubbles: true }));
+  await waitFor(() => document.querySelector('.outline-item'));
+  assert.equal(document.querySelector('.outline-item-label').textContent, '追加した見出し');
 
   await waitFor(() => requests.length === 1, 1600);
   await waitFor(() => document.querySelector('#editor-save-row').dataset.state === 'saved');
-  assert.equal(currentMarkdown, '- First paragraph.\n\n\nSecond paragraph.\n');
+  assert.equal(currentMarkdown, '## 追加した見出し\n- First paragraph.\n\n\nSecond paragraph.\n');
 
   document.dispatchEvent(new window.KeyboardEvent('keydown', {
     key: 'e',

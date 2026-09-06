@@ -1,6 +1,5 @@
 import { createAutosave } from './autosave.js';
-import { refreshCommentAttachment, renderCommentHighlights } from './commentAnchors.js';
-import { renderDiagrams } from './diagrams.js';
+import { refreshCommentAttachment } from './commentAnchors.js';
 import {
   blockFormatAt,
   continueBlockOnEnter,
@@ -13,12 +12,10 @@ import {
   toggleLinePrefix
 } from './markdownEditing.js';
 
-const PREVIEW_DELAY_MS = 250;
-const PREVIEW_BLOCK_SELECTOR = 'p, li, blockquote, pre, h1, h2, h3, h4, h5, h6';
-const PREVIEW_PREFERENCE_KEY = 'review-markdown:editor-preview';
+const HEADING_LINE = /^([\t ]{0,3}(#{1,6})[\t ]+)(.+?)[\t ]*$/gm;
 
 /**
- * 編集モード。書くのは生のMarkdownそのもので、隣に組んだ結果を出します。
+ * 編集モード。画面いっぱいの1枚で、生のMarkdownをそのまま書き換えます。
  *
  * 以前はレンダリング後のHTMLを直接いじらせていました（WYSIWYG）。見たまま書けるのは
  * よいのですが、保存のたびにHTMLをMarkdownへ戻すため、`:::message` や脚注、`$式$`、
@@ -32,17 +29,16 @@ const PREVIEW_PREFERENCE_KEY = 'review-markdown:editor-preview';
  * 保存は変わった範囲だけを送ります。textareaの中身と最後に受け取った本文を比べ、
  * 前後の一致する部分を除いた1か所だけを `/api/file` へ渡すので、触っていない行は
  * ファイルの中で1バイトも動きません。
+ *
+ * 組み上がりを隣へ並べることはしません。書く幅が半分になるほうが困りますし、
+ * 読む形は `Ctrl/⌘+Shift+E` のコメントモードが1枚で出します。
  */
-export function createEditor({ refs, state, api, onCommentsChanged, onDocumentUpdated, onPreviewRendered }) {
+export function createEditor({ refs, state, api, onCommentsChanged, onDocumentUpdated, onOutlineChanged }) {
   const source = refs.markdownSource;
-  const preview = refs.markdownContent;
   const autosave = createAutosave({ save: saveDocument, hasPendingWork: hasUnsavedText });
-  let previewRequest = 0;
-  let previewTimer = null;
-  let previewVisible = readPreviewPreference();
+  let lastOutline = null;
 
   refs.retrySaveButton.addEventListener('click', () => autosave.run());
-  refs.previewToggle.addEventListener('click', () => setPreviewVisible(!previewVisible));
   refs.blockFormat.addEventListener('change', () => {
     const level = refs.blockFormat.value === 'p' ? 0 : Number(refs.blockFormat.value.slice(1));
     applyEdit(setHeadingLevel(source.value, source.selectionStart, source.selectionEnd, level));
@@ -62,8 +58,11 @@ export function createEditor({ refs, state, api, onCommentsChanged, onDocumentUp
   function render() {
     source.value = state.markdown;
     source.setSelectionRange(0, 0);
-    applyPreviewHtml(state.rawHtml, ++previewRequest);
-    setPreviewVisible(previewVisible);
+    source.scrollTop = 0;
+    lastOutline = null;
+    notifyOutlineChanged();
+    // 開いた時点の本文は読み込み済みなので、外れたコメントはここで見分けられます。
+    adoptRenderedDocument(state.rawHtml);
     source.focus();
   }
 
@@ -81,7 +80,7 @@ export function createEditor({ refs, state, api, onCommentsChanged, onDocumentUp
       setStatus('dirty', '未保存の変更があります');
       autosave.schedule();
     }
-    schedulePreview();
+    notifyOutlineChanged();
     syncBlockFormat();
   }
 
@@ -193,59 +192,47 @@ export function createEditor({ refs, state, api, onCommentsChanged, onDocumentUp
   }
 
   /* ---------------------------------------------------------------- *
-   * 隣に出す組み上がり
+   * 見出しと、コメントの行き先
    * ---------------------------------------------------------------- */
 
-  function setPreviewVisible(visible) {
-    previewVisible = visible;
-    refs.editorShell.classList.toggle('preview-hidden', !visible);
-    refs.previewToggle.setAttribute('aria-pressed', String(visible));
-    refs.previewToggle.textContent = visible ? 'プレビューを隠す' : 'プレビューを出す';
-    try {
-      source.ownerDocument.defaultView.localStorage?.setItem(PREVIEW_PREFERENCE_KEY, visible ? 'on' : 'off');
-    } catch {
-      // 保存できない設定（プライベートウィンドウなど）でも、この画面のあいだは効かせます。
-    }
+  /** 書いているMarkdownそのものから拾う見出し。打った端から一覧に出ます。 */
+  function outlineEntries() {
+    return [...source.value.matchAll(HEADING_LINE)].map((match) => {
+      const at = match.index + match[1].length;
+      return {
+        level: match[2].length,
+        label: match[3],
+        reveal: () => revealSource(at, match[3].length)
+      };
+    });
   }
 
-  function readPreviewPreference() {
-    try {
-      return refs.markdownSource.ownerDocument.defaultView.localStorage?.getItem(PREVIEW_PREFERENCE_KEY) !== 'off';
-    } catch {
-      return true;
-    }
+  /** 見出しの並びが変わったときだけ知らせます。1打ごとに一覧を組み直さないためです。 */
+  function notifyOutlineChanged() {
+    const signature = outlineEntries().map((entry) => `${entry.level}:${entry.label}`).join('\n');
+    if (signature === lastOutline) return;
+    lastOutline = signature;
+    onOutlineChanged?.();
   }
 
-  function schedulePreview() {
-    clearTimeout(previewTimer);
-    previewTimer = setTimeout(refreshPreview, PREVIEW_DELAY_MS);
+  /** 選んだところまでtextareaを送ります。入れ直すのは、カーソルの位置まで巻くためです。 */
+  function revealSource(index, length) {
+    source.blur();
+    source.setSelectionRange(index, index + length);
+    source.focus();
   }
 
-  /** 組むのはサーバーです。読む画面と同じ手を通すので、出るものも同じになります。 */
-  async function refreshPreview() {
-    if (state.mode !== 'edit' || !state.currentPath) return;
-    const request = ++previewRequest;
-    const markdown = source.value;
-    const documentPath = state.currentPath;
-    try {
-      const { html } = await api.renderMarkdown({ path: documentPath, markdown });
-      if (request !== previewRequest || state.mode !== 'edit' || state.currentPath !== documentPath) return;
-      applyPreviewHtml(html, request);
-    } catch {
-      // 組めなかったときは前の表示を残します。保存の可否は保存の欄が伝えます。
-    }
-  }
-
-  function applyPreviewHtml(html, request) {
-    preview.classList.add('preview');
-    preview.innerHTML = html || '';
-    // 消えた対象を先に見分けてから印を付けます。印はDOMを包み変えるので、順番が逆だと
-    // 「まだあるのに見つからない」コメントが出ます。
-    refreshCommentAttachment(preview, state.comments);
-    renderCommentHighlights(preview, state.comments, { blockSelector: PREVIEW_BLOCK_SELECTOR });
+  /**
+   * サーバーが返した組み上がりの上で、コメントの指す先がまだ在るかを引き直します。
+   *
+   * 画面には出しません。書く幅を削ってまで並べるものではなく、ここで要るのは
+   * 「いまの本文で見つかるか」という答えだけだからです。
+   */
+  function adoptRenderedDocument(html) {
+    const rendered = source.ownerDocument.createElement('div');
+    rendered.innerHTML = html || '';
+    refreshCommentAttachment(rendered, state.comments);
     onCommentsChanged();
-    onPreviewRendered?.();
-    renderDiagrams(preview, { isStillCurrent: () => state.mode === 'edit' && request === previewRequest });
   }
 
   /* ---------------------------------------------------------------- *
@@ -281,11 +268,7 @@ export function createEditor({ refs, state, api, onCommentsChanged, onDocumentUp
 
       onDocumentUpdated(result);
       state.saveFailed = false;
-      // 保存が返した本文が画面と同じなら、組み直しは要りません。返ってきたものを出します。
-      if (source.value === result.markdown) {
-        clearTimeout(previewTimer);
-        applyPreviewHtml(result.html, ++previewRequest);
-      }
+      adoptRenderedDocument(result.html);
       if (hasUnsavedText()) autosave.schedule();
       else setStatus('saved', '保存済み');
       return true;
@@ -304,6 +287,7 @@ export function createEditor({ refs, state, api, onCommentsChanged, onDocumentUp
 
   return {
     render,
+    outlineEntries,
     setStatus,
     flush: autosave.flush,
     cancel: autosave.cancel,

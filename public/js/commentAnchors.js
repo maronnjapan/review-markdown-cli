@@ -13,15 +13,11 @@ const HEADING_SELECTOR = 'h1, h2, h3, h4, h5, h6';
  * Marks every place that already carries a comment. Each highlight names the
  * comments it stands for in `data-comment-indexes`, so a click on it can bring
  * them up without matching the text a second time.
- *
- * `blockSelector` は段落・見出しに付いたコメントを探す先です。コメントモードでは
- * コメントを足せる印（`.review-target`）が付いているのでそれを使い、編集モードの
- * プレビューには印が無いので要素の種類そのもので探します。
  */
-export function renderCommentHighlights(root, comments, { blockSelector = '.review-target' } = {}) {
+export function renderCommentHighlights(root, comments) {
   clearCommentHighlights(root);
   const entries = comments.map((comment, index) => ({ comment, index }));
-  highlightBlockTargets(root, entries, blockSelector);
+  highlightBlockTargets(root, entries);
   highlightTextSelections(root, entries);
 }
 
@@ -49,8 +45,8 @@ function clearCommentHighlights(root) {
   });
 }
 
-function highlightBlockTargets(root, entries, blockSelector) {
-  root.querySelectorAll(blockSelector).forEach((element) => {
+function highlightBlockTargets(root, entries) {
+  root.querySelectorAll('.review-target').forEach((element) => {
     const elementText = normalizeText(targetTextOf(element));
     if (!elementText) return;
     const matches = entries.filter(({ comment }) => blockCommentMatches(comment, element, elementText));

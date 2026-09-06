@@ -42,7 +42,6 @@ const ROUTES = [
   { methods: ['GET'], pathname: '/api/files', handle: listFiles },
   { methods: ['GET'], pathname: '/api/file', handle: openFile },
   { methods: ['POST'], pathname: '/api/file', handle: saveFile },
-  { methods: ['POST'], pathname: '/api/render', handle: renderPreview },
   { methods: ['GET', 'HEAD'], pathname: '/api/pdf', handle: openPdf },
   { methods: ['GET', 'HEAD'], pathname: '/api/asset', handle: openAsset },
   { methods: ['GET', 'HEAD'], pathname: '/vendor/pdfjs/pdf.mjs', handle: openPdfJsAsset },
@@ -806,20 +805,6 @@ function openPdfJsAsset({ response, url, headOnly }) {
   return servePdfJsAsset(url.pathname, response, headOnly);
 }
 
-/**
- * 書きかけのMarkdownを組んで返すだけの窓口です。ファイルには触れません。
- *
- * 編集モードの隣に出すプレビューがここを通ります。読む画面とまったく同じ手で組むので、
- * 「編集中はそれらしく見えたのに、保存したら違った」が起きません。
- */
-async function renderPreview({ rootDir, filter, request, response }) {
-  const body = await readJsonBody(request);
-  const relativeFile = reviewTarget(rootDir, filter, body.path);
-  if (!isMarkdownPath(relativeFile)) throw httpError('Only Markdown files can be previewed', 400);
-  const html = await renderMarkdown(String(body.markdown ?? ''), viewOptionsFor(relativeFile, filter));
-  return sendJson(response, { html });
-}
-
 async function saveFile({ rootDir, filter, projectAiContext, features, request, response }) {
   const body = await readJsonBody(request);
   assertManagerUpdateAllowed(body, features);
@@ -984,17 +969,15 @@ function visibleReview(review, features) {
 }
 
 
-/** 本文の見た目はひと通りです。編集モードもこれをそのままプレビューに使います。 */
+/** 本文の見た目はひと通りです。編集モードは生のMarkdownを出すので、使うのは読む画面だけです。 */
 async function renderDocumentView(markdown, relativeFile, filter) {
-  return { html: await renderMarkdown(markdown, viewOptionsFor(relativeFile, filter)) };
-}
-
-function viewOptionsFor(relativeFile, filter) {
   return {
-    resolveImageSrc: (source) => assetUrlFor(relativeFile, source),
-    resolveLink: (href) => resolveDocumentLink(href, {
-      relativeFile,
-      isInScope: (target) => filter.matchesFile(target)
+    html: await renderMarkdown(markdown, {
+      resolveImageSrc: (source) => assetUrlFor(relativeFile, source),
+      resolveLink: (href) => resolveDocumentLink(href, {
+        relativeFile,
+        isInScope: (target) => filter.matchesFile(target)
+      })
     })
   };
 }

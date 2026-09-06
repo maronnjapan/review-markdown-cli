@@ -67,18 +67,14 @@
             <button type="button" data-editor-action="ordered-list" title="番号付きリスト（Tabで1段下げ）">1. リスト</button>
             <button type="button" data-editor-action="blockquote" title="引用">引用</button>
             <button type="button" data-editor-action="code-block" title="コードブロック">コード</button>
-            <span class="editor-toolbar-spacer"></span>
-            <button id="preview-toggle" type="button" aria-pressed="true" title="組み上がりの表示を切り替えます">プレビューを隠す</button>
           </div>
           <div id="editor-save-row" class="editor-save-row hidden" aria-live="polite">
             <span id="editor-save-status">保存済み</span>
             <button id="retry-save-button" class="hidden" type="button">再試行</button>
           </div>
-          <div id="editor-shell" class="editor-shell">
-            <textarea id="markdown-source" class="markdown-source hidden" spellcheck="true" wrap="soft"
-              aria-label="Markdown本文" placeholder="Markdownで書けます。Ctrl/⌘+Sで今すぐ保存します。"></textarea>
-            <div id="markdown-content" class="markdown-body znc"></div>
-          </div>
+          <textarea id="markdown-source" class="markdown-source hidden" spellcheck="true" wrap="soft"
+            aria-label="Markdown本文" placeholder="Markdownで書けます。Ctrl/⌘+Sで今すぐ保存します。"></textarea>
+          <div id="markdown-content" class="markdown-body znc"></div>
         </article>
         <aside id="side-pane" class="comments-pane card" aria-label="レビューサイドパネル">
           <div class="side-pane-header">

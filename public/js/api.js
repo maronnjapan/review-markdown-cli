@@ -16,8 +16,6 @@ export const api = {
   openFile: (path) => fetchJson(`/api/file?path=${encodeURIComponent(path)}`),
 
   saveFile: (payload) => postJson('/api/file', payload),
-  /** 編集中のプレビュー。組むだけで、ファイルには書き込みません。 */
-  renderMarkdown: (payload) => postJson('/api/render', payload),
 
   saveComments: (payload) => postJson('/api/review', payload),
 
