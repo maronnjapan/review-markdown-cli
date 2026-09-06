@@ -3,11 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {
-  applyBlockEdits,
-  compactZennParagraphBreaks,
-  htmlBlockToMarkdown
-} from '../src/editorMarkdown.js';
+import { applyBlockEdits } from '../src/editorMarkdown.js';
 import { parseMarkdownBlocks, renderMarkdown } from '../src/markdown.js';
 import { createServer } from '../src/server.js';
 
@@ -23,111 +19,12 @@ test('parseMarkdownBlocks exposes exact source ranges without normalizing untouc
   assert.equal(markdown.slice(blocks[1].start, blocks[1].end), 'Paragraph.');
 });
 
-test('renderMarkdown can wrap editable blocks with source metadata', async () => {
-  const html = await renderMarkdown('# Title\n\nBody\n', { editableBlocks: true });
-
-  assert.match(html, /class="markdown-block"/);
-  assert.match(html, /data-block-kind="heading"/);
-  assert.match(html, /data-source-start="9" data-source-end="13"><p[^>]*>Body<\/p>/);
-});
-
 test('renderMarkdown uses Zenn Markdown extensions', async () => {
   const html = await renderMarkdown(':::message\nZenn message\n:::\n');
 
   assert.match(html, /<aside class="msg message">/);
   assert.match(html, /class="msg-symbol"/);
   assert.match(html, /Zenn message/);
-});
-
-test('htmlBlockToMarkdown supports the editor formatting vocabulary', () => {
-  const markdown = htmlBlockToMarkdown(`
-    <h2>Hello <strong>world</strong></h2>
-    <blockquote><p>Quoted</p></blockquote>
-    <ul><li>one</li><li>two</li></ul>
-    <p><a href="https://example.com">link</a> <img alt="sample" src="/resolved" data-markdown-src="./sample.png"></p>
-    <table><thead><tr><th>A</th></tr></thead><tbody><tr><td>B</td></tr></tbody></table>
-    <pre><code class="language-mermaid">graph TD
-A--&gt;B</code></pre>
-  `);
-
-  assert.match(markdown, /## Hello \*\*world\*\*/);
-  assert.match(markdown, /> Quoted/);
-  assert.match(markdown, /one[\s\S]*two/);
-  assert.match(markdown, /\[link\]\(https:\/\/example\.com\)/);
-  assert.match(markdown, /!\[sample\]\(\.\/sample\.png\)/);
-  assert.match(markdown, /\| A \|[\s\S]*\| B \|/);
-  assert.match(markdown, /```mermaid\ngraph TD\nA-->B\n```/);
-});
-
-test('htmlBlockToMarkdown uses compact Zenn line breaks between ordinary paragraphs', () => {
-  const markdown = htmlBlockToMarkdown('<p>一行目</p><p>二行目</p><h2>見出し</h2><p>本文</p>');
-
-  assert.equal(markdown, '一行目\n二行目\n## 見出し\n本文');
-});
-
-test('compactZennParagraphBreaks keeps blank lines around syntax-sensitive blocks', async () => {
-  const markdown = compactZennParagraphBreaks([
-    '導入',
-    '',
-    '> 引用',
-    '',
-    '引用後の本文',
-    '',
-    '- 項目',
-    '',
-    'リスト後の本文',
-    '',
-    '```js',
-    'const answer = 42;',
-    '```',
-    '',
-    'コード後の本文'
-  ].join('\n'));
-
-  assert.equal(markdown, [
-    '導入',
-    '',
-    '> 引用',
-    '',
-    '引用後の本文',
-    '',
-    '- 項目',
-    '',
-    'リスト後の本文',
-    '',
-    '```js',
-    'const answer = 42;',
-    '```',
-    '',
-    'コード後の本文'
-  ].join('\n'));
-
-  const html = await renderMarkdown(markdown);
-  assert.match(html, /<blockquote[\s\S]*引用[\s\S]*<\/blockquote>\s*<p[^>]*>引用後の本文<\/p>/);
-  assert.match(html, /<\/ul>\s*<p[^>]*>リスト後の本文<\/p>/);
-});
-
-test('compactZennParagraphBreaks keeps blank lines inside and after fenced blocks', () => {
-  const markdown = [
-    '```js',
-    'function answer() {',
-    '',
-    '  return 42;',
-    '}',
-    '```',
-    '',
-    'コード後の本文',
-    '',
-    ':::message',
-    '一段落目',
-    '',
-    '二段落目',
-    ':::',
-    '',
-    'メッセージ後の本文'
-  ].join('\n');
-
-  assert.equal(compactZennParagraphBreaks(markdown), markdown);
 });
 
 test('applyBlockEdits changes only selected source ranges', () => {
@@ -138,7 +35,7 @@ test('applyBlockEdits changes only selected source ranges', () => {
     blockId: paragraph.id,
     start: paragraph.start,
     end: paragraph.end,
-    html: '<p>Updated <em>paragraph</em>.</p>'
+    markdown: 'Updated *paragraph*.'
   }]);
 
   assert.equal(result.markdown, '# Title\r\n\r\nUpdated *paragraph*.\r\n\r\n* untouched item\r\n');
@@ -157,12 +54,34 @@ test('applyBlockEdits deletes an empty block together with its Markdown separato
     blockId: paragraph.id,
     start: paragraph.start,
     end: paragraph.end,
-    html: '',
+    markdown: '',
     delete: true
   }]);
 
   assert.equal(result.markdown, 'First paragraph.\n\nLast paragraph.\n');
   assert.equal(result.appliedEdits[0].delete, true);
+});
+
+test('applyBlockEdits refuses a range that no longer holds what the editor saw', () => {
+  const markdown = '# Title\n\n書きかけの段落。\n';
+  const edit = { blockId: 'document', start: 9, end: 16, before: '書きかけの段落', markdown: '直した段落' };
+
+  assert.equal(applyBlockEdits(markdown, [edit]).markdown, '# Title\n\n直した段落。\n');
+
+  // 別のエディタで1行足されると、同じ位置が別の中身を指します。当てれば壊れます。
+  const shifted = '追記。\n\n# Title\n\n書きかけの段落。\n';
+  assert.throws(() => applyBlockEdits(shifted, [edit]), (error) => {
+    assert.equal(error.statusCode, 409);
+    assert.match(error.message, /書き換わりました/);
+    return true;
+  });
+});
+
+test('applyBlockEdits only takes Markdown', () => {
+  assert.throws(
+    () => applyBlockEdits('本文\n', [{ blockId: 'document', start: 0, end: 2, html: '<p>本文</p>' }]),
+    /markdown is required/
+  );
 });
 
 test('POST /api/file updates Markdown and comment targets together', async (t) => {
@@ -198,7 +117,7 @@ test('POST /api/file updates Markdown and comment targets together', async (t) =
         blockId: paragraph.id,
         start: paragraph.start,
         end: paragraph.end,
-        html: '<p>New text.</p>'
+        markdown: 'New text.'
       }],
       comments: [{
         id: 'comment-1',
@@ -214,7 +133,6 @@ test('POST /api/file updates Markdown and comment targets together', async (t) =
   assert.equal(await fs.readFile(filePath, 'utf8'), '# Title\n\nNew text.\n');
   assert.equal(saved.review.comments[0].targetText, 'New text.');
   assert.match(saved.html, /class="code-line"/);
-  assert.match(saved.editableHtml, /data-source-start=/);
   const review = JSON.parse(await fs.readFile(path.join(root, '.review', 'example.md.review.json'), 'utf8'));
   assert.equal(review.comments[0].comment, 'Updated target');
 });

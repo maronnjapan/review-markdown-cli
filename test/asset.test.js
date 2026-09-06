@@ -3,7 +3,6 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { renderMarkdown } from '../src/markdown.js';
 import { createServer } from '../src/server.js';
 
 const pngBytes = Buffer.from('89504e470d0a1a0a', 'hex');
@@ -69,14 +68,40 @@ test('image paths outside the target directory are rejected and missing files re
   assert.match((await missing.json()).error, /Asset not found/);
 });
 
-test('editable images keep the readable Markdown path so saving does not escape it', async () => {
-  const html = await renderMarkdown('![japanese](./画像/図1.png)\n\n![space](<images/my pic.png>)', {
-    editableBlocks: true
+test('the editing preview resolves image sources exactly like the opened document', async (t) => {
+  const { baseUrl } = await startServer(t, async (root) => {
+    await fs.mkdir(path.join(root, 'docs', '画像'), { recursive: true });
+    await fs.writeFile(path.join(root, 'docs', '画像', '図1.png'), pngBytes);
+    await fs.writeFile(path.join(root, 'docs', 'sample.md'), '![japanese](./画像/図1.png)\n', 'utf8');
   });
 
-  assert.match(html, /data-markdown-src="\.\/画像\/図1\.png"/);
-  // A decoded space would break the Markdown link destination, so keep it escaped.
-  assert.match(html, /data-markdown-src="images\/my%20pic\.png"/);
+  const opened = await fetch(`${baseUrl}/api/file?path=${encodeURIComponent('docs/sample.md')}`)
+    .then((response) => response.json());
+  const previewed = await fetch(`${baseUrl}/api/render`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: 'docs/sample.md', markdown: '![japanese](./画像/図1.png)\n' })
+  }).then((response) => response.json());
+
+  // 書いている途中に出すものと、読む画面に出るものが違っては、確かめる意味がありません。
+  assert.deepEqual(imageSources(previewed.html), imageSources(opened.html));
+  assert.equal((await fetch(`${baseUrl}${imageSources(previewed.html)[0]}`)).status, 200);
+});
+
+test('the editing preview never writes to the file', async (t) => {
+  const { baseUrl, root } = await startServer(t, async (directory) => {
+    await fs.writeFile(path.join(directory, 'sample.md'), '# もとの本文\n', 'utf8');
+  });
+
+  const response = await fetch(`${baseUrl}/api/render`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: 'sample.md', markdown: '# 書きかけ\n\n:::message\n途中\n:::\n' })
+  });
+
+  assert.equal(response.status, 200);
+  assert.match((await response.json()).html, /<aside class="msg message">/);
+  assert.equal(await fs.readFile(path.join(root, 'sample.md'), 'utf8'), '# もとの本文\n');
 });
 
 async function startServer(t, seed) {

@@ -1,21 +1,16 @@
 import { load } from 'cheerio';
 import markdownToHtml from 'zenn-markdown-html';
-import { decodeMarkdownPath } from './urlPath.js';
 
 export async function renderMarkdown(markdown, options = {}) {
-  if (options.editableBlocks) {
-    const blocks = parseMarkdownBlocks(markdown);
-    const renderedBlocks = await Promise.all(blocks.map(async (block) => {
-      const content = await renderMarkdownFragment(block.source, {
-        ...options,
-        editorSourceAttrs: true
-      });
-      return `<div class="markdown-block" data-block-id="${block.id}" data-block-kind="${block.kind}" data-source-start="${block.start}" data-source-end="${block.end}">${content}</div>`;
-    }));
-    return renderedBlocks.join('\n');
-  }
+  const html = await markdownToHtml(String(markdown), {
+    customEmbed: {
+      mermaid(source) {
+        return `<div class="mermaid">${escapeHtml(source)}</div>`;
+      }
+    }
+  });
 
-  return renderMarkdownFragment(markdown, options);
+  return rewriteDestinations(html, options);
 }
 
 /**
@@ -112,43 +107,29 @@ function scanUntilNewBlock(lines, index) {
   return next;
 }
 
-async function renderMarkdownFragment(markdown, options) {
-  const html = await markdownToHtml(String(markdown), {
-    customEmbed: {
-      mermaid(source) {
-        return `<div class="mermaid">${escapeHtml(source)}</div>`;
-      }
-    }
-  });
-
-  return rewriteDestinations(html, options);
-}
-
 /**
  * Rewrites the destinations Markdown authors wrote (image sources, link hrefs)
- * into something the review UI can serve, keeping the original spelling in a
- * `data-markdown-*` attribute so the editor can write it back unchanged.
+ * into something the review UI can serve. The file on disk keeps the author's
+ * own spelling: nothing is ever written back from this HTML.
  */
 function rewriteDestinations(html, options) {
-  if (!options.resolveImageSrc && !options.resolveLink && !options.editorSourceAttrs) return html;
+  if (!options.resolveImageSrc && !options.resolveLink) return html;
 
   const $ = load(html, null, false);
-  $('img[src]').each((_index, image) => {
-    const element = $(image);
-    const source = element.attr('src');
-    if (!source) return;
-    if (options.editorSourceAttrs) element.attr('data-markdown-src', decodeMarkdownPath(source));
-    if (options.resolveImageSrc) element.attr('src', options.resolveImageSrc(source));
-  });
+  if (options.resolveImageSrc) {
+    $('img[src]').each((_index, image) => {
+      const element = $(image);
+      const source = element.attr('src');
+      if (source) element.attr('src', options.resolveImageSrc(source));
+    });
+  }
 
   if (options.resolveLink) {
     $('a[href]').each((_index, anchor) => {
       const element = $(anchor);
       const href = element.attr('href');
       const resolved = href && options.resolveLink(href);
-      if (!resolved) return;
-      if (options.editorSourceAttrs) element.attr('data-markdown-href', decodeMarkdownPath(href));
-      applyLinkAttributes(element, resolved);
+      if (resolved) applyLinkAttributes(element, resolved);
     });
   }
   return $.html();

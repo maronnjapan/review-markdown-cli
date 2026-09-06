@@ -219,8 +219,9 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     onCommentsChanged: renderComments,
     onDocumentUpdated(data) {
       adoptSavedDocument(data);
-      renderOutline();
-    }
+    },
+    // 編集中も見出しの一覧は隣のプレビューから引きます。書いた見出しがそのまま出ます。
+    onPreviewRendered: renderOutline
   });
   const linkNavigator = createLinkNavigator({
     root: content,
@@ -460,7 +461,6 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
   async function navigateBack() {
     if (!(await leaveDocument())) return;
     state.mode = 'comment';
-    state.dirtyBlocks.clear();
     state.saveFailed = false;
     window.location.hash = '#/';
   }
@@ -549,7 +549,6 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     state.documentType = data.documentType || 'markdown';
     state.markdown = data.markdown || '';
     state.rawHtml = data.html || '';
-    state.editableHtml = data.editableHtml || '';
     state.textBody = data.textBody === true;
     state.transcript = data.transcript === true;
     if (Array.isArray(data.transcriptFiles)) state.transcriptFiles = data.transcriptFiles;
@@ -636,7 +635,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       renderComments();
       return;
     }
-    content.classList.remove('editing');
+    content.classList.remove('preview');
     content.innerHTML = state.rawHtml;
     decorateReviewTargets();
     renderOutline();
@@ -1326,8 +1325,8 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       if (!(await commentSaves.flush())) return;
       if (!allowedToWrite()) return;
       state.mode = 'edit';
+      updateModeControls();
       editor.render();
-      renderOutline();
       renderComments();
     }
     updateModeControls();
@@ -1379,6 +1378,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     refs.editModeButton.setAttribute('aria-pressed', String(editing));
     refs.editorToolbar.classList.toggle('hidden', !editing);
     refs.editorSaveRow.classList.toggle('hidden', !editing);
+    refs.markdownSource.classList.toggle('hidden', !editing);
     refs.documentCommentButton.disabled = editing;
     refs.documentTranslateButton.disabled = editing || pdfReadOnly;
     refs.documentAiButton.disabled = editing || pdfReadOnly;

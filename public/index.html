@@ -48,30 +48,37 @@
             </div>
           </div>
           <p id="document-notice" class="pdf-readonly-notice" hidden></p>
-          <div id="editor-toolbar" class="editor-toolbar hidden" role="toolbar" aria-label="文章の書式">
+          <div id="editor-toolbar" class="editor-toolbar hidden" role="toolbar" aria-label="Markdownの書式">
             <select id="block-format" aria-label="段落スタイル">
               <option value="p">段落</option>
               <option value="h1">見出し1</option>
               <option value="h2">見出し2</option>
               <option value="h3">見出し3</option>
               <option value="h4">見出し4</option>
+              <option value="h5">見出し5</option>
+              <option value="h6">見出し6</option>
             </select>
-            <button type="button" data-editor-command="bold" title="太字"><strong>B</strong></button>
-            <button type="button" data-editor-command="italic" title="斜体"><em>I</em></button>
+            <button type="button" data-editor-action="bold" title="太字（Ctrl/⌘+B）"><strong>B</strong></button>
+            <button type="button" data-editor-action="italic" title="斜体（Ctrl/⌘+I）"><em>I</em></button>
+            <button type="button" data-editor-action="strike" title="打ち消し線"><s>S</s></button>
             <button type="button" data-editor-action="inline-code" title="インラインコード">&lt;/&gt;</button>
-            <button type="button" data-editor-action="link" title="リンク">リンク</button>
-            <button type="button" data-editor-command="insertUnorderedList" title="箇条書き">・リスト</button>
-            <button type="button" data-editor-command="insertOrderedList" title="番号付きリスト">1. リスト</button>
+            <button type="button" data-editor-action="link" title="リンク（Ctrl/⌘+K）">リンク</button>
+            <button type="button" data-editor-action="bullet-list" title="箇条書き（Tabで1段下げ）">・リスト</button>
+            <button type="button" data-editor-action="ordered-list" title="番号付きリスト（Tabで1段下げ）">1. リスト</button>
             <button type="button" data-editor-action="blockquote" title="引用">引用</button>
             <button type="button" data-editor-action="code-block" title="コードブロック">コード</button>
-            <button type="button" data-editor-command="undo" title="元に戻す">↶</button>
-            <button type="button" data-editor-command="redo" title="やり直す">↷</button>
+            <span class="editor-toolbar-spacer"></span>
+            <button id="preview-toggle" type="button" aria-pressed="true" title="組み上がりの表示を切り替えます">プレビューを隠す</button>
           </div>
           <div id="editor-save-row" class="editor-save-row hidden" aria-live="polite">
             <span id="editor-save-status">保存済み</span>
             <button id="retry-save-button" class="hidden" type="button">再試行</button>
           </div>
-          <div id="markdown-content" class="markdown-body znc"></div>
+          <div id="editor-shell" class="editor-shell">
+            <textarea id="markdown-source" class="markdown-source hidden" spellcheck="true" wrap="soft"
+              aria-label="Markdown本文" placeholder="Markdownで書けます。Ctrl/⌘+Sで今すぐ保存します。"></textarea>
+            <div id="markdown-content" class="markdown-body znc"></div>
+          </div>
         </article>
         <aside id="side-pane" class="comments-pane card" aria-label="レビューサイドパネル">
           <div class="side-pane-header">

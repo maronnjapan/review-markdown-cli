@@ -3,7 +3,6 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { htmlBlockToMarkdown } from '../src/editorMarkdown.js';
 import { isTextDocumentPath, resolveDocumentLink } from '../src/links.js';
 import { renderMarkdown } from '../src/markdown.js';
 import { createServer } from '../src/server.js';
@@ -88,17 +87,9 @@ test('rendered links carry the verdict, and editing writes the original path bac
   assert.match(html, /href="https:\/\/example\.com" target="_blank"/);
   assert.match(html, /data-link-path="docs\/図表\/一覧\.md"/);
 
-  const editable = await renderMarkdown(markdown, { ...options, editableBlocks: true });
-  const blocks = [...editable.matchAll(/<div class="markdown-block"[^>]*>([\s\S]*?)<\/div>/g)]
-    .map((match) => htmlBlockToMarkdown(match[1]));
-
-  // Round-tripping must not leave the review UI's own URLs (or the renderer's
-  // heading anchors) behind in the author's Markdown.
-  assert.deepEqual(blocks, [
-    '## 見出しA',
-    '[隣](./neighbour.md) と [外](../../outside.md) と [外部](https://example.com)',
-    '[日本語](./図表/一覧.md#まとめ)'
-  ]);
+  // 画面向けの書き換えはこのHTMLの中だけの話です。ファイルへ戻るのは書き手のMarkdown
+  // そのものなので、レビュー用のURLも見出しのアンカーも本文には混ざりません。
+  assert.doesNotMatch(markdown, /#\/review\//);
 });
 
 test('a link to another Markdown file survives a save through the server', async (t) => {
@@ -122,18 +113,27 @@ test('a link to another Markdown file survives a save through the server', async
   const opened = await fetch(`${baseUrl}/api/file?path=docs/intro.md`).then((response) => response.json());
   assert.match(opened.html, /href="#\/review\/docs%2Fnext\.md"/);
 
-  const editableBlock = opened.editableHtml.match(/<div class="markdown-block"[^>]*>([\s\S]*?)<\/div>/)[1];
+  // 編集モードが送るのは、画面に出ていたMarkdownそのものです。読み替えたURLは通りません。
   await fetch(`${baseUrl}/api/file`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       path: 'docs/intro.md',
-      edits: [{ blockId: 'block-0', start: 0, end: opened.markdown.trimEnd().length, html: editableBlock }],
+      edits: [{
+        blockId: 'document',
+        start: 0,
+        end: opened.markdown.length,
+        before: opened.markdown,
+        markdown: '続きは[次章](./next.md)と[新章](./fresh.md)を参照。\n'
+      }],
       comments: []
     })
   });
 
-  assert.equal(await fs.readFile(path.join(root, 'docs', 'intro.md'), 'utf8'), '続きは[次章](./next.md)を参照。\n');
+  assert.equal(
+    await fs.readFile(path.join(root, 'docs', 'intro.md'), 'utf8'),
+    '続きは[次章](./next.md)と[新章](./fresh.md)を参照。\n'
+  );
 });
 
 test('Markdown and plain-text files have a text body; PDFs and images do not', () => {

@@ -9,18 +9,17 @@ import { renderMarkdown } from '../src/markdown.js';
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-test('edit mode keeps a changed block after failure and retries autosave with updated comment context', async (t) => {
+test('edit mode writes back only the range that changed, and says which comment came loose', async (t) => {
   const indexHtml = await fs.readFile(path.join(projectDir, 'public', 'index.html'), 'utf8');
   const dom = new JSDOM(indexHtml, {
     url: 'http://localhost/#/review/example.md',
     pretendToBeVisual: true
   });
-  const originalMarkdown = '# Title\n\nOriginal text.\n';
   const originalConsoleWarn = console.warn;
   console.warn = (...args) => {
     if (!String(args[0]).includes('Syntax highlight skipped')) originalConsoleWarn(...args);
   };
-  let currentMarkdown = originalMarkdown;
+  let currentMarkdown = '# Title\n\nOriginal text.\n\n:::message\n触っていない囲み\n:::\n';
   let currentComments = [{
     id: 'comment-selection',
     type: 'text-selection',
@@ -33,11 +32,13 @@ test('edit mode keeps a changed block after failure and retries autosave with up
   let failNextSave = true;
 
   installDomGlobals(dom.window);
-  document.execCommand = () => true;
   globalThis.fetch = async (input, options = {}) => {
     const url = String(input);
     if (url.startsWith('/api/file?')) {
       return jsonResponse(await filePayload(currentMarkdown, currentComments));
+    }
+    if (url === '/api/render' && options.method === 'POST') {
+      return jsonResponse({ html: await renderMarkdown(JSON.parse(options.body).markdown) });
     }
     if (url === '/api/file' && options.method === 'POST') {
       const body = JSON.parse(options.body);
@@ -69,30 +70,39 @@ test('edit mode keeps a changed block after failure and retries autosave with up
   await waitFor(() => document.querySelector('#markdown-content h1'));
 
   document.querySelector('#edit-mode-button').click();
-  await waitFor(() => document.querySelectorAll('.markdown-block').length === 2);
-  const paragraphBlock = document.querySelectorAll('.markdown-block')[1];
-  const commentAnchor = paragraphBlock.querySelector('.editor-comment-anchor');
-  assert.equal(commentAnchor.textContent, 'Original');
-  commentAnchor.textContent = 'Updated';
-  paragraphBlock.dispatchEvent(new window.Event('input', { bubbles: true }));
+  const source = document.querySelector('#markdown-source');
+  await waitFor(() => source.value === currentMarkdown);
+  assert.equal(source.classList.contains('hidden'), false, '編集モードでは生のMarkdownが出る');
+
+  source.value = '# Title\n\nUpdated text.\n\n:::message\n触っていない囲み\n:::\n';
+  source.dispatchEvent(new window.Event('input', { bubbles: true }));
 
   assert.match(document.querySelector('#editor-save-status').textContent, /未保存/);
   await waitFor(() => requests.length === 1, 1600);
   await waitFor(() => document.querySelector('#editor-save-row').dataset.state === 'error');
-  assert.equal(commentAnchor.textContent, 'Updated');
+  assert.equal(source.value.includes('Updated text.'), true, '失敗しても書いたものは残る');
   assert.equal(document.querySelector('#retry-save-button').classList.contains('hidden'), false);
+
   document.querySelector('#retry-save-button').click();
   await waitFor(() => requests.length === 2);
   await waitFor(() => document.querySelector('#editor-save-row').dataset.state === 'saved');
 
-  assert.equal(currentMarkdown, '# Title\n\nUpdated text.\n');
-  assert.equal(requests[1].path, 'example.md');
-  assert.match(requests[1].edits[0].html, /Updated text\./);
-  assert.equal(requests[1].comments[0].selectedText, 'Updated');
-  assert.equal(requests[1].comments[0].contextAfter, 'text.');
+  // 送るのは書き換えた1か所だけ。Zennの囲みは通り道にも乗らないので、崩れようがありません。
+  assert.deepEqual(requests[1].edits, [{
+    blockId: 'document',
+    start: 9,
+    end: 17,
+    markdown: 'Updated',
+    before: 'Original'
+  }]);
+  assert.equal(currentMarkdown, '# Title\n\nUpdated text.\n\n:::message\n触っていない囲み\n:::\n');
+  // 追いかけられなくなったコメントは、黙って別の場所に付け替えず、外れたと言います。
+  await waitFor(() => document.querySelector('#comments-list .comment-card.detached'));
+  assert.equal(requests[1].comments[0].targetDetached, true);
+  assert.equal(requests[1].comments[0].comment, 'Keep this comment');
 });
 
-test('keyboard mode switching applies Markdown syntax immediately and removes an empty paragraph', async (t) => {
+test('the toolbar and the keyboard write Markdown, and the preview follows', async (t) => {
   const indexHtml = await fs.readFile(path.join(projectDir, 'public', 'index.html'), 'utf8');
   const dom = new JSDOM(indexHtml, {
     url: 'http://localhost/#/review/example.md',
@@ -106,10 +116,12 @@ test('keyboard mode switching applies Markdown syntax immediately and removes an
   };
 
   installDomGlobals(dom.window);
-  document.execCommand = () => true;
   globalThis.fetch = async (input, options = {}) => {
     const url = String(input);
     if (url.startsWith('/api/file?')) return jsonResponse(await filePayload(currentMarkdown));
+    if (url === '/api/render' && options.method === 'POST') {
+      return jsonResponse({ html: await renderMarkdown(JSON.parse(options.body).markdown) });
+    }
     if (url === '/api/file' && options.method === 'POST') {
       const body = JSON.parse(options.body);
       requests.push(body);
@@ -128,7 +140,8 @@ test('keyboard mode switching applies Markdown syntax immediately and removes an
     dom.window.close();
   });
   await import(`${pathToFileURL(path.join(projectDir, 'public', 'app.js')).href}?dom-test=${Date.now()}-shortcuts`);
-  await waitFor(() => document.querySelector('#markdown-content p.code-line'));
+  // 読み込み中の差し込みではなく、組み上がった本文が出るまで待ちます。
+  await waitFor(() => document.querySelector('#markdown-content p:not(.muted)'));
 
   document.dispatchEvent(new window.KeyboardEvent('keydown', {
     key: 'e',
@@ -136,24 +149,37 @@ test('keyboard mode switching applies Markdown syntax immediately and removes an
     shiftKey: true,
     bubbles: true
   }));
-  await waitFor(() => document.querySelectorAll('.markdown-block').length === 2);
+  const source = document.querySelector('#markdown-source');
+  await waitFor(() => source.value === currentMarkdown);
 
-  const [firstBlock, secondBlock] = document.querySelectorAll('.markdown-block');
-  firstBlock.innerHTML = '<p># **bold** and [link](https://example.com)</p>';
-  firstBlock.dispatchEvent(new window.InputEvent('input', { bubbles: true, inputType: 'insertText' }));
-  assert.equal(firstBlock.querySelector('h1') !== null, true);
-  assert.equal(firstBlock.querySelector('strong')?.textContent, 'bold');
-  assert.equal(firstBlock.querySelector('a')?.textContent, 'link');
+  // 太字は選んだところを囲むだけ。押した印がそのまま本文の文字になります。
+  source.setSelectionRange(6, 15);
+  document.querySelector('[data-editor-action="bold"]').click();
+  assert.equal(source.value, 'First **paragraph**.\n\nSecond paragraph.\n');
+  assert.deepEqual([source.selectionStart, source.selectionEnd], [8, 17]);
 
-  secondBlock.innerHTML = '<p><br></p>';
-  secondBlock.dispatchEvent(new window.InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
-  assert.equal(secondBlock.classList.contains('pending-deletion'), true);
+  // もう一度押すと外れます。太字の印を1つだけ削るような壊し方はしません。
+  document.querySelector('[data-editor-action="bold"]').click();
+  assert.equal(source.value, 'First paragraph.\n\nSecond paragraph.\n');
+
+  source.setSelectionRange(0, 0);
+  document.querySelector('[data-editor-action="bullet-list"]').click();
+  assert.equal(source.value, '- First paragraph.\n\nSecond paragraph.\n');
+
+  // 箇条書きの途中でEnterを押せば、次の行も箇条書きで始まります。
+  source.setSelectionRange(18, 18);
+  source.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  assert.equal(source.value, '- First paragraph.\n- \n\nSecond paragraph.\n');
+  // 中身の無い項目でもう一度押せば、印は消えてリストから出ます。
+  source.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  assert.equal(source.value, '- First paragraph.\n\n\nSecond paragraph.\n');
+
+  await waitFor(() => document.querySelector('#markdown-content li'), 1600);
+  assert.match(document.querySelector('#markdown-content li').textContent, /First paragraph\./);
 
   await waitFor(() => requests.length === 1, 1600);
   await waitFor(() => document.querySelector('#editor-save-row').dataset.state === 'saved');
-  assert.equal(requests[0].edits.find((edit) => edit.blockId === secondBlock.dataset.blockId).delete, true);
-  assert.equal(currentMarkdown, '# **bold** and [link](https://example.com)');
-  assert.equal(document.querySelectorAll('.markdown-block').length, 1);
+  assert.equal(currentMarkdown, '- First paragraph.\n\n\nSecond paragraph.\n');
 
   document.dispatchEvent(new window.KeyboardEvent('keydown', {
     key: 'e',
@@ -161,7 +187,7 @@ test('keyboard mode switching applies Markdown syntax immediately and removes an
     shiftKey: true,
     bubbles: true
   }));
-  await waitFor(() => !document.querySelector('#markdown-content').classList.contains('editing'));
+  await waitFor(() => document.querySelector('#markdown-source').classList.contains('hidden'));
   assert.equal(document.querySelector('#comment-mode-button').getAttribute('aria-pressed'), 'true');
 });
 
@@ -238,15 +264,11 @@ test('comments autosave without waiting for the save button and survive a reload
 });
 
 async function filePayload(markdown, comments = []) {
-  const [html, editableHtml] = await Promise.all([
-    renderMarkdown(markdown),
-    renderMarkdown(markdown, { editableBlocks: true })
-  ]);
+  const html = await renderMarkdown(markdown);
   return {
     path: 'example.md',
     markdown,
     html,
-    editableHtml,
     review: { targetFile: 'example.md', comments },
     reviewFile: '.review/example.md.review.json'
   };

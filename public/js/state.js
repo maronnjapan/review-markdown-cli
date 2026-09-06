@@ -21,7 +21,6 @@ export function createState() {
     documentType: null,
     markdown: '',
     rawHtml: '',
-    editableHtml: '',
     // Only a text body (Markdown or a plain-text file) can be copied out.
     textBody: false,
     // 文字起こしに使えるファイルか（サーバーの `transcriptFiles` が決めます）。
@@ -118,10 +117,8 @@ export function createState() {
     tasksStatus: 'idle',
     tasksAbortController: null,
 
-    // Edit mode bookkeeping
-    dirtyBlocks: new Set(),
-    blockVersions: new Map(),
-    editorCommentBlocks: new Map(),
+    // Edit mode bookkeeping. 本文そのものは textarea が持ち、`markdown` との差が
+    // 未保存分です。ここに控えるのは、保存に失敗したままかどうかだけです。
     saveFailed: false
   };
 }
@@ -134,7 +131,6 @@ export function resetDocumentState(state, filePath) {
   state.transcript = false;
   state.markdown = '';
   state.rawHtml = '';
-  state.editableHtml = '';
   state.comments = [];
   state.aiContext = '';
   state.aiContextDirty = false;
@@ -191,8 +187,5 @@ export function resetDocumentState(state, filePath) {
   state.tasksAbortController?.abort();
   state.tasksAbortController = null;
   state.commentsVersion += 1;
-  state.dirtyBlocks.clear();
-  state.blockVersions.clear();
-  state.editorCommentBlocks.clear();
   state.saveFailed = false;
 }

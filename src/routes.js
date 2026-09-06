@@ -42,6 +42,7 @@ const ROUTES = [
   { methods: ['GET'], pathname: '/api/files', handle: listFiles },
   { methods: ['GET'], pathname: '/api/file', handle: openFile },
   { methods: ['POST'], pathname: '/api/file', handle: saveFile },
+  { methods: ['POST'], pathname: '/api/render', handle: renderPreview },
   { methods: ['GET', 'HEAD'], pathname: '/api/pdf', handle: openPdf },
   { methods: ['GET', 'HEAD'], pathname: '/api/asset', handle: openAsset },
   { methods: ['GET', 'HEAD'], pathname: '/vendor/pdfjs/pdf.mjs', handle: openPdfJsAsset },
@@ -768,7 +769,7 @@ async function openFile({ rootDir, filter, projectAiContext, features, transcrip
     // 文字起こしとして扱えるファイルか。画面はこれで「文字起こし」タブの出し方を決めます。
     transcript: transcripts.matches(relativeFile),
     transcriptFiles: [...transcripts.patterns],
-    ...await renderBothViews(markdown, relativeFile, filter),
+    ...await renderDocumentView(markdown, relativeFile, filter),
     review: visibleReview(review, features),
     projectAiContext,
     ...await directoryContextOf(rootDir),
@@ -805,6 +806,20 @@ function openPdfJsAsset({ response, url, headOnly }) {
   return servePdfJsAsset(url.pathname, response, headOnly);
 }
 
+/**
+ * 書きかけのMarkdownを組んで返すだけの窓口です。ファイルには触れません。
+ *
+ * 編集モードの隣に出すプレビューがここを通ります。読む画面とまったく同じ手で組むので、
+ * 「編集中はそれらしく見えたのに、保存したら違った」が起きません。
+ */
+async function renderPreview({ rootDir, filter, request, response }) {
+  const body = await readJsonBody(request);
+  const relativeFile = reviewTarget(rootDir, filter, body.path);
+  if (!isMarkdownPath(relativeFile)) throw httpError('Only Markdown files can be previewed', 400);
+  const html = await renderMarkdown(String(body.markdown ?? ''), viewOptionsFor(relativeFile, filter));
+  return sendJson(response, { html });
+}
+
 async function saveFile({ rootDir, filter, projectAiContext, features, request, response }) {
   const body = await readJsonBody(request);
   assertManagerUpdateAllowed(body, features);
@@ -829,7 +844,7 @@ async function saveFile({ rootDir, filter, projectAiContext, features, request, 
     // 書き込んだあとの版。次の修正案を、この本文の上で適用してよいかの判断に使います。
     revision: documentRevision(markdown),
     textBody: isTextDocumentPath(relativeFile),
-    ...await renderBothViews(markdown, relativeFile, filter),
+    ...await renderDocumentView(markdown, relativeFile, filter),
     appliedEdits,
     review: visibleReview(review, features),
     projectAiContext,
@@ -969,19 +984,19 @@ function visibleReview(review, features) {
 }
 
 
-/** The reader view and the editable view differ only in the metadata they carry. */
-function renderBothViews(markdown, relativeFile, filter) {
-  const options = {
+/** 本文の見た目はひと通りです。編集モードもこれをそのままプレビューに使います。 */
+async function renderDocumentView(markdown, relativeFile, filter) {
+  return { html: await renderMarkdown(markdown, viewOptionsFor(relativeFile, filter)) };
+}
+
+function viewOptionsFor(relativeFile, filter) {
+  return {
     resolveImageSrc: (source) => assetUrlFor(relativeFile, source),
     resolveLink: (href) => resolveDocumentLink(href, {
       relativeFile,
       isInScope: (target) => filter.matchesFile(target)
     })
   };
-  return Promise.all([
-    renderMarkdown(markdown, options),
-    renderMarkdown(markdown, { ...options, editableBlocks: true })
-  ]).then(([html, editableHtml]) => ({ html, editableHtml }));
 }
 
 async function relativeReviewPath(rootDir, relativeFile) {

@@ -1,12 +1,6 @@
 import { commentTargetText } from './comments.js';
-import {
-  collectHeadingPath,
-  contextAroundNode,
-  createRangeFor,
-  findTextRange,
-  targetTextOf
-} from './textAnchor.js';
-import { createId, cssEscape, normalizeText, truncate } from './util.js';
+import { createRangeFor, findTextRange, targetTextOf } from './textAnchor.js';
+import { createId, normalizeText, truncate } from './util.js';
 
 const BLOCK_SELECTOR = 'p, li, blockquote, pre';
 const HEADING_SELECTOR = 'h1, h2, h3, h4, h5, h6';
@@ -19,11 +13,15 @@ const HEADING_SELECTOR = 'h1, h2, h3, h4, h5, h6';
  * Marks every place that already carries a comment. Each highlight names the
  * comments it stands for in `data-comment-indexes`, so a click on it can bring
  * them up without matching the text a second time.
+ *
+ * `blockSelector` は段落・見出しに付いたコメントを探す先です。コメントモードでは
+ * コメントを足せる印（`.review-target`）が付いているのでそれを使い、編集モードの
+ * プレビューには印が無いので要素の種類そのもので探します。
  */
-export function renderCommentHighlights(root, comments) {
+export function renderCommentHighlights(root, comments, { blockSelector = '.review-target' } = {}) {
   clearCommentHighlights(root);
   const entries = comments.map((comment, index) => ({ comment, index }));
-  highlightBlockTargets(root, entries);
+  highlightBlockTargets(root, entries, blockSelector);
   highlightTextSelections(root, entries);
 }
 
@@ -51,8 +49,8 @@ function clearCommentHighlights(root) {
   });
 }
 
-function highlightBlockTargets(root, entries) {
-  root.querySelectorAll('.review-target').forEach((element) => {
+function highlightBlockTargets(root, entries, blockSelector) {
+  root.querySelectorAll(blockSelector).forEach((element) => {
     const elementText = normalizeText(targetTextOf(element));
     if (!elementText) return;
     const matches = entries.filter(({ comment }) => blockCommentMatches(comment, element, elementText));
@@ -122,42 +120,35 @@ function highlightTitle(matches) {
 }
 
 /* ------------------------------------------------------------------ *
- * Edit mode: keep comments attached while the text underneath changes
+ * Edit mode: check what the comments still point at
  * ------------------------------------------------------------------ */
 
 /**
- * Marks the elements each comment points at so edits can be tracked back to it.
- * Returns a Map of comment id to the editable block holding it; comments whose
- * target has disappeared are flagged with `targetDetached`.
+ * いま組み上がっている本文に照らして、コメントの指す先がまだ在るかを引き直します。
+ *
+ * 生のMarkdownを直に書く編集モードには、打つたびに追いかけられる目印がありません。
+ * 代わりに、隣に出している組み上がりの上で毎回引き直します。編集の途中経過ではなく
+ * 「いまの本文で見つかるかどうか」で決まるので、直したつもりで外れていたコメントに、
+ * 保存を待たずに気づけます。
  */
-export function prepareEditorCommentAnchors(root, comments) {
-  const commentBlocks = new Map();
-  comments.forEach((comment) => {
-    // A hand-written review file may omit ids; anchoring needs one per comment.
-    if (!comment.id) comment.id = createId();
-    delete comment.targetDetached;
-  });
-
+export function refreshCommentAttachment(root, comments) {
   for (const comment of comments) {
-    if (comment.type !== 'paragraph' && comment.type !== 'section') continue;
-    const selector = comment.type === 'section' ? HEADING_SELECTOR : BLOCK_SELECTOR;
-    const wanted = normalizeText(commentTargetText(comment));
-    const target = [...root.querySelectorAll(selector)]
-      .find((element) => wanted && normalizeText(targetTextOf(element)) === wanted);
-
-    const blockId = target?.closest('.markdown-block')?.dataset.blockId;
-    if (!target || !blockId) {
-      comment.targetDetached = true;
-      continue;
-    }
-    appendDataId(target, 'blockCommentIds', comment.id);
-    commentBlocks.set(comment.id, blockId);
+    // 手で書いたレビューファイルにはidが無いことがあります。数える前に振っておきます。
+    if (!comment.id) comment.id = createId();
+    if (comment.type === 'document' || findCommentTarget(root, comment)) delete comment.targetDetached;
+    else comment.targetDetached = true;
   }
+}
 
-  for (const group of groupBySelection(comments, (comment) => comment)) {
-    anchorSelectionGroup(root, group, commentBlocks);
+function findCommentTarget(root, comment) {
+  const wanted = commentTargetText(comment);
+  if (!normalizeText(wanted)) return null;
+  if (comment.type !== 'paragraph' && comment.type !== 'section') {
+    return findTextRange(root, wanted, comment.contextBefore, comment.contextAfter);
   }
-  return commentBlocks;
+  const selector = comment.type === 'section' ? HEADING_SELECTOR : BLOCK_SELECTOR;
+  return [...root.querySelectorAll(selector)]
+    .find((element) => normalizeText(targetTextOf(element)) === normalizeText(wanted)) || null;
 }
 
 /** Comments on identical text share one anchor element, and one highlight. */
@@ -173,82 +164,6 @@ function groupBySelection(items, commentOf) {
   return groups.values();
 }
 
-function anchorSelectionGroup(root, comments, commentBlocks) {
-  const reference = comments[0];
-  const match = findTextRange(root, commentTargetText(reference), reference.contextBefore, reference.contextAfter);
-  const detachAll = () => comments.forEach((comment) => { comment.targetDetached = true; });
-  if (!match) return detachAll();
-
-  try {
-    const range = createRangeFor(root, match);
-    const anchor = root.ownerDocument.createElement('span');
-    anchor.className = 'editor-comment-anchor';
-    anchor.dataset.commentIds = comments.map((comment) => comment.id).join(' ');
-    anchor.append(range.extractContents());
-    range.insertNode(anchor);
-
-    const blockId = anchor.closest('.markdown-block')?.dataset.blockId;
-    if (!blockId) return detachAll();
-    comments.forEach((comment) => commentBlocks.set(comment.id, blockId));
-  } catch {
-    // A selection spanning element boundaries cannot be wrapped in one anchor.
-    detachAll();
-  }
-}
-
-/**
- * After the reviewer edits a block, copy the new text back onto every comment
- * anchored inside it so the saved review keeps pointing at the right place.
- */
-export function syncCommentsFromEditor(root, block, comments, commentBlocks) {
-  const byId = new Map(comments.map((comment) => [comment.id, comment]));
-
-  block.querySelectorAll('[data-block-comment-ids]').forEach((target) => {
-    const text = targetTextOf(target).trim();
-    if (!text) return;
-    for (const comment of commentsFor(byId, target.dataset.blockCommentIds)) {
-      comment.selectedText = text;
-      comment.targetText = text;
-      comment.headingPath = collectHeadingPath(root, target);
-      if (comment.type === 'section') comment.heading = text;
-      delete comment.targetDetached;
-    }
-  });
-
-  block.querySelectorAll('.editor-comment-anchor[data-comment-ids]').forEach((anchor) => {
-    const selectedText = anchor.textContent.trim();
-    for (const comment of commentsFor(byId, anchor.dataset.commentIds)) {
-      if (!selectedText) {
-        comment.targetDetached = true;
-        continue;
-      }
-      const context = contextAroundNode(root, anchor);
-      comment.selectedText = selectedText;
-      comment.contextBefore = context.before;
-      comment.contextAfter = context.after;
-      comment.headingPath = collectHeadingPath(root, anchor);
-      delete comment.targetDetached;
-    }
-  });
-
-  for (const comment of comments) {
-    if (commentBlocks.get(comment.id) !== block.dataset.blockId) continue;
-    const id = cssEscape(comment.id);
-    const stillPresent = block.querySelector(
-      `[data-block-comment-ids~="${id}"], .editor-comment-anchor[data-comment-ids~="${id}"]`
-    );
-    if (!stillPresent) comment.targetDetached = true;
-  }
-}
-
-function commentsFor(byId, idList) {
-  return String(idList || '')
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((id) => byId.get(id))
-    .filter(Boolean);
-}
-
 function selectionKey(comment) {
   return [
     normalizeText(commentTargetText(comment)),
@@ -257,8 +172,3 @@ function selectionKey(comment) {
   ].join('\n---\n');
 }
 
-function appendDataId(element, dataName, id) {
-  const ids = new Set(String(element.dataset[dataName] || '').split(/\s+/).filter(Boolean));
-  ids.add(id);
-  element.dataset[dataName] = [...ids].join(' ');
-}

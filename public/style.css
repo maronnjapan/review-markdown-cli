@@ -224,6 +224,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   background: #fff;
 }
 .editor-toolbar button { min-width: 2.4rem; padding: 0.4rem 0.6rem; }
+.editor-toolbar-spacer { flex: 1; }
 .editor-toolbar select {
   background: #fff;
   border: 1px solid var(--border);
@@ -249,50 +250,54 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .markdown-body :is(h1, h2, h3, h4, h5, h6), .pdf-page {
   scroll-margin-top: calc(var(--app-header-height) + var(--document-toolbar-height, 75px) + 1rem);
 }
-.markdown-block { min-width: 0; }
-.markdown-block > :first-child { margin-top: 0; }
-.markdown-block > :last-child { margin-bottom: 0; }
-.markdown-block + .markdown-block { margin-top: 1rem; }
-.markdown-body.editing .markdown-block {
-  border: 1px solid transparent;
-  border-radius: 9px;
-  min-height: 2.5rem;
+.editor-shell { min-width: 0; }
+.review-layout.editing-mode .editor-shell {
+  align-items: start;
+  display: grid;
+  gap: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.review-layout.editing-mode .editor-shell.preview-hidden { grid-template-columns: minmax(0, 1fr); }
+.review-layout.editing-mode .editor-shell.preview-hidden #markdown-content { display: none; }
+.markdown-source {
+  background: #fbfcfe;
+  border: none;
+  border-radius: 0;
+  box-sizing: border-box;
+  color: var(--text);
+  display: block;
+  /* 画面の高さいっぱいまで。上に居座る見出し・書式・保存の3段ぶんを引いています。 */
+  min-height: calc(100vh - var(--app-header-height) - var(--document-toolbar-height, 75px) - 9rem);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Noto Sans Mono CJK JP", monospace;
+  font-size: 0.88rem;
+  line-height: 1.85;
   outline: none;
-  padding: 0.35rem 0.5rem;
+  padding: 1rem 1.25rem 2rem;
+  resize: none;
+  tab-size: 2;
+  white-space: pre-wrap;
+  width: 100%;
+  word-break: break-word;
 }
-.markdown-body.editing .markdown-block:hover { border-color: #b7c7ef; }
-.markdown-body.editing .markdown-block:focus {
-  background: #fbfcff;
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(37, 87, 214, 0.12);
+.markdown-source:focus { background: #fff; }
+/* 全体の輪郭は欄の外側に出るので、書く欄いっぱいのここだけは内側に引きます。 */
+.markdown-source:focus-visible {
+  outline: 2px solid rgba(37, 87, 214, 0.35);
+  outline-offset: -2px;
 }
-.markdown-body.editing .markdown-block.dirty { border-left: 3px solid #e8a317; }
-.markdown-body.editing .markdown-block.pending-deletion {
-  border-color: #f0a7a0;
-  color: #b42318;
-  min-height: 3rem;
+.review-layout.editing-mode .editor-shell:not(.preview-hidden) .markdown-source {
+  border-right: 1px solid var(--border);
 }
-.markdown-body.editing .markdown-block.pending-deletion[aria-busy="true"] {
-  opacity: 0.7;
+/* 編集中の隣は読むためだけのものです。押せそうな見た目にはしません。 */
+.markdown-body.preview {
+  background: #fff;
+  max-width: none;
 }
-.markdown-body.editing .markdown-block.pending-deletion::after {
-  content: "空の段落は保存後に削除されます";
-  font-size: 0.8rem;
-  opacity: 0.8;
-}
-.markdown-body.editing .markdown-block.new-block:has(p:only-child br:only-child)::after {
-  color: var(--muted);
-  content: "ここに入力";
-  font-size: 0.85rem;
-  pointer-events: none;
-}
-.markdown-body.editing img { cursor: pointer; }
+.markdown-body.preview .comment-marker { pointer-events: none; }
 .editor-comment-anchor {
   background: #fff0a8;
   border-radius: 3px;
 }
-.markdown-body.editing [data-block-comment-ids] { background: #fffbea; }
-.markdown-body.editing .detached-comment-anchor { outline: 2px dashed #e8a317; }
 .markdown-body div.mermaid {
   display: flex;
   justify-content: center;
@@ -1976,6 +1981,13 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   .document-toolbar-actions > button { flex: 1 1 11rem; }
   #document-title { max-width: 45vw; }
   .toast-region { bottom: 4.75rem; }
+  /* 狭い画面では横に並べません。書く欄が細くなりすぎて、どちらも読めなくなります。 */
+  .review-layout.editing-mode .editor-shell { grid-template-columns: minmax(0, 1fr); }
+  .review-layout.editing-mode .editor-shell:not(.preview-hidden) .markdown-source {
+    border-bottom: 1px solid var(--border);
+    border-right: none;
+    min-height: 55vh;
+  }
 }
 
 @media (max-width: 640px) {

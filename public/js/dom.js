@@ -269,6 +269,9 @@ const SELECTORS = {
   editorSaveStatus: '#editor-save-status',
   retrySaveButton: '#retry-save-button',
   blockFormat: '#block-format',
+  editorShell: '#editor-shell',
+  markdownSource: '#markdown-source',
+  previewToggle: '#preview-toggle',
 
   liveCaptionsButton: '#live-captions-button',
   liveCaptionsDialog: '#live-captions-dialog',
