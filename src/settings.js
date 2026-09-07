@@ -37,10 +37,7 @@ import {
 export const UI_SETTING_KEYS = [
   'translation',
   'autoTasks', 'autoTasksInterval', 'autoTasksActions', 'autoTasksInstructions', 'autoTasksOwner',
-  'aiEmptyTarget', 'aiModel', 'aiEffort', 'aiReviewModel', 'aiReviewEffort',
-  // 連携先（URLとトークン）は入れません。aiProvider と同じく、端末の持ち主が設定ファイルか
-  // 起動オプションで決めることで、`.review-markdown.json` からの入り切りだけをここへ置きます。
-  'automationApp'
+  'aiEmptyTarget', 'aiModel', 'aiEffort', 'aiReviewModel', 'aiReviewEffort'
 ];
 
 /**
@@ -79,8 +76,7 @@ export function createSettings({ values = {}, manager = false, file = null } = {
       return Object.freeze({
         manager,
         translation: current.translation === true,
-        autoTasks: current.autoTasks === true,
-        automationApp: current.automationApp === true
+        autoTasks: current.autoTasks === true
       });
     },
 
@@ -220,13 +216,12 @@ export function normalizeSettings(patch, current = {}) {
  */
 export function settingsFromOptions({
   translation, autoTasks, autoTasksInterval, autoTasksActions, autoTasksInstructions, autoTasksOwner,
-  automationApp, aiModels = {}
+  aiModels = {}
 } = {}) {
   const { assistant = {}, review = {} } = aiModels;
   return {
     translation: translation === true,
     autoTasks: autoTasks === true,
-    automationApp: automationApp === true,
     ...(autoTasksInterval !== undefined ? { autoTasksInterval } : {}),
     ...(autoTasksActions !== undefined ? { autoTasksActions } : {}),
     ...(autoTasksInstructions ? { autoTasksInstructions } : {}),

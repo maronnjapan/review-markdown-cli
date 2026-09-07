@@ -26,7 +26,7 @@ test('画面から翻訳を有効にすると、次の要求から翻訳のAPI�
 
   // 文書を開き直したときも、同じ機能一覧が返ります。直接URLで開いても同じ画面になります。
   const opened = await fetch(`${baseUrl}/api/file?path=guide.md`).then((response) => response.json());
-  assert.deepEqual(opened.features, { manager: false, translation: true, autoTasks: false, automationApp: false });
+  assert.deepEqual(opened.features, { manager: false, translation: true, autoTasks: false });
 });
 
 test('画面から翻訳を無効にすると、その場でAPIも断る', async (t) => {
@@ -48,7 +48,7 @@ test('画面で選んだモデルは、走っているAIへその場で渡る', 
   assert.deepEqual(read.ai.models.map(({ id }) => id), ['fast-model', 'deep-model']);
   assert.deepEqual(read.ai.efforts, ['none', 'low', 'high']);
   assert.equal(read.ai.supportsEffort, true);
-  assert.deepEqual(read.settings, { translation: false, autoTasks: false, automationApp: false });
+  assert.deepEqual(read.settings, { translation: false, autoTasks: false });
 
   const saved = await postSettings(baseUrl, { aiReviewModel: 'deep-model', aiReviewEffort: 'high' });
   assert.deepEqual(client.models, {
@@ -160,13 +160,13 @@ test('起動時に決まった値は、画面が扱う1キー1値の形へほど
       aiModels: { assistant: { model: 'fast-model' }, review: { model: 'deep-model', effort: 'high' } }
     }),
     {
-      translation: true, autoTasks: false, automationApp: false,
+      translation: true, autoTasks: false,
       aiModel: 'fast-model', aiReviewModel: 'deep-model', aiReviewEffort: 'high'
     }
   );
   assert.deepEqual(
     settingsFromOptions({ aiModels: { assistant: {}, review: {} } }),
-    { translation: false, autoTasks: false, automationApp: false },
+    { translation: false, autoTasks: false },
     '名指ししなかった用途はキーごと落ちる（未設定と、既定と同じ名前を書いたのは別）'
   );
   // 自動タスクの決め事も、設定ファイルに書いたぶんだけがそのまま届きます。
@@ -175,7 +175,7 @@ test('起動時に決まった値は、画面が扱う1キー1値の形へほど
       autoTasks: true, autoTasksInterval: 300, autoTasksActions: ['research'], autoTasksInstructions: '顧客の質問を拾う', autoTasksOwner: '田中'
     }),
     {
-      translation: false, autoTasks: true, automationApp: false, autoTasksInterval: 300, autoTasksActions: ['research'],
+      translation: false, autoTasks: true, autoTasksInterval: 300, autoTasksActions: ['research'],
       autoTasksInstructions: '顧客の質問を拾う', autoTasksOwner: '田中'
     }
   );

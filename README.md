@@ -1284,35 +1284,19 @@ AIはコードを走らせず、ファイルも開かず、ネットワークに
 
 見守りが動いているあいだ、一覧は20秒ごとに取り直します。裏で足されたタスクが、画面を触らなくても出てくるようにするためです。
 
-### Automation Appへ登録する
+### 決めたタスクを外部のツールへ渡す
 
-やると決めたタスクは、連携先の**Automation App**（[agent-xaa-platform](https://github.com/maronnjapan/agent-xaa-platform)の一部）へ、
-AIエージェントが引き受けるToDoの下書きとして登録できます。既定では無効で、設定の `"automationApp": true`（または画面右上の「設定」）で有効になります。
+やると決めたタスクは `.review/<対象>.tasks.json` に残ります。
+このファイルは、外部のツールがそのまま読める形で公開している出力です。
+外部のツールへ登録する処理は、このCLIには入っていません。
+渡す先の項目・認証・断り方は渡す先の都合であり、それを持ち込むと、渡す先が変わるたびにこのCLIが直ることになるからです。
 
-有効にしただけでは連携先が決まらないので、2つの値を**ユーザー全体の設定**（`--global`）に設定してください。
-どのAIで走らせるかと同じ理由で、レビュー対象のリポジトリが同梱する `.review-markdown.json` からは読みません。
-プロジェクト側の設定でこの2つを書き換えられると、登録先とトークンをそのリポジトリの持ち主が差し替えられてしまうからです。
+読み取る側の例が [agent-xaa-platform](https://github.com/maronnjapan/agent-xaa-platform) にあります。
+同リポジトリの `pnpm review:import <レビューしたディレクトリ>` が、このファイルを読み、やると決めたタスクをAIエージェント向けのToDo（下書き）として登録します。
+読むだけで、このCLIの記録には書き込みません。手順は同リポジトリの `docs/review-markdown-import.md` にあります。
 
-```bash
-review-markdown config set automationAppUrl 'https://automation-app-xxxxx.a.run.app' --global
-review-markdown config set automationAppToken '<アクセストークン>' --global
-```
-
-| 設定キー | 中身 |
-| --- | --- |
-| `automationAppUrl` | 連携先Automation AppのURL。`http://` か `https://` のみ |
-| `automationAppToken` | 渡すアクセストークン。環境変数 `AUTOMATION_APP_ACCESS_TOKEN` があればそちらを優先します（設定ファイルへ書かずに、その場だけ渡したいときに使えます） |
-
-トークンはAutomation App側のHuman IdPが発行するもので、このCLIは発行も更新もしません。
-Human IdPの `automation-app` クライアントで認可コードフローを行い、`agent:operate` スコープを要求して取得します
-（Automation App側のドキュメント「他のツールから ToDo を登録する」を参照）。期限が切れたら、取り直して設定し直してください。
-
-有効かつ連携先が設定してあると、やると決めたタスクのカードに「**Automation Appへ登録**」が出ます。押すと、そのタスクを
-下書き（`DRAFT`）のToDoとして登録します。渡すのは題名・詳細・引用・参考知識・担当・優先度（いま→高、次に→普通、あとで→低）・期限で、
-達成条件や手順のように、このCLIが持っていない情報は作りません。
-
-登録できるのは下書きまでです。**確定・権限の承認・Agentの作成はAutomation Appの画面で人が行います。** 登録済みのタスクには
-「Automation Appへ登録済み」の印が付き、登録した先のToDoのidを記録（`.review/*.tasks.json`）に持ちます。
+このCLIが持つのは、タスクを起こして、やると決めて、記録に残すところまでです。
+その先で何をするかは、記録を読む側が決めます。
 
 ## AIの調整
 
@@ -1554,9 +1538,6 @@ review-markdown .
 | `aiEffort` | 文字列 | 同上の推論強度（`none` / `low` / `medium` / `high` など） |
 | `aiReviewModel` | 文字列 | AIレビューと読み手ペルソナに使うモデル |
 | `aiReviewEffort` | 文字列 | 同上の推論強度 |
-| `automationApp` | 真偽値 | やると決めたタスクをAutomation App（agent-xaa-platform）へ登録できるようにするかどうか（既定は `false`） |
-| `automationAppUrl` | 文字列 | 連携先Automation AppのURL（`http://` / `https://` のみ）。**`--global` 専用** |
-| `automationAppToken` | 文字列 | Automation Appへ渡すアクセストークン。環境変数 `AUTOMATION_APP_ACCESS_TOKEN` があれば優先。**`--global` 専用** |
 
 `aiModel` / `aiReviewModel` を書かなければ、選んだAIの既定で走ります。Codexは持っているモデルから自動で選び（速いモデルを翻訳とチャットへ、深く読むモデルをレビューへ）、名指ししたモデルがCodexに無いときは、黙って別のモデルへ落とさずに、使えるモデルを並べて起動を止めます。設定が効いていることは起動時のログで確認できます。
 
@@ -1632,8 +1613,7 @@ review-markdown .
 - `aiContext` は「コマンドライン（`--ai-context`）> プロジェクト設定 > ユーザー全体の設定」の順で決まります。画面で書いた読み取りコンテキストは、ディレクトリ全体のものも文書ごとのものも、これを置き換えずに足す形でAIへ渡します（「[読み取りコンテキスト](#読み取りコンテキスト)」）。
 - `aiProvider` と `aiModelProvider` は、ユーザー全体の設定と `--config` で指定したファイルからだけ読みます。プロジェクト設定に書いてあれば、警告を出して無視します。
 - `aiModel` / `aiEffort` / `aiReviewModel` / `aiReviewEffort` は「プロジェクト設定 > ユーザー全体の設定」の順で決まります。コマンドラインの口はありません。
-- `automationAppUrl` と `automationAppToken` も、`aiProvider` と同じくユーザー全体の設定と `--config` で指定したファイルからだけ読みます。登録先とトークンをレビュー対象のリポジトリに差し替えさせないためです。`automationAppToken` は環境変数 `AUTOMATION_APP_ACCESS_TOKEN` があればそちらを優先します。`automationApp`（機能の入り切り）自体にはこの制限が無く、プロジェクト設定や `--enable-auto-tasks` と同じ扱いで画面の「設定」からも変えられます。
-- `translation`、自動タスクの4つ（`autoTasks` / `autoTasksInterval` / `autoTasksActions` / `autoTasksInstructions`）、`automationApp`、上の4つは、画面の「設定」からも変えられます。変更はその場で効き、ユーザー全体の設定へ保存します。次の起動でコマンドラインやプロジェクト設定に上書きされるものは、保存したときに画面へ出します（[画面から変える設定](#画面から変える設定)）。
+- `translation`、自動タスクの4つ（`autoTasks` / `autoTasksInterval` / `autoTasksActions` / `autoTasksInstructions`）、上の4つは、画面の「設定」からも変えられます。変更はその場で効き、ユーザー全体の設定へ保存します。次の起動でコマンドラインやプロジェクト設定に上書きされるものは、保存したときに画面へ出します（[画面から変える設定](#画面から変える設定)）。
 - `--config <file>` で設定ファイルを直接指定すると、そのファイルだけを読み込みます。
 - `--no-config` を付けると、設定ファイルを一切読み込みません。
 - 知らないキーは警告を出して無視します。JSONとして壊れている場合や値の型が違う場合は、起動せずにエラーを表示します。

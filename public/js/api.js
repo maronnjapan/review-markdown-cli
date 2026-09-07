@@ -199,12 +199,6 @@ export const api = {
   async runTaskWithAi(payload, options = {}) {
     await ensureAiToken();
     return streamNdjson('/api/ai/tasks/run', payload, { ...options, headers: aiHeaders() });
-  },
-
-  /** タスクを1つ、連携先のAutomation Appへ下書きのToDoとして登録します。 */
-  async pushTaskToAutomationApp(payload) {
-    await ensureAiToken();
-    return postJson('/api/tasks/automation-app', payload, aiHeaders());
   }
 };
 

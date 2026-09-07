@@ -3,7 +3,6 @@ import path from 'node:path';
 import { normalizeAiContext } from './aiContext.js';
 import { serveAsset } from './assets.js';
 import {
-  applyAutomationAppSync,
   applyTasksChange,
   normalizeTasksChange,
   readTasks,
@@ -15,7 +14,6 @@ import { documentRevision } from './documentEdits.js';
 import { applyBlockEdits } from './editorMarkdown.js';
 import { extensionDir } from './extensionCommand.js';
 import { httpError, readJsonBody, sendBuffer, sendJson, startNdjson } from './http.js';
-import { AutomationAppError, buildAutomationAppTodoInput, createAutomationAppTodo } from './integrations/automationApp.js';
 import { appendCaptionEntry, normalizeCaptionEntry } from './liveCaptions.js';
 import { assetUrlFor, isMarkdownPath, isTextDocumentPath, resolveDocumentLink } from './links.js';
 import { renderMarkdown } from './markdown.js';
@@ -78,7 +76,6 @@ const ROUTES = [
   { methods: ['POST'], pathname: '/api/tasks', feature: 'autoTasks', handle: changeAutoTasks },
   { methods: ['POST'], pathname: '/api/ai/tasks/extract', feature: 'autoTasks', handle: extractTasksWithAi },
   { methods: ['POST'], pathname: '/api/ai/tasks/run', feature: 'autoTasks', handle: runTaskWithAi },
-  { methods: ['POST'], pathname: '/api/tasks/automation-app', feature: 'automationApp', handle: pushTaskToAutomationApp },
   { methods: ['GET'], pathname: '/api/live-captions/token', handle: liveCaptionsTokenInfo },
   { methods: ['GET'], pathname: '/api/live-captions/pairing', handle: liveCaptionsPairing },
   { methods: ['GET'], pathname: '/api/live-captions/ping', handle: liveCaptionsPing },
@@ -103,9 +100,6 @@ export function createRequestHandler({
   settings = createSettings(),
   // 自動タスクの実行係（`autoTaskRunner.js`）。無いときは、その機能のルートだけが動きません。
   autoTasks = null,
-  // 連携先Automation Appの接続先（`integrations/automationApp.js` の `resolveAutomationAppTarget`）。
-  // URLが設定されていなければ `null` で、その機能のルートは「未設定」の400を返します。
-  automationAppTarget = null,
   // 文字起こしに使えるファイルの範囲（`transcriptFiles.js`）。字幕の追記と聞き直しは、
   // ここに当たるファイルだけで動きます。
   transcripts = createTranscriptScope()
@@ -137,7 +131,6 @@ export function createRequestHandler({
       projectAiContext,
       settings,
       autoTasks,
-      automationAppTarget,
       transcripts,
       features: settings.features,
       request,
@@ -446,40 +439,6 @@ function runTaskWithAi(context) {
     },
     toEvent: (payload) => payload
   });
-}
-
-/**
- * 決めたタスクを、連携先のAutomation Appへ下書きのToDoとして登録します。
- *
- * 登録できるのは下書きまでです。確定・承認・Agentの作成は向こうの画面で人が押す操作
- * （RULE-08）なので、ここでは行いません。登録できたら、そのToDoのidをタスクへ添えて、
- * 画面から「登録済み」と分かるようにします。
- */
-async function pushTaskToAutomationApp(context) {
-  const { rootDir, filter, request, response, automationAppTarget } = context;
-  authorizeAiRequest(context);
-  const body = await readJsonBody(request);
-  const documentPath = tasksTarget(rootDir, filter, body.path);
-  const id = typeof body.id === 'string' ? body.id.trim() : '';
-  if (!id) throw httpError('タスクのidが要ります', 400);
-  const record = await readTasks(rootDir, documentPath);
-  const task = record.tasks.find((candidate) => candidate.id === id);
-  if (!task) throw httpError('タスクが見つかりません', 404);
-
-  let created;
-  try {
-    created = await createAutomationAppTodo(automationAppTarget, buildAutomationAppTodoInput(task, { documentPath }));
-  } catch (error) {
-    if (error instanceof AutomationAppError) throw httpError(error.message, error.status && error.status < 500 ? error.status : 502);
-    throw error;
-  }
-
-  const updated = await updateTasks(rootDir, documentPath, (current) => applyAutomationAppSync(current, id, {
-    workDefinitionId: created.work_definition_id,
-    url: automationAppTarget.baseUrl,
-    pushedAt: new Date().toISOString()
-  }));
-  return sendJson(response, tasksPayloadFor(context, documentPath, updated));
 }
 
 async function tasksPayload(context, documentPath) {
@@ -1001,8 +960,7 @@ function featureDisabled(feature) {
   const where = {
     manager: '資料の管理者は無効です。設定または起動オプションで有効にしてください',
     translation: '翻訳機能は無効です。画面右上の「設定」、設定ファイル、または起動オプションで有効にしてください',
-    autoTasks: '自動タスクは無効です。画面右上の「設定」、設定ファイル、または起動オプションで有効にしてください',
-    automationApp: 'Automation App連携は無効です。画面右上の「設定」、設定ファイル、または起動オプションで有効にしてください'
+    autoTasks: '自動タスクは無効です。画面右上の「設定」、設定ファイル、または起動オプションで有効にしてください'
   }[feature] || `${feature} は無効です`;
   return httpError(where, 404);
 }

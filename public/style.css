@@ -1834,14 +1834,6 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .task-due[data-due="overdue"] { background: #fdecea; border-color: #f3c0bb; color: #b42318; }
 .task-card[data-committed="true"] { border-left: 3px solid #2557d6; }
 .task-owner, .task-source { color: var(--muted); font-size: 0.7rem; }
-.task-automation-app {
-  background: #e7edff;
-  border-radius: 999px;
-  color: #2557d6;
-  font-size: 0.68rem;
-  font-weight: 600;
-  padding: 0.1rem 0.5rem;
-}
 .task-plan-note { color: #344054; font-size: 0.78rem; margin: 0; white-space: pre-wrap; }
 .task-plan {
   background: #f8fafc;
