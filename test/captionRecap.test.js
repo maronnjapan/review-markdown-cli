@@ -7,6 +7,8 @@ import { AiService } from '../src/aiService.js';
 import { AiStore } from '../src/aiStore.js';
 import {
   buildRecap,
+  buildRecapFollowUp,
+  normalizeRecapFollowUp,
   normalizeRecapRequest,
   parseCaptionEntries,
   recapMarkFor,
@@ -245,6 +247,114 @@ test('聞き直すと、読ませるのは直近だけで、次からは続き�
   assert.match(turns.at(-1).prompt, /単位はSIで揃えてください。/);
 });
 
+test('続けて聞くときの指定は、問いだけを受け取る', () => {
+  assert.deepEqual(normalizeRecapFollowUp({ question: '  期限は言われましたか？  ' }), { question: '期限は言われましたか？' });
+  // 範囲を選び直させないので、送られてきても読みません。
+  assert.deepEqual(
+    normalizeRecapFollowUp({ question: '期限は？', scope: 'all', minutes: 30 }),
+    { question: '期限は？' }
+  );
+  assert.throws(() => normalizeRecapFollowUp({ question: '   ' }), /続けて聞きたいこと/);
+  assert.throws(() => normalizeRecapFollowUp({ question: 'あ'.repeat(501) }), /長すぎます/);
+});
+
+test('続きの答えは、書かれていないと言ったときの引用を残さない', () => {
+  const window = selectRecapWindow(parseCaptionEntries(TRANSCRIPT), { scope: 'minutes', minutes: 5 });
+  const answered = buildRecapFollowUp({
+    answer: '  来週の水曜までと言われています。  ',
+    answered: true,
+    quotes: [
+      { speaker: '鈴木', quote: '来週の水曜までにお願いします。' },
+      { speaker: '鈴木', quote: '   ' }
+    ]
+  }, window, { question: '期限は言われましたか？' });
+
+  assert.equal(answered.answer, '来週の水曜までと言われています。');
+  assert.equal(answered.question, '期限は言われましたか？');
+  assert.equal(answered.quotes.length, 1, '中身の無い引用は捨てる');
+  // 読んだ範囲は、続きの答えにも毎回添えます。重ねるほど、どこの話かが画面から消えるからです。
+  assert.equal(answered.range.entries, 2);
+  assert.equal(answered.range.from, '10:20:00');
+
+  // 「書かれていない」と言いながら引用が付いていたら、その引用は問いと関係のない行です。
+  const unanswered = buildRecapFollowUp({
+    answer: 'この範囲では、担当者までは決まっていません。',
+    answered: false,
+    quotes: [{ speaker: '田中', quote: 'そこは次の版で直します。' }]
+  }, window, { question: '誰がやるのですか？' });
+
+  assert.equal(unanswered.answered, false);
+  assert.deepEqual(unanswered.quotes, []);
+});
+
+test('続けて聞くと、同じ範囲へ、同じスレッドで問いだけが飛ぶ', async (t) => {
+  const { root, store } = await testStore(t);
+  await fs.writeFile(path.join(root, 'meeting.md'), TRANSCRIPT, 'utf8');
+  const turns = [];
+  const service = new AiService(root, { store, client: fakeCodex(turns) });
+
+  // 聞き直す前に続きを聞かれても、範囲を勝手に決めません。
+  await assert.rejects(
+    service.askRecapFollowUp('meeting.md', { question: '期限は？' }),
+    /先に「直近を聞く」/
+  );
+
+  await service.recapCaptions('meeting.md', { scope: 'minutes', minutes: 5 });
+  // 続けて聞く前に字幕が伸びても、答えの根拠は聞き直したときの範囲のままです。
+  await appendCaptionEntry(root, 'meeting.md', normalizeCaptionEntry({
+    speaker: '鈴木', text: '単位はSIで揃えてください。', time: '10:23:00'
+  }));
+
+  const followUp = await service.askRecapFollowUp('meeting.md', { question: '期限は言われましたか？' });
+
+  assert.equal(turns.length, 2);
+  assert.equal(turns[1].threadId, turns[0].threadId, '1回目と同じスレッドで続ける');
+  assert.match(turns[1].prompt, /期限は言われましたか？/);
+  assert.equal(turns[1].prompt.includes('<transcript>'), false, '読ませたものは前のターンに残っている');
+  assert.equal(turns[1].prompt.includes('単位はSIで揃えて'), false, '続きの問いで範囲は広がらない');
+  assert.equal(followUp.range.entries, 2, '答えに添える範囲も、聞き直したときのまま');
+});
+
+test('スレッドが失われていたら、読ませたものとやり取りを載せ直す', async (t) => {
+  const { root, store } = await testStore(t);
+  await fs.writeFile(path.join(root, 'meeting.md'), TRANSCRIPT, 'utf8');
+  const turns = [];
+  const service = new AiService(root, {
+    store,
+    client: { ...fakeCodex(turns), async resumeThread() { throw new Error('会話の記録が残っていません'); } }
+  });
+
+  await service.recapCaptions('meeting.md', { scope: 'minutes', minutes: 5, question: '単位の話は何ですか？' });
+  await service.askRecapFollowUp('meeting.md', { question: '期限は言われましたか？' });
+
+  assert.notEqual(turns[1].threadId, turns[0].threadId, '失われたスレッドは開き直す');
+  assert.match(turns[1].prompt, /<transcript>/, '何も読んでいないモデルへ問いだけを投げない');
+  assert.match(turns[1].prompt, /来週の水曜までにお願いします。/);
+  assert.match(turns[1].prompt, /<prior_questions>[\s\S]*単位の話は何ですか？/, 'それまでのやり取りも載せ直す');
+  // 助走も1回目と同じものを添えます。載せ直すのは同じ窓なので、報告の対象は広がりません。
+  assert.match(turns[1].prompt, /<lead_in>[\s\S]*よろしくお願いします/);
+  // 枠の中だけを見ます（指示文にも `<transcript>` の語が出るので、文面全体では見分けられません）。
+  const resent = turns[1].prompt.split('<transcript>').at(-1).split('</transcript>')[0];
+  assert.equal(resent.includes('よろしくお願いします'), false, '載せ直すのも同じ範囲だけ');
+});
+
+test('聞き直し直すと、続けて聞ける範囲もそこで入れ替わる', async (t) => {
+  const { root, store } = await testStore(t);
+  await fs.writeFile(path.join(root, 'meeting.md'), TRANSCRIPT, 'utf8');
+  const turns = [];
+  const service = new AiService(root, { store, client: fakeCodex(turns) });
+
+  await service.recapCaptions('meeting.md', { scope: 'minutes', minutes: 5 });
+  await appendCaptionEntry(root, 'meeting.md', normalizeCaptionEntry({
+    speaker: '鈴木', text: '単位はSIで揃えてください。', time: '10:23:00'
+  }));
+  await service.recapCaptions('meeting.md', { scope: 'since-last' });
+
+  const followUp = await service.askRecapFollowUp('meeting.md', { question: 'それは誰への話ですか？' });
+  assert.equal(followUp.range.entries, 1, '続きの問いが向くのは、いちばん新しく読んだ範囲');
+  assert.equal(followUp.range.from, '10:23:00');
+});
+
 test('聞き直しが失敗したぶんは「聞いた」ことにしない', async (t) => {
   const { root, store } = await testStore(t);
   await fs.writeFile(path.join(root, 'meeting.md'), TRANSCRIPT, 'utf8');
@@ -273,6 +383,10 @@ test('聞き直しの範囲は聞く前に引けて、聞くと要約と行動�
       calls.push(['recap', documentPath, body]);
       onDelta('{"summary":');
       return { summary: '単位が抜けていると言われました。', points: [], actions: [] };
+    },
+    async askRecapFollowUp(documentPath, body) {
+      calls.push(['followUp', documentPath, body]);
+      return { question: body.question, answer: '来週の水曜までです。', answered: true, quotes: [] };
     },
     close() {}
   };
@@ -311,6 +425,27 @@ test('聞き直しの範囲は聞く前に引けて、聞くと要約と行動�
   assert.deepEqual(events.map((event) => event.type), ['started', 'delta', 'result']);
   assert.equal(events.at(-1).recap.summary, '単位が抜けていると言われました。');
   assert.equal(calls.at(-1)[2].question, '単位の話です');
+
+  // 続けて聞くときは問いだけを送ります。どこを読むかはサーバー側が覚えています。
+  const followUp = await fetch(`${baseUrl}/api/ai/recap-follow-up`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ path: 'meeting.md', question: '期限は言われましたか？' })
+  });
+  assert.equal(followUp.status, 200);
+  const answered = (await followUp.text()).trim().split('\n').map((line) => JSON.parse(line)).at(-1);
+  assert.equal(answered.followUp.answer, '来週の水曜までです。');
+  assert.deepEqual(calls.at(-1), ['followUp', 'meeting.md', { path: 'meeting.md', question: '期限は言われましたか？' }]);
+
+  assert.equal(
+    (await fetch(`${baseUrl}/api/ai/recap-follow-up`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: 'meeting.md', question: '期限は？' })
+    })).status,
+    403,
+    'トークン無しでは続きも聞けない'
+  );
 });
 
 /** 直近の要約の固定の答え。ここで確かめるのは配線なので、中身は形だけ合わせます。 */
@@ -325,10 +460,20 @@ function fakeCodex(turns) {
     async deleteThread() {},
     async runTurn(input) {
       turns.push(input);
+      // 続けて聞いたときは、答えの形が変わります（求められた形で見分けます）。
+      if (Object.keys(input.outputSchema?.properties || {}).includes('answered')) {
+        return {
+          text: JSON.stringify({
+            answer: '来週の水曜までと言われています。',
+            answered: true,
+            quotes: [{ speaker: '鈴木', quote: '来週の水曜までにお願いします。' }]
+          })
+        };
+      }
       return {
         text: JSON.stringify({
           summary: '図の単位と前提が足りないと言われました。',
-          answer: '',
+          answer: '前提は3章の話です。',
           points: [{ kind: 'request', speaker: '鈴木', point: '図に単位を書く', quote: '図の単位も抜けています。' }],
           actions: [{ action: '図に単位を足す', reason: '鈴木さんの指摘' }]
         })

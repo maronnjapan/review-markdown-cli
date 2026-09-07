@@ -2802,6 +2802,7 @@ test('文字起こしを開くと、押す前に読む範囲が出て、聞く�
   ].join('\n');
   const windowRequests = [];
   const recapRequests = [];
+  const followUpRequests = [];
   const reviewFile = '.review/docs/meeting.md.review.json';
 
   const { document, window } = await startApp(t, 'http://localhost/#/review/docs%2Fmeeting.md', {
@@ -2869,6 +2870,25 @@ test('文字起こしを開くと、押す前に読む範囲が出て、聞く�
           }
         }
       ]);
+    },
+    '/api/ai/recap-follow-up': (_input, options) => {
+      followUpRequests.push(JSON.parse(options.body));
+      return ndjsonResponse([
+        { type: 'started' },
+        {
+          type: 'result',
+          followUp: {
+            question: '期限は言われましたか？',
+            answer: '来週の水曜までと言われています。',
+            answered: true,
+            quotes: [{ speaker: '鈴木', quote: '来週の水曜までにお願いします。' }],
+            range: {
+              scope: 'all', appliedScope: 'minutes', fallback: 'no-mark', minutes: 10,
+              entries: 1, leadIn: 0, dropped: 0, total: 2, from: '10:20:00', to: '10:20:00'
+            }
+          }
+        }
+      ]);
     }
   });
   await waitFor(() => document.querySelector('#markdown-content h1'));
@@ -2916,6 +2936,27 @@ test('文字起こしを開くと、押す前に読む範囲が出て、聞く�
   assert.match(document.querySelector('.placement-note').textContent, /読んだのは 直近10分の1発言/);
   // 聞いたぶん「前回の位置」が進むので、範囲は取り直します。
   await waitFor(() => windowRequests.length === 3);
+
+  // 要約が出て初めて、続けて聞く欄が出ます。読んだ範囲が無いうちに問いだけ書かせません。
+  assert.equal(document.querySelector('#recap-follow-up').classList.contains('hidden'), false);
+  document.querySelector('#recap-follow-up-question').value = '期限は言われましたか？';
+  document.querySelector('#recap-follow-up-form').requestSubmit();
+  // 答えが出るまで待ちます（問いは押した直後に並ぶので、それでは待ったことになりません）。
+  await waitFor(() => document.querySelector('.recap-follow-up-turn blockquote'));
+
+  // 送るのは問いだけです。どこを読むかは直前の聞き直しで決まっています。
+  assert.deepEqual(followUpRequests, [{ path: 'docs/meeting.md', question: '期限は言われましたか？' }]);
+  const turn = document.querySelector('.recap-follow-up-turn');
+  assert.match(turn.querySelector('.recap-asked').textContent, /期限は言われましたか？/);
+  assert.match(turn.textContent, /来週の水曜までと言われています。/);
+  assert.match(turn.querySelector('blockquote').textContent, /来週の水曜までにお願いします。/);
+  assert.equal(document.querySelector('#recap-follow-up-question').value, '', '聞けたぶんは欄を空にする');
+  // 範囲は変わっていないので、聞き直しの範囲を引き直しに行くこともありません。
+  assert.equal(windowRequests.length, 3);
+
+  // 聞き直しを押し直すと、範囲が変わるので、前の範囲への問いと答えは残しません。
+  document.querySelector('#recap-form').requestSubmit();
+  await waitFor(() => document.querySelectorAll('.recap-follow-up-turn').length === 0);
 });
 
 test('文字起こしでない文書に、聞き直しのタブは出ない', async (t) => {

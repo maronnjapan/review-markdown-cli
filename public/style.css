@@ -1880,6 +1880,30 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .recap-actions li { font-size: 0.85rem; }
 .recap-action-what { display: block; }
 .recap-action-why { color: var(--muted); display: block; font-size: 0.76rem; }
+/*
+ * 続けて聞く欄は、要約と行動の下に置きます。上に置くと、押した直後にいちばん読みたい
+ * 要約が問いの欄の下へ流れます。やり取りは聞いた順に上から積み、書く欄はいつも最後です。
+ */
+.recap-follow-up {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+}
+.recap-follow-up h3 { font-size: 0.82rem; margin: 0; }
+.recap-follow-ups { display: grid; gap: 0.5rem; }
+.recap-follow-ups:empty { display: none; }
+.recap-follow-up-turn {
+  background: #f8fafc;
+  border-radius: 12px;
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.7rem 0.85rem;
+}
+.recap-follow-up-turn p { font-size: 0.82rem; margin: 0; }
+.recap-follow-up-turn .recap-asked { font-size: 0.8rem; }
+.recap-follow-up-turn blockquote { margin: 0; }
 
 /*
  * 自動タスク：見守りの入り切り、今すべきこと、タスクの一覧。

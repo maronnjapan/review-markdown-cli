@@ -119,6 +119,10 @@ export function createState() {
     recapWindow: null,
     recap: null,
     recapAbortController: null,
+    // 同じ範囲について続けて聞いたぶん。聞き直すたびに空へ戻します（範囲が変わるので、
+    // 前の範囲への問いと答えを残すと、どこの話か分からないやり取りが積み上がります）。
+    recapFollowUps: [],
+    recapFollowUpAbortController: null,
 
     // 自動タスク。サーバーが持つ記録（`.review/<target>.tasks.json`）の写しと、見守りの状態。
     // 裏で増えるものなので、開いているあいだは定期的に取り直します（`autoTasks.js`）。

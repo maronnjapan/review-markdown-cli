@@ -71,6 +71,7 @@ const ROUTES = [
   { methods: ['POST'], pathname: '/api/ai/revise', handle: reviseWithAi },
   { methods: ['GET'], pathname: '/api/ai/recap-window', handle: readRecapWindow },
   { methods: ['POST'], pathname: '/api/ai/recap', handle: recapWithAi },
+  { methods: ['POST'], pathname: '/api/ai/recap-follow-up', handle: recapFollowUpWithAi },
   // タスクそのものは、設定に関わらず使えます。設定（`autoTasks`）が決めるのは、押していない
   // のにAIが読み直す見守りだけで、それは `changeAutoTasks` の `watch` で断ります。
   { methods: ['GET'], pathname: '/api/tasks', handle: readAutoTasks },
@@ -342,6 +343,23 @@ function recapWithAi(context) {
       return aiService.recapCaptions(documentPath, body, { signal, onDelta });
     },
     toEvent: (recap) => ({ recap })
+  });
+}
+
+/**
+ * 聞き直した範囲について、続けて聞きます。
+ *
+ * 範囲を受け取らないのが要点です。どこを読むかは直前の聞き直しで決まっていて、
+ * それを覚えているのはサーバー側（`aiService.recapSessions`）です。ここで決め方を
+ * 受け取れるようにすると、画面に出ている要約と、続きの答えの根拠が食い違います。
+ */
+function recapFollowUpWithAi(context) {
+  return streamAiRequest(context, {
+    run: ({ aiService, documentPath, body, signal, onDelta }) => {
+      assertTranscriptFile(context, documentPath);
+      return aiService.askRecapFollowUp(documentPath, body, { signal, onDelta });
+    },
+    toEvent: (followUp) => ({ followUp })
   });
 }
 

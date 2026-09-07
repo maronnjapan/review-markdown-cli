@@ -174,6 +174,15 @@ export const api = {
     return streamNdjson('/api/ai/recap', payload, { ...options, headers: aiHeaders() });
   },
 
+  /**
+   * 聞き直した範囲について、続けて聞きます。送るのは問いだけです。
+   * どこを読むかは直前の聞き直しで決まっていて、それを覚えているのはサーバー側です。
+   */
+  async recapFollowUpWithAi(payload, options = {}) {
+    await ensureAiToken();
+    return streamNdjson('/api/ai/recap-follow-up', payload, { ...options, headers: aiHeaders() });
+  },
+
   /** その文書の自動タスクと、見守りの状態。AIは起動しません。 */
   async readTasks(path) {
     await ensureAiToken();

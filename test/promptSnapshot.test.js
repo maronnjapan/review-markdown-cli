@@ -190,6 +190,8 @@ const EXPECTED = {
   'prompt:revise(instructionOnly)': '12ef15b2376365bf02deb839eb0933154e210738ee48a72886c0eb166072f7fa',
   'prompt:recap(all)': 'bb869aff908996bbdf353a55cc99824a388c9bca39cc94ebd7ba84cda8b95699',
   'prompt:recap(minutes+question)': 'e43bfc4ee1ae2ae0d4fc633be3a3034da9781b233166b88e474cf35788fdbdff',
+  'prompt:recap(followUp)': '45de7e3c7cab941cee09c504a6341e781ad41c103613890e0be428ad29428bac',
+  'prompt:recap(followUpResent)': 'd5818555308215b5e9c9dc2f2708b4c512c0b4d1f61024ef84c16d4f92bb650d',
   'prompt:tasks(transcript,first)': 'bf4956cf6f2847fca28b0f0d9a2487bfe007b768819899c1f54634afbc1533d3',
   'prompt:tasks(transcript,appended+instructions)': '2c893b46b9bb42c3e7c2db2e0f857072cc0e8bbaa716a3faec3b306d3a8264d3',
   'prompt:tasks(document,extractOnly)': '9099d3eccce9ab5130a61ebe3d36a0298ceb13b7fefc0ecf6e32ecac9b734823',
@@ -322,6 +324,16 @@ test('AIへ渡す文面は、書き換えるまで一字も変わらない', asy
   record('prompt:recap(all)', prompts.at(-1));
   await service.recapCaptions('meeting.md', { scope: 'minutes', minutes: 5, question: '「前提」は何を指していますか？' });
   record('prompt:recap(minutes+question)', prompts.at(-1));
+
+  // 続けて聞くとき。スレッドが続いていれば、渡すのは問いと答えの形だけです。
+  await service.askRecapFollowUp('meeting.md', { question: 'その依頼は、いつまでにと言われましたか？' });
+  record('prompt:recap(followUp)', prompts.at(-1));
+
+  // スレッドがAI側で失われていたとき。読ませたものと、それまでのやり取りを載せ直します。
+  const forgetful = new AiService(root, { store, client: forgetfulCodex(prompts), projectContext: 'ディレクトリ全体の前提。' });
+  await forgetful.recapCaptions('meeting.md', { scope: 'minutes', minutes: 5, question: '「前提」は何を指していますか？' });
+  await forgetful.askRecapFollowUp('meeting.md', { question: 'その依頼は、いつまでにと言われましたか？' });
+  record('prompt:recap(followUpResent)', prompts.at(-1));
 
   // 自動タスク。文字起こしを最初から読む形、追記だけを読む形（既存タスクと特にしてほしいこと付き）、
   // 資料を整理も今すべきことも無しで読む形、そして実行の2種類で文面が変わります。
@@ -479,6 +491,7 @@ const PLACEMENT_ANSWER = JSON.stringify({ placements: [], unplaced: [] });
 
 /** 聞き直しの固定の答え。ここで固定しているのは送る文面なので、答えは形だけ合わせます。 */
 const RECAP_ANSWER = JSON.stringify({ summary: '前提の記述を求められました。', answer: '', points: [], actions: [] });
+const RECAP_FOLLOW_UP_ANSWER = JSON.stringify({ answer: '来週の水曜までと言われています。', answered: true, quotes: [] });
 
 /** 自動タスクの固定の答え。抽出と実行の2つで、どちらも形だけ合わせます。 */
 const TASKS_ANSWER = JSON.stringify({ summary: '前提が足りません。', focus: { now: '', reason: '' }, tasks: [], updates: [] });
@@ -524,6 +537,14 @@ function fakeCodex(prompts, reviewAnswer = REVIEW_ANSWER) {
   };
 }
 
+/** スレッドを覚えていないCodex。続けて聞くときに、読ませたものを載せ直す側を通します。 */
+function forgetfulCodex(prompts) {
+  return {
+    ...fakeCodex(prompts),
+    async resumeThread() { throw new Error('会話の記録が残っていません'); }
+  };
+}
+
 /** 求められた答えの形から、返すべき固定の答えを選びます。 */
 function answerFor(outputSchema, reviewAnswer) {
   const fields = Object.keys(outputSchema?.properties || {});
@@ -532,6 +553,7 @@ function answerFor(outputSchema, reviewAnswer) {
   if (fields.includes('summary') && fields.includes('placements')) return reviewAnswer;
   if (fields.includes('placements')) return PLACEMENT_ANSWER;
   if (fields.includes('points')) return RECAP_ANSWER;
+  if (fields.includes('answered')) return RECAP_FOLLOW_UP_ANSWER;
   // 自動タスクの実行は questions を返すので、管理者より先に見分けます。
   if (fields.includes('updates')) return TASKS_ANSWER;
   if (fields.includes('followUps')) return TASK_RESULT_ANSWER;

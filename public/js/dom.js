@@ -167,6 +167,12 @@ const SELECTORS = {
   recapRunButton: '#recap-run-button',
   recapStopButton: '#recap-stop-button',
   recapResults: '#recap-results',
+  recapFollowUp: '#recap-follow-up',
+  recapFollowUps: '#recap-follow-ups',
+  recapFollowUpForm: '#recap-follow-up-form',
+  recapFollowUpQuestion: '#recap-follow-up-question',
+  recapFollowUpButton: '#recap-follow-up-button',
+  recapFollowUpStopButton: '#recap-follow-up-stop-button',
 
   tasksLinkCount: '#tasks-link-count',
   tasksPanel: '#tasks-panel',

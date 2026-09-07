@@ -21,6 +21,17 @@ import { escapeHtml } from './util.js';
  * 「更新」を押すまで増えません。聞き直しはファイルを読むので、画面にまだ出ていない
  * 発言も入ります。取り違えないように、範囲は「いまファイルにあるところまで」として
  * 出し、取り直すボタンも置いてあります。
+ *
+ * ── 続けて聞く ────────────────────────────────────────
+ * 要約を読んで、それでも分からないことは残ります（「その依頼、期限は言われた？」）。
+ * そこで、出したあとに同じ範囲へ続けて聞ける欄を下に出します。
+ *
+ * 範囲の選び方は出しません。続きの問いは、いま画面に出ている要約と同じ範囲への問い
+ * だからです。ここで選び直せると、読んだ範囲と答えの根拠がずれます。そのあとの発言
+ * まで含めたいときは「直近を聞く」を押し直す、と欄の上に書いてあります。
+ *
+ * 押し直せば、それまでのやり取りは消えます。範囲が変わった以上、前の範囲への問いと
+ * 答えを残しても、どこの話なのかが読めなくなるからです。
  */
 
 /**
@@ -32,6 +43,7 @@ const SPEAKER_LINE = /^\*\*.+?\*\*\s+`\[[^\]]*\]`\s*$/m;
 
 const EMPTY_HTML = '<p class="muted">「直近を聞く」を押すと、いま言われたことの要約と、次にすることが出ます。</p>';
 const LOADING_HTML = '<p class="ai-loading">直近の発言を読んでいます…</p>';
+const FOLLOW_UP_LOADING_HTML = '<p class="ai-loading">読んだ範囲から答えを探しています…</p>';
 
 /** 指摘の種類。サーバー側の語彙（src/prompts/recap.js）と同じ並びです。 */
 const KIND_LABELS = {
@@ -57,13 +69,16 @@ export function createCaptionRecapController({
 
   bindEvents();
 
-  /** 文書を開いたとき。前の文書で書いた問いも、その要約も残しません。 */
+  /** 文書を開いたとき。前の文書で書いた問いも、その要約も、続きのやり取りも残しません。 */
   function load() {
     refs.recapQuestion.value = '';
+    refs.recapFollowUpQuestion.value = '';
     state.recapWindow = null;
     state.recap = null;
+    state.recapFollowUps = [];
     applyScope();
     setRunning(false);
+    setFollowUpRunning(false);
     refresh();
   }
 
@@ -171,6 +186,10 @@ export function createCaptionRecapController({
       controllerKey: 'recapAbortController',
       onStart() {
         state.recap = { status: 'loading' };
+        // 読む範囲が変わるので、前の範囲への問いと答えはここで捨てます。残すと、
+        // どこの話への答えなのかが分からないやり取りが上に積まれたままになります。
+        state.recapFollowUps = [];
+        refs.recapFollowUpQuestion.value = '';
         render();
         revealResults();
       },
@@ -204,6 +223,76 @@ export function createCaptionRecapController({
     });
   }
 
+  /* ---------------------------------------------------------------- *
+   * 続けて聞く
+   * ---------------------------------------------------------------- */
+
+  /**
+   * 同じ範囲について、もう一度聞きます。送るのは問いだけです。
+   *
+   * 決め方も分数も送りません。どこを読むかは直前の聞き直しで決まっていて、それを
+   * 覚えているのはサーバー側です。ここから範囲を送れるようにすると、画面に出ている
+   * 要約と、続きの答えの根拠が食い違う余地ができます。
+   */
+  async function askFollowUp() {
+    const question = refs.recapFollowUpQuestion.value.trim();
+    if (!question || state.recap?.status !== 'ready') return;
+    // 問いは先に並べます。答えを待っている間も、何を聞いたのかが画面に残ります。
+    const asked = { question, status: 'loading' };
+    await runAiRequest({
+      state,
+      prepareAi,
+      flushComments,
+      controllerKey: 'recapFollowUpAbortController',
+      onStart() {
+        state.recapFollowUps = [...state.recapFollowUps, asked];
+        renderFollowUps();
+        revealFollowUp();
+      },
+      onPrepared: () => setFollowUpRunning(true),
+      run: ({ documentPath, signal }) => api.recapFollowUpWithAi({ path: documentPath, question }, { signal }),
+      onResult(result) {
+        replaceFollowUp(asked, { status: 'ready', ...result.followUp });
+        // 聞けたぶんだけ欄を空にします。同じ問いをもう一度送る操作は、ここにはありません。
+        refs.recapFollowUpQuestion.value = '';
+      },
+      // 頼めなかったときは onSettled を通らないので、描き直すのはここです。
+      onUnavailable(error) {
+        replaceFollowUp(asked, { question, status: 'error', error });
+        renderFollowUps();
+        revealFollowUp();
+      },
+      // 中断は失敗ではないので、問いごと引き取ります。書いたものは欄に残したままなので、
+      // そのまま押し直せます。
+      onAbort() {
+        state.recapFollowUps = state.recapFollowUps.filter((entry) => entry !== asked);
+      },
+      onError(error) {
+        replaceFollowUp(asked, { question, status: 'error', error: error.message });
+      },
+      onSettled() {
+        setFollowUpRunning(false);
+        renderFollowUps();
+        revealFollowUp();
+      }
+    });
+  }
+
+  /** 待っていた問いを、返ってきたものへ置き換えます。並び順は聞いた順のままです。 */
+  function replaceFollowUp(asked, resolved) {
+    state.recapFollowUps = state.recapFollowUps.map((entry) => (entry === asked ? resolved : entry));
+  }
+
+  /**
+   * 続きのやり取りを、押した人の目の前へ持ってきます。
+   *
+   * 持ってくるのは書く欄です。やり取りは古い順に積むので、いちばん新しい問いと答えは
+   * いつも書く欄のすぐ上にあります。欄ごと持ってくれば、重ねても新しいほうが見えます。
+   */
+  function revealFollowUp() {
+    refs.recapFollowUpForm.scrollIntoView?.({ block: 'nearest' });
+  }
+
   /**
    * 出したものを、押した人の目の前へ持ってきます。
    *
@@ -217,10 +306,11 @@ export function createCaptionRecapController({
     refs.recapResults.scrollIntoView?.({ block: 'nearest' });
   }
 
-  /** 要約と行動を、そのまま貼れる文章にして渡します。 */
+  /** 要約と行動を、そのまま貼れる文章にして渡します。続けて聞いたぶんも最後に付けます。 */
   async function copy() {
     const recapResult = state.recap;
     if (recapResult?.status !== 'ready') return;
+    const answered = state.recapFollowUps.filter((entry) => entry.status === 'ready');
     const text = [
       `【直近の要約】${describeRange(recapResult.range, { done: true })}`,
       recapResult.summary,
@@ -228,7 +318,9 @@ export function createCaptionRecapController({
       recapResult.points.length ? `\n【言われたこと】\n${recapResult.points
         .map((point) => `- ${KIND_LABELS[point.kind] || ''}／${point.speaker}: ${point.point}`).join('\n')}` : '',
       recapResult.actions.length ? `\n【次にすること】\n${recapResult.actions
-        .map((action, index) => `${index + 1}. ${action.action}${action.reason ? `（${action.reason}）` : ''}`).join('\n')}` : ''
+        .map((action, index) => `${index + 1}. ${action.action}${action.reason ? `（${action.reason}）` : ''}`).join('\n')}` : '',
+      answered.length ? `\n【続けて聞いたこと】\n${answered
+        .map((entry) => `Q. ${entry.question}\nA. ${entry.answer}`).join('\n\n')}` : ''
     ].filter(Boolean).join('\n');
     try {
       await navigator.clipboard.writeText(text);
@@ -247,6 +339,37 @@ export function createCaptionRecapController({
     syncRunState();
     refs.recapResults.innerHTML = resultsHtml();
     refs.recapResults.querySelector('[data-recap-action="copy"]')?.addEventListener('click', copy);
+    renderFollowUps();
+  }
+
+  /**
+   * 続きのやり取り。要約が出ているときだけ欄ごと出します。
+   * 読んだ範囲が無いうちに問いの欄だけ出しても、押せば断られるだけだからです。
+   */
+  function renderFollowUps() {
+    const open = state.recap?.status === 'ready';
+    refs.recapFollowUp.classList.toggle('hidden', !open);
+    refs.recapFollowUps.innerHTML = open ? state.recapFollowUps.map(followUpHtml).join('') : '';
+    syncFollowUpState();
+  }
+
+  function followUpHtml(entry) {
+    const asked = `<p class="recap-asked">${escapeHtml(entry.question)}</p>`;
+    if (entry.status === 'loading') return `<article class="recap-follow-up-turn">${asked}${FOLLOW_UP_LOADING_HTML}</article>`;
+    if (entry.status === 'error') {
+      return `<article class="recap-follow-up-turn">${asked}<p class="ai-error">聞けませんでした: ${escapeHtml(entry.error)}</p></article>`;
+    }
+    return `
+      <article class="recap-follow-up-turn">
+        ${asked}
+        <p>${escapeHtml(entry.answer)}</p>
+        ${entry.answered ? '' : '<p class="muted">読んだ範囲には、答えになる発言がありません。</p>'}
+        ${(entry.quotes || []).map((quote) => `
+          <blockquote class="placement-quote">
+            <span class="recap-speaker">${escapeHtml(quote.speaker)}</span>
+            ${escapeHtml(quote.quote)}
+          </blockquote>`).join('')}
+      </article>`;
   }
 
   function renderRange() {
@@ -379,6 +502,12 @@ export function createCaptionRecapController({
     syncRunState();
   }
 
+  function setFollowUpRunning(running) {
+    refs.recapFollowUpQuestion.disabled = running;
+    refs.recapFollowUpStopButton.classList.toggle('hidden', !running);
+    syncFollowUpState();
+  }
+
   /** 読む発言が1つも無いときは押させません。押しても断られるだけだからです。 */
   function syncRunState() {
     const window = state.recapWindow;
@@ -386,6 +515,16 @@ export function createCaptionRecapController({
       || !available()
       || Boolean(window?.error)
       || (Array.isArray(window?.entries) && window.entries.length === 0);
+  }
+
+  /**
+   * 続けて聞けるのは、読んだ範囲があるときだけです。聞き直しを走らせている最中も
+   * 押させません。範囲がこれから入れ替わるので、いま出ている範囲への問いになりません。
+   */
+  function syncFollowUpState() {
+    refs.recapFollowUpButton.disabled = Boolean(state.recapFollowUpAbortController)
+      || Boolean(state.recapAbortController)
+      || state.recap?.status !== 'ready';
   }
 
   function scopeInputs() {
@@ -408,6 +547,16 @@ export function createCaptionRecapController({
     refs.recapMinutes.addEventListener('change', () => chooseMinutes(refs.recapMinutes.value));
     refs.recapRangeRefresh.addEventListener('click', () => refreshRange());
     refs.recapStopButton.addEventListener('click', () => state.recapAbortController?.abort());
+    refs.recapFollowUpForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      askFollowUp();
+    });
+    refs.recapFollowUpQuestion.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' || !(event.ctrlKey || event.metaKey) || event.isComposing) return;
+      event.preventDefault();
+      askFollowUp();
+    });
+    refs.recapFollowUpStopButton.addEventListener('click', () => state.recapFollowUpAbortController?.abort());
   }
 
   return { load, refresh, render, refreshRange, available, visible };

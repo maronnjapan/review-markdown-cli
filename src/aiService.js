@@ -9,6 +9,9 @@ import {
   MAX_HEADING_DEPTH,
   MAX_MESSAGE_CHARS,
   MAX_NOTES_CHARS,
+  MAX_RECAP_FOLLOW_UPS,
+  MAX_RECAP_FOLLOW_UP_TURNS,
+  MAX_RECAP_SESSIONS,
   MAX_TARGET_CHARS,
   TARGET_CONTEXT_CHARS,
   TERM_MAX_CHARS,
@@ -17,10 +20,14 @@ import {
 import { AiStore, defaultAiDataDir, translationCacheKey } from './aiStore.js';
 import { detectSourceKind, isTaskCommitted, readExtractionAnswer, readTaskResult, sliceTaskSource } from './autoTasks.js';
 import {
+  RECAP_FOLLOW_UP_SCHEMA,
   RECAP_SCHEMA,
   buildRecap,
+  buildRecapFollowUp,
+  normalizeRecapFollowUp,
   normalizeRecapRequest,
   parseCaptionEntries,
+  recapFollowUpPrompt,
   recapPrompt,
   selectRecapWindow
 } from './captionRecap.js';
@@ -85,7 +92,8 @@ const ANSWER_SUBJECTS = {
   persona: 'AIが組み直した読み手ペルソナ',
   review: 'AIのレビュー結果',
   revise: 'AIの修正案',
-  recap: '直近の文字起こしの要約',
+  // 1回目の要約と、続けて聞いたときの答えの両方がこの文言で断ります。
+  recap: '直近の文字起こしについてのAIの答え',
   tasks: '自動タスクの抽出結果',
   taskRun: '自動タスクの実行結果'
 };
@@ -120,6 +128,14 @@ export class AiService {
     // たびに読み直すので、ここでは持ちません（`readingContext()`）。
     this.projectContext = normalizeAiContext(projectContext, 'aiContext');
     this.managerEnabled = managerEnabled === true;
+    /**
+     * 直前に聞き直した範囲。文書のパス -> `{ window, threadId, turns }`。
+     *
+     * 続けて聞くためだけの控えです。端末には書きません。会議中に読むものなので、
+     * 立ち上げ直したあとに「さっきの続き」として答えても、その範囲はもう画面に
+     * 出ていません。忘れていたら断って、聞き直しからやり直してもらいます。
+     */
+    this.recapSessions = new Map();
   }
 
   /**
@@ -516,7 +532,7 @@ export class AiService {
     }
 
     const readingContext = await this.readingContext(documentPath);
-    const { answer } = await this.askForJson({
+    const { answer, threadId } = await this.askForJson({
       feature: 'recap',
       prompt: recapPrompt(window, request.question, readingContext),
       outputSchema: RECAP_SCHEMA,
@@ -527,7 +543,83 @@ export class AiService {
     // 「ここまで聞いた」を覚えるのは、答えを受け取ってからです。途中で失敗したぶんまで
     // 聞いたことにすると、次に「前回から」で押したときにその区間が飛びます。
     if (window.mark) await this.store.saveRecapMark(documentPath, window.mark);
-    return buildRecap(answer, window, { question: request.question });
+    const recap = buildRecap(answer, window, { question: request.question });
+    // 続けて聞けるように、いま読ませた範囲とそのスレッドを控えます。聞き直すたびに
+    // 入れ替わるので、続きの問いが向く先はいつも「画面に出ている要約と同じ範囲」です。
+    this.rememberRecap(documentPath, { window, threadId, turns: recapTurns(request.question, recap.answer) });
+    return recap;
+  }
+
+  /**
+   * 聞き直した範囲について、続けて聞きます。範囲は選び直させません。
+   *
+   * 読ませ直さずに済むのがふつうです。1回目と同じスレッドで続けるので、モデルは
+   * その範囲を前のターンで読んでいます。スレッドがAI側で失われていたときだけ、
+   * 控えてある窓とそれまでのやり取りを載せ直します（`recapFollowUpPrompt`）。
+   *
+   * 控えが無ければ断ります。ここで黙って範囲を引き直すと、「前回聞いたところから」は
+   * もう進んでいるので、画面に出ている要約とは別の範囲への答えが返ります。
+   */
+  async askRecapFollowUp(documentPath, input, { onDelta, signal } = {}) {
+    const { question } = normalizeRecapFollowUp(input);
+    const session = this.recapSessions.get(documentPath);
+    if (!session) {
+      throw new Error('続けて聞ける範囲がありません。先に「直近を聞く」を押してください');
+    }
+    if (session.turns.length >= MAX_RECAP_FOLLOW_UPS) {
+      // ここまで重ねて足りないのは回数ではなく範囲です。もう一度「直近を聞く」を
+      // 押せば、新しい範囲で数え直します。
+      throw new Error(`同じ範囲について聞けるのは${MAX_RECAP_FOLLOW_UPS}回までです。「直近を聞く」を押し直してください`);
+    }
+
+    const resend = !(await this.resumeRecapThread(session));
+    const { answer, threadId } = await this.askForJson({
+      feature: 'recap',
+      threadId: session.threadId,
+      prompt: recapFollowUpPrompt(question, {
+        window: resend ? session.window : null,
+        prior: resend ? session.turns.slice(-MAX_RECAP_FOLLOW_UP_TURNS) : [],
+        readingContext: resend ? await this.readingContext(documentPath) : null
+      }),
+      outputSchema: RECAP_FOLLOW_UP_SCHEMA,
+      onDelta,
+      signal
+    });
+
+    const followUp = buildRecapFollowUp(answer, session.window, { question });
+    // やり取りを控えるのも、答えを受け取ってからです。失敗したぶんを覚えておくと、
+    // 読ませ直すときに「答えの無い問い」を載せることになります。
+    session.threadId = threadId;
+    session.turns.push(...recapTurns(question, followUp.answer));
+    return followUp;
+  }
+
+  /** 直前に読ませた範囲を控えます。古い文書のぶんから捨てます。 */
+  rememberRecap(documentPath, session) {
+    this.recapSessions.delete(documentPath);
+    this.recapSessions.set(documentPath, session);
+    for (const stale of [...this.recapSessions.keys()].slice(0, -MAX_RECAP_SESSIONS)) {
+      this.recapSessions.delete(stale);
+    }
+  }
+
+  /**
+   * 続きを聞くスレッド。残っていればそのまま続け、AI側で失われていたら忘れます。
+   *
+   * 忘れたことを返すのは、呼ぶ側が読ませ直すかどうかを決めるためです。何も読んでいない
+   * 新しいスレッドへ問いだけを投げると、読んだふりの答えが返ります。
+   *
+   * @returns {Promise<boolean>} そのスレッドで続けられるか。
+   */
+  async resumeRecapThread(session) {
+    if (!session.threadId) return false;
+    try {
+      await this.ai.resumeThread(session.threadId);
+      return true;
+    } catch {
+      session.threadId = null;
+      return false;
+    }
   }
 
   /**
@@ -812,6 +904,16 @@ export class AiService {
     await this.store.saveConversation(conversation);
     return { threadId: conversation.codexThreadId, firstTurn: true };
   }
+}
+
+/**
+ * 続けて聞くときに載せ直すやり取り。問いと答えが揃ったものだけを控えます。
+ *
+ * 何も聞かずに押した回（要約だけ）と、聞いたのに答えが返らなかった回は残しません。
+ * 答えの無い問いを載せ直すと、続きの問いの指示語が、答えの無いほうを受けます。
+ */
+function recapTurns(question, answer) {
+  return question && answer ? [{ question, answer }] : [];
 }
 
 const DEFAULT_CONVERSATION_CONTEXT = ['comments', 'reading', 'brief', 'notes', 'persona', 'files'];

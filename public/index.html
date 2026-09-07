@@ -563,6 +563,18 @@
                 </div>
               </form>
               <div id="recap-results" class="placement-results"></div>
+              <section id="recap-follow-up" class="recap-follow-up hidden">
+                <h3>続けて聞く</h3>
+                <p class="placement-hint">いま読んだ範囲について、そのまま聞き直せます。範囲は広がらないので、そのあとの発言も含めたいときは「直近を聞く」を押し直してください。</p>
+                <div id="recap-follow-ups" class="recap-follow-ups"></div>
+                <form id="recap-follow-up-form" class="placement-form">
+                  <textarea id="recap-follow-up-question" rows="2" placeholder="続けて聞きたいことを書きます（例：その依頼は、いつまでにと言われましたか？）"></textarea>
+                  <div class="placement-actions">
+                    <button id="recap-follow-up-stop-button" class="hidden" type="button">停止</button>
+                    <button id="recap-follow-up-button" type="submit">続けて聞く</button>
+                  </div>
+                </form>
+              </section>
             </div>
           </section>
           <section id="tasks-panel" class="tasks-panel tool-panel card hidden" aria-live="polite">

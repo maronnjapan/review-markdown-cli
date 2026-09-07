@@ -65,6 +65,7 @@ test('聞き直しは、文字起こし用でないファイルでは断る（�
     async status() { return { available: true, provider: 'codex' }; },
     async recapWindow() { return { appliedScope: 'all', entries: [{ index: 0 }], leadIn: [], dropped: 0 }; },
     async recapCaptions() { return { summary: '読みました', points: [], actions: [] }; },
+    async askRecapFollowUp() { return { question: '期限は？', answer: '答えました', answered: true, quotes: [] }; },
     close() {}
   };
   const { app } = createServer(root, { aiService, aiToken: 'recap-token' });
@@ -95,6 +96,14 @@ test('聞き直しは、文字起こし用でないファイルでは断る（�
   const events = (await streamed.text()).trim().split('\n').map((line) => JSON.parse(line));
   assert.equal(events.at(-1).type, 'error');
   assert.match(events.at(-1).error, /文字起こし用のファイルではありません/);
+
+  // 続けて聞くほうも同じ線です。1回目を断ったファイルで、続きだけ通ると筋が合いません。
+  const followUp = await fetch(`${baseUrl}/api/ai/recap-follow-up`, {
+    method: 'POST', headers, body: JSON.stringify({ path: 'guide.md', question: '期限は？' })
+  });
+  const followUpEvents = (await followUp.text()).trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(followUpEvents.at(-1).type, 'error');
+  assert.match(followUpEvents.at(-1).error, /文字起こし用のファイルではありません/);
 
   // 画面は文書ごとの印で「文字起こし」タブの出し方を決めます。
   const opened = await fetch(`${baseUrl}/api/file?path=guide.md`).then((response) => response.json());

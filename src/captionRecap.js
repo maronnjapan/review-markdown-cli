@@ -8,7 +8,13 @@ import {
   MAX_RECAP_QUESTION_CHARS
 } from './aiLimits.js';
 import { aiContextBlock } from './aiContext.js';
-import { RECAP_POINT_KINDS, RECAP_SCHEMA, recapPrompt as buildRecapPrompt } from './prompts/recap.js';
+import {
+  RECAP_FOLLOW_UP_SCHEMA,
+  RECAP_POINT_KINDS,
+  RECAP_SCHEMA,
+  recapFollowUpPrompt as buildRecapFollowUpPrompt,
+  recapPrompt as buildRecapPrompt
+} from './prompts/recap.js';
 
 /**
  * 会議中の「いまの話、何を言われた？」に答えるための、文字起こしの切り出しです。
@@ -43,11 +49,17 @@ import { RECAP_POINT_KINDS, RECAP_SCHEMA, recapPrompt as buildRecapPrompt } from
  * 「読むが、ここからは何も報告しない」枠として添えます。要約の対象を広げるのとは
  * 別のことなので、渡す枠も分けています（`prompts/recap.js`）。
  *
+ * ── 続けて聞く ────────────────────────────────────────
+ * 一度読ませたら、その範囲について続けて聞けます。窓を決め直さないのが要点です。
+ * 続けて聞くたびに範囲を引き直すと、「前回聞いたところから」は既に進んでいるので、
+ * 答えの根拠が問いのたびに別の場所へ移ります。読んだ範囲は最初の1回で決まり、
+ * 続きの問いはすべて同じ範囲に対する問いです（`normalizeRecapFollowUp`）。
+ *
  * このモジュールが持つのは、切り出しと、返ってきた答えの検証だけです。
  * モデルへ渡す文面と答えの形は `prompts/recap.js` にあります。
  */
 
-export { RECAP_SCHEMA };
+export { RECAP_FOLLOW_UP_SCHEMA, RECAP_SCHEMA };
 
 /** 「直近」の決め方。画面の選択肢と、受け取るときの検証の両方がこれを見ます。 */
 export const RECAP_SCOPES = Object.freeze(['since-last', 'minutes', 'all']);
@@ -64,6 +76,7 @@ const SPEAKER_LINE = /^\*\*(.+?)\*\*\s+`\[([^\]]*)\]`\s*$/;
 /** 答えとして受け取る件数と長さ。モデルへ渡す量ではないので `aiLimits.js` には置きません。 */
 const MAX_ANSWER_POINTS = 12;
 const MAX_ANSWER_ACTIONS = 8;
+const MAX_ANSWER_QUOTES = 3;
 const MAX_ANSWER_ITEM_CHARS = 400;
 const MAX_ANSWER_TEXT_CHARS = 1_000;
 
@@ -114,6 +127,25 @@ export function normalizeRecapRequest(body = {}) {
     throw new Error(`聞きたいことが長すぎます（${MAX_RECAP_QUESTION_CHARS}文字まで）`);
   }
   return { scope, minutes, question };
+}
+
+/**
+ * 続けて聞くときの指定を受け取ります。受け取るのは問いだけです。
+ *
+ * 決め方も分数も取らないのは、続きの問いが「いま読んだ範囲」への問いだからです。
+ * ここで選び直させると、画面に出ている範囲（読んだ範囲）と、答えの根拠になる範囲が
+ * 食い違います。別の範囲を聞きたいのなら、それはもう一度の聞き直しです。
+ *
+ * 空の問いは断ります。1回目の聞き直しと違って、問いが無ければ何も出せません
+ * （要約はもう出ています）。
+ */
+export function normalizeRecapFollowUp(body = {}) {
+  const question = String(body.question || '').trim();
+  if (!question) throw new Error('続けて聞きたいことを書いてください');
+  if (question.length > MAX_RECAP_QUESTION_CHARS) {
+    throw new Error(`聞きたいことが長すぎます（${MAX_RECAP_QUESTION_CHARS}文字まで）`);
+  }
+  return { question };
 }
 
 /**
@@ -290,6 +322,29 @@ function promptEntries(entries) {
   return entries.map(({ index, speaker, time, text }) => ({ n: index + 1, speaker, time, text }));
 }
 
+/**
+ * 続きの問いを、モデルへ渡す文面にします。
+ *
+ * ふだん渡すのは問いだけです。同じスレッドで続けるので、読ませたものは前のターンに
+ * 残っています。`window` を渡すのは、そのスレッドが失われていて読ませ直すときだけで、
+ * そのときはそれまでのやり取り（`prior`）と前提も一緒に載せ直します。
+ *
+ * @param {string} question 今回の問い。
+ * @param {object} options
+ * @param {object|null} options.window 読ませ直す窓。スレッドが続いていれば null。
+ * @param {{question: string, answer: string}[]} options.prior それまでのやり取り。
+ * @param {object|null} options.readingContext 前提。読ませ直すときだけ渡します。
+ */
+export function recapFollowUpPrompt(question, { window = null, prior = [], readingContext = null } = {}) {
+  if (!window) return buildRecapFollowUpPrompt(question);
+  return buildRecapFollowUpPrompt(question, {
+    transcriptJson: JSON.stringify(promptEntries(window.entries)),
+    leadInJson: window.leadIn.length ? JSON.stringify(promptEntries(window.leadIn)) : '',
+    priorJson: prior.length ? JSON.stringify(prior) : '',
+    readingContextBlock: aiContextBlock(readingContext)
+  });
+}
+
 /* ---------------------------------------------------------------- *
  * どこまで聞いたか
  * ---------------------------------------------------------------- */
@@ -361,18 +416,50 @@ export function buildRecap(answer, window, { question = '' } = {}) {
       if (!what) return null;
       return { action: what, reason: text(action?.reason, MAX_ANSWER_ITEM_CHARS) };
     }),
-    range: {
-      scope: window.scope,
-      appliedScope: window.appliedScope,
-      fallback: window.fallback,
-      minutes: window.minutes,
-      entries: window.entries.length,
-      leadIn: window.leadIn.length,
-      dropped: window.dropped,
-      total: window.total,
-      from: window.from,
-      to: window.to
-    }
+    range: rangeOf(window)
+  };
+}
+
+/**
+ * 続きの問いへの答え。要約と違って出るのは1つの答えなので、切り詰め方も1か所です。
+ *
+ * 引用は「文字起こしに書かれていた」と言い切ったときにだけ残します。書かれていない
+ * （`answered` が false）のに引用が付いていたら、その引用は問いと関係のない行です。
+ * 添えたまま出すと、答えていないことに気づけません。
+ *
+ * 範囲を毎回添えるのは1回目と同じ理由です。続けて聞くほど、どこまでの話への答えなのかが
+ * 画面から消えていきます。
+ */
+export function buildRecapFollowUp(answer, window, { question = '' } = {}) {
+  const answered = answer?.answered === true;
+  return {
+    question,
+    answer: text(answer?.answer, MAX_ANSWER_TEXT_CHARS),
+    answered,
+    quotes: answered
+      ? list(answer?.quotes, MAX_ANSWER_QUOTES, (item) => {
+        const quote = text(item?.quote, MAX_ANSWER_ITEM_CHARS);
+        if (!quote) return null;
+        return { speaker: text(item?.speaker, 100), quote };
+      })
+      : [],
+    range: rangeOf(window)
+  };
+}
+
+/** 読んだ範囲。要約にも、続きの答えにも、同じ形で添えます。 */
+function rangeOf(window) {
+  return {
+    scope: window.scope,
+    appliedScope: window.appliedScope,
+    fallback: window.fallback,
+    minutes: window.minutes,
+    entries: window.entries.length,
+    leadIn: window.leadIn.length,
+    dropped: window.dropped,
+    total: window.total,
+    from: window.from,
+    to: window.to
   };
 }
 
