@@ -5,7 +5,7 @@ import { createAutosave } from './autosave.js';
 import { createAutoTasksController } from './autoTasks.js';
 import { createBodyCopier } from './bodyCopy.js';
 import { createCaptionRecapController } from './captionRecap.js';
-import { commentIndexesAt, refreshCommentAttachment, renderCommentHighlights } from './commentAnchors.js';
+import { highlightIndexesAt, refreshCommentAttachment, renderCommentHighlights } from './commentAnchors.js';
 import {
   copyCommentTarget,
   createCommentDialog,
@@ -27,6 +27,7 @@ import { createEditor } from './editor.js';
 import { createFileListView } from './fileListView.js';
 import { createLinkNavigator } from './links.js';
 import { createLiveCaptionsController } from './liveCaptions.js';
+import { copyMemoTarget, newMemo, renderMemoList } from './memos.js';
 import { createSettingsController } from './settings.js';
 import { createSidePanes } from './sidePanes.js';
 import { createRangeFor, findTextRange } from './textAnchor.js';
@@ -137,14 +138,18 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
   const content = refs.markdownContent;
 
   const fileList = createFileListView({ refs, state, api });
-  const dialog = createCommentDialog(refs, { onSubmit: addComment });
+  const dialog = createCommentDialog(refs, {
+    // 同じ対象へ、コメントとして依頼を残すか、自分のためのメモを残すかはダイアログで選びます。
+    onSubmit: (target, text, kind) => (kind === 'memo' ? addMemo(target, text) : addComment(target, text))
+  });
   const commentSaves = createAutosave({
     save: pushComments,
     // Edit mode saves comments alongside the document, so there is nothing to
     // flush here. The reading context has no other writer, so it always does.
+    // メモは編集モードでも書き換えられないので、コメントと同じ扱いです。
     hasPendingWork: () => (state.mode !== 'edit' && state.commentsDirty)
       || state.aiContextDirty || state.directoryAiContextDirty || state.briefDirty || state.contextNotesDirty
-      || state.personaDirty || state.referenceFilesDirty
+      || state.memosDirty || state.personaDirty || state.referenceFilesDirty
   });
   // 前提を書く欄は、サイドパネルとコンテキスト画面の2か所に出ます。操作盤を2つ作って
   // 束ね、どちらから書き換えても同じ state を見て両方が描き直すようにしています。
@@ -301,7 +306,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
   const pdfViewer = pdfViewerFactory({
     document,
     content,
-    onSelectComment: (commentId) => focusCommentCard(commentId)
+    onSelectComment: (id, kind) => (kind === 'memo' ? focusMemoCard(id) : focusCommentCard(id))
   });
   // 設定は文書に紐づかないので、ファイル一覧でもレビュー画面でも同じヘッダーから開きます。
   // 開くのはヘッダーのボタンからだけなので、ここでは持ち回りません。
@@ -331,6 +336,9 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
   // コンテキスト画面から戻るとき、レビュー画面で開き直すタブ。
   let pendingPane = null;
   let pendingDeleteId = null;
+  // 削除の確認は一覧ごとに持ちます。1つにまとめると、コメントの確認を出したまま
+  // メモの削除を押したときに、押していないほうの一覧を描き直すことになります。
+  let pendingMemoDeleteId = null;
   // 管理者が3点を求めていることを、書き始めるときに言ったかどうか。文書ごとに1回だけです。
   let briefNoticeShown = false;
   let selectionCommitTimer = null;
@@ -475,6 +483,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     resetDocumentState(state, filePath);
     closeSidePane();
     pendingDeleteId = null;
+    pendingMemoDeleteId = null;
 
     refs.fileView.classList.add('hidden');
     refs.reviewView.classList.remove('hidden');
@@ -485,6 +494,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     refs.outlineCount.textContent = '0';
     bodyCopy.syncControl();
     setCommentStatus('idle', 'コメントは自動保存されます。');
+    setMemoStatus('idle', 'メモは自動保存されます。');
     content.innerHTML = '<p class="muted">文書を読み込み中...</p>';
     panes.show('comments');
     placement.reset();
@@ -498,6 +508,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     recap.load();
     autoTasks.load();
     renderComments();
+    renderMemos();
 
     try {
       const data = await api.openFile(filePath);
@@ -552,6 +563,9 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     state.transcript = data.transcript === true;
     if (Array.isArray(data.transcriptFiles)) state.transcriptFiles = data.transcriptFiles;
     if (data.review?.comments) state.comments = data.review.comments;
+    // 残したメモは、書きかけが無いときだけ保存済みのもので置き換えます。コメントの
+    // 前提や3点と同じ約束で、送っている最中に書き足した1件を落とさないためです。
+    if (!state.memosDirty) state.memos = data.review?.memos || [];
     if (typeof data.projectAiContext === 'string') state.projectAiContext = data.projectAiContext;
     if (typeof data.directoryContextFile === 'string') state.directoryContextFile = data.directoryContextFile;
     // ディレクトリ全体の前提は文書ごとの持ち物ではないので、開くたびに読み直します。
@@ -567,6 +581,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     if (!state.referenceFilesDirty) state.referenceFiles = data.review?.referenceFiles || [];
     state.commentsDirty = false;
     aiContext.load();
+    renderMemos();
     documentBrief.refresh();
     contextNotes.render();
     referenceFiles.render();
@@ -620,7 +635,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     // 自動タスクは、設定で入れた直後からタブが出て、切った直後にタブが消えます。
     autoTasks.sync();
     if (!state.currentPath || state.mode === 'edit') return;
-    if (state.documentType === 'pdf') pdfViewer.renderHighlights(state.comments);
+    if (state.documentType === 'pdf') pdfViewer.renderHighlights(state.comments, state.memos);
     else renderCommentMode();
   }
 
@@ -630,17 +645,20 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
 
   function renderCommentMode() {
     if (state.documentType === 'pdf') {
-      pdfViewer.renderHighlights(state.comments);
+      pdfViewer.renderHighlights(state.comments, state.memos);
       renderComments();
+      renderMemos();
       return;
     }
     content.innerHTML = state.rawHtml;
     decorateReviewTargets();
     // 印を付ける前に引き直します。外れたコメントは編集モードだけの話ではないので、
-    // 読むときにも「もう指す先が無い」と分かる必要があります。
+    // 読むときにも「もう指す先が無い」と分かる必要があります。メモも同じです。
     refreshCommentAttachment(content, state.comments);
+    refreshCommentAttachment(content, state.memos, 'memo');
     renderOutline();
     renderComments();
+    renderMemos();
     renderDiagrams(content, { isStillCurrent: () => state.mode === 'comment' });
     if (pendingAnchor) {
       linkNavigator.scrollToAnchor(pendingAnchor);
@@ -886,6 +904,22 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
   }
 
   /**
+   * その場所に、自分のための覚え書きを残します。
+   *
+   * 一覧をその場で書き換えず、必ず新しい配列へ差し替えます。保存中に足した1件が
+   * 失われないための約束で、コンテキストメモと同じです（`pushComments` は
+   * 「保存し始めたときと同じ一覧のままか」を同一性で見ています）。
+   */
+  function addMemo(target, body) {
+    const created = newMemo(target, body);
+    state.memos = [...state.memos, created];
+    renderMemos();
+    markMemosDirty();
+    toaster.success(`${state.memos.length}件目のメモを残しました。自動保存します。`);
+    highlightMemoCard(created.id);
+  }
+
+  /**
    * Scrolls to where a proposed comment would land, so the reviewer can check
    * the AI picked the right place before accepting it.
    */
@@ -1005,11 +1039,61 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     });
     refs.commentCount.textContent = String(state.comments.length);
     refs.sidePaneToggleCount.textContent = String(state.comments.length);
-    if (state.mode === 'comment' && state.documentType === 'pdf') {
-      pdfViewer.renderHighlights(state.comments);
-    } else if (state.mode === 'comment') {
-      renderCommentHighlights(content, state.comments);
-    }
+    renderTargetHighlights();
+  }
+
+  /**
+   * 残したメモの一覧です。コメントのような未解決・解決済みの分け方はありません。
+   * メモは誰かへの依頼ではないので、片付いたかどうかを持たせる意味がないからです。
+   * 要らなくなったら消す、というだけにしてあります。
+   */
+  function renderMemos() {
+    renderMemoList(refs.memosList, {
+      memos: state.memos,
+      mode: state.mode,
+      pendingDeleteId: pendingMemoDeleteId,
+      handlers: {
+        onEdit(index, value) {
+          state.memos[index].body = value;
+          state.memos[index].updatedAt = new Date().toISOString();
+          markMemosDirty();
+        },
+        onRepeat(index) {
+          dialog.open(copyMemoTarget(state.memos[index]), 'memo');
+        },
+        onFocusTarget(index) {
+          focusTarget(state.memos[index], 'memo');
+        },
+        onRequestDelete(index) {
+          pendingMemoDeleteId = state.memos[index]?.id ?? null;
+          renderMemos();
+        },
+        onCancelDelete() {
+          pendingMemoDeleteId = null;
+          renderMemos();
+        },
+        onConfirmDelete(index) {
+          const removed = state.memos[index];
+          state.memos = state.memos.filter((_, position) => position !== index);
+          pendingMemoDeleteId = null;
+          renderMemos();
+          markMemosDirty();
+          if (removed) toaster.info('メモを削除しました。');
+        }
+      }
+    });
+    refs.memoCount.textContent = String(state.memos.length);
+    renderTargetHighlights();
+  }
+
+  /**
+   * 本文に付ける印。コメントとメモを1度で引きます。別々に引くと、同じ文字に両方が
+   * 付いているときに、片方の印がもう片方の印の中へ入れ子で入ります。
+   */
+  function renderTargetHighlights() {
+    if (state.mode !== 'comment') return;
+    if (state.documentType === 'pdf') pdfViewer.renderHighlights(state.comments, state.memos);
+    else renderCommentHighlights(content, state.comments, state.memos);
   }
 
   /**
@@ -1019,31 +1103,44 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
    */
   function revealCommentsFromHighlight(event) {
     if (state.mode !== 'comment') return;
-    const spot = event.target.closest?.('.comment-highlight-text, .comment-highlight-target');
+    const spot = event.target.closest?.(
+      '.comment-highlight-text, .comment-highlight-target, .memo-highlight-text, .memo-highlight-target'
+    );
     if (!spot) return;
     // The marker is ours; the other buttons inside a block have their own jobs.
     const marker = event.target.closest('.comment-marker');
     if (!marker && event.target.closest('button, a, input, textarea, select')) return;
     // A click that finished a selection was aimed at the text, not the comment.
     if (!marker && window.getSelection()?.isCollapsed === false) return;
-    revealComments(commentIndexesAt(spot));
+    revealWritingAt(spot);
   }
 
   function revealCommentsFromKeyboard(event) {
     if (state.mode !== 'comment' || (event.key !== 'Enter' && event.key !== ' ')) return;
-    const spot = event.target.closest?.('.comment-highlight-text');
+    const spot = event.target.closest?.('.comment-highlight-text, .memo-highlight-text');
     if (!spot) return;
     event.preventDefault();
-    revealComments(commentIndexesAt(spot));
+    revealWritingAt(spot);
   }
 
-  /** Brings the comments written for one place into view, and flashes them. */
-  function revealComments(indexes) {
+  /**
+   * 印を押したときに開くもの。同じ場所にコメントとメモの両方があるときは、コメントを
+   * 開きます。手を入れる理由になるのはコメントのほうで、メモは「メモ」タブに同じ順で
+   * 並んでいるからです。
+   */
+  function revealWritingAt(spot) {
+    const { comments, memos } = highlightIndexesAt(spot);
+    if (comments.length) revealCards('comments', refs.commentsList, 'comment', comments);
+    else revealCards('memos', refs.memosList, 'memo', memos);
+  }
+
+  /** Brings what was written for one place into view, and flashes it. */
+  function revealCards(pane, list, kind, indexes) {
     if (indexes.length === 0) return;
-    panes.show('comments');
+    panes.show(pane);
     openSidePane();
     const cards = indexes
-      .map((index) => refs.commentsList.querySelector(`.comment-card[data-comment-index="${index}"]`))
+      .map((index) => list.querySelector(`.comment-card[data-${kind}-index="${index}"]`))
       .filter(Boolean);
     if (cards.length === 0) return;
     cards[0].scrollIntoView?.({ block: 'nearest' });
@@ -1054,9 +1151,17 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
   }
 
   function highlightCommentCard(commentId) {
-    panes.show('comments');
+    highlightCard('comments', refs.commentsList, `[data-comment-id="${cssAttr(commentId)}"]`);
+  }
+
+  function highlightMemoCard(memoId) {
+    highlightCard('memos', refs.memosList, `[data-memo-id="${cssAttr(memoId)}"]`);
+  }
+
+  function highlightCard(pane, list, selector) {
+    panes.show(pane);
     openSidePane();
-    const card = refs.commentsList.querySelector(`.comment-card[data-comment-id="${cssAttr(commentId)}"]`);
+    const card = list.querySelector(`.comment-card${selector}`);
     if (!card) return;
     card.classList.add('just-added');
     card.scrollIntoView?.({ block: 'nearest' });
@@ -1168,29 +1273,41 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     refs.commentsList.querySelector(`.comment-card[data-comment-id="${cssAttr(commentId)}"]`)?.focus?.();
   }
 
+  function focusMemoCard(memoId) {
+    if (!memoId) return;
+    highlightMemoCard(memoId);
+    refs.memosList.querySelector(`.comment-card[data-memo-id="${cssAttr(memoId)}"]`)?.focus?.();
+  }
+
   function focusCommentTarget(index) {
-    const comment = state.comments[index];
-    if (!comment) return;
+    focusTarget(state.comments[index], 'comment');
+  }
+
+  /** カードから本文の対象へ移動します。コメントもメモも、指す先の探し方は同じです。 */
+  function focusTarget(written, kind) {
+    if (!written) return;
     let target = null;
 
-    if (comment.type === 'document') {
+    if (written.type === 'document') {
       target = document.querySelector('.document-pane');
     } else if (state.documentType === 'pdf') {
-      target = content.querySelector(`.pdf-comment-highlight[data-comment-id="${cssAttr(comment.id || '')}"]`)
-        || content.querySelector(`.pdf-page[data-page-number="${cssAttr(comment.pageNumber || '')}"]`);
+      target = content.querySelector(`.pdf-comment-highlight[data-${kind}-id="${cssAttr(written.id || '')}"]`)
+        || content.querySelector(`.pdf-page[data-page-number="${cssAttr(written.pageNumber || '')}"]`);
     } else {
-      const wanted = normalizeText(comment.selectedText || comment.targetText || comment.heading || '');
-      const selector = comment.type === 'section'
+      const wanted = normalizeText(written.selectedText || written.targetText || written.heading || '');
+      const selector = written.type === 'section'
         ? 'h1, h2, h3, h4, h5, h6'
-        : comment.type === 'text-selection'
-          ? '.comment-highlight-text, .editor-comment-anchor'
+        : written.type === 'text-selection'
+          ? '.comment-highlight-text, .memo-highlight-text, .editor-comment-anchor'
           : 'p, li, blockquote, pre';
       target = [...content.querySelectorAll(selector)]
         .find((element) => normalizeText(targetTextOf(element)) === wanted) || null;
     }
 
     if (!target) {
-      toaster.error('コメント対象を本文内で見つけられませんでした。');
+      toaster.error(kind === 'memo'
+        ? 'メモ対象を本文内で見つけられませんでした。'
+        : 'コメント対象を本文内で見つけられませんでした。');
       return;
     }
     closeSidePane();
@@ -1198,6 +1315,19 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     target.classList.add('focused-review-target');
     focusReviewElement(target);
     setTimeout(() => target.classList.remove('focused-review-target'), 1800);
+  }
+
+  /**
+   * 残したメモも、コメントと同じ自動保存でレビューファイルへ入ります。
+   * AIへは渡らないので、他の前提のように相談やレビューの表示を見直させる必要はありません。
+   */
+  function markMemosDirty() {
+    state.memosDirty = true;
+    // Every edit invalidates in-flight saves: their response must not overwrite newer text.
+    state.commentsVersion += 1;
+    if (!state.currentPath) return;
+    setMemoStatus('dirty', '自動保存待ち…');
+    commentSaves.schedule();
   }
 
   function markCommentsDirty() {
@@ -1221,7 +1351,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     if (!(await pushDirectoryAiContext())) return false;
     if (!state.currentPath) return true;
     if (state.mode === 'edit' && !state.aiContextDirty && !state.briefDirty
-      && !state.contextNotesDirty && !state.personaDirty && !state.referenceFilesDirty) {
+      && !state.contextNotesDirty && !state.memosDirty && !state.personaDirty && !state.referenceFilesDirty) {
       return true;
     }
     const version = state.commentsVersion;
@@ -1234,6 +1364,9 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     // 3点も、変わったときだけ送ります。状態表示を動かす条件もメモと同じです。
     const savedBrief = state.brief;
     const savingBrief = state.briefDirty;
+    // 自分のためのメモも、変わったときだけ送ります。状態表示を動かす条件も同じです。
+    const savedMemos = state.memos;
+    const savingMemos = state.memosDirty;
     const savedPersona = state.persona;
     // 添えたファイルも、変わったときだけ送ります。状態表示を動かす条件もメモと同じです。
     const savedReferenceFiles = state.referenceFiles;
@@ -1245,6 +1378,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     if (savingBrief) documentBrief.setStatus('saving');
     if (savingNotes) contextNotes.setStatus('saving');
     if (savingReferenceFiles) referenceFiles.setStatus('saving');
+    if (savingMemos) setMemoStatus('saving', '保存中…');
 
     try {
       const result = await api.saveComments({
@@ -1255,6 +1389,8 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
         ...(savingBrief ? { brief: savedBrief } : {}),
         // 空の配列は「最後の1件を消した」なので、未変更の undefined と区別して送ります。
         ...(savingNotes ? { contextNotes: savedNotes } : {}),
+        // メモも同じです。最後の1件を消した状態を、送らなかったことにはできません。
+        ...(savingMemos ? { memos: savedMemos } : {}),
         // null は「ペルソナを消す」なので、未変更の undefined と区別して送ります。
         ...(state.personaDirty ? { persona: savedPersona } : {}),
         // 空の配列は「最後の1件を外した」なので、未変更の undefined と区別して送ります。
@@ -1264,6 +1400,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       if (state.currentPath === path && state.aiContext === savedContext) state.aiContextDirty = false;
       if (state.currentPath === path && state.brief === savedBrief) state.briefDirty = false;
       if (state.currentPath === path && state.contextNotes === savedNotes) state.contextNotesDirty = false;
+      if (state.currentPath === path && state.memos === savedMemos) state.memosDirty = false;
       if (state.currentPath === path && state.persona === savedPersona) state.personaDirty = false;
       if (state.currentPath === path && state.referenceFiles === savedReferenceFiles) {
         state.referenceFilesDirty = false;
@@ -1279,6 +1416,11 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       if (savingBrief) documentBrief.setStatus(state.briefDirty ? 'dirty' : 'saved');
       if (savingNotes) contextNotes.setStatus(state.contextNotesDirty ? 'dirty' : 'saved');
       if (savingReferenceFiles) referenceFiles.setStatus(state.referenceFilesDirty ? 'dirty' : 'saved');
+      if (savingMemos) {
+        setMemoStatus(...(state.memosDirty
+          ? ['dirty', '自動保存待ち…']
+          : ['saved', `自動保存しました ${new Date().toLocaleTimeString()}`]));
+      }
       return true;
     } catch (error) {
       state.commentSaveFailed = true;
@@ -1287,6 +1429,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       if (savingBrief) documentBrief.setStatus('error', `保存できませんでした: ${error.message}`);
       if (savingNotes) contextNotes.setStatus('error', `保存できませんでした: ${error.message}`);
       if (savingReferenceFiles) referenceFiles.setStatus('error', `保存できませんでした: ${error.message}`);
+      if (savingMemos) setMemoStatus('error', `保存できませんでした: ${error.message}`);
       return false;
     }
   }
@@ -1329,6 +1472,11 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     refs.saveStatus.textContent = message;
   }
 
+  function setMemoStatus(status, message) {
+    refs.memoStatus.dataset.state = status;
+    refs.memoStatus.textContent = message;
+  }
+
   /* ---------------------------------------------------------------- *
    * Mode switching and page level events
    * ---------------------------------------------------------------- */
@@ -1347,6 +1495,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       updateModeControls();
       editor.render();
       renderComments();
+      renderMemos();
     }
     updateModeControls();
   }
@@ -1441,6 +1590,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       || state.directoryAiContextDirty
       || state.briefDirty
       || state.contextNotesDirty
+      || state.memosDirty
       || state.personaDirty
       || state.referenceFilesDirty
       || state.commentSaveFailed
@@ -1454,7 +1604,8 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     if (!state.currentPath) return;
     const savingComments = state.mode === 'comment' && state.commentsDirty;
     if (!savingComments && !state.aiContextDirty && !state.briefDirty
-      && !state.contextNotesDirty && !state.personaDirty && !state.referenceFilesDirty) return;
+      && !state.contextNotesDirty && !state.memosDirty && !state.personaDirty
+      && !state.referenceFilesDirty) return;
     api.beaconComments({
       path: state.currentPath,
       // Edit mode owns the comments; only the reading context is ours to send.
@@ -1462,6 +1613,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       aiContext: state.aiContext,
       ...(state.briefDirty ? { brief: state.brief } : {}),
       ...(state.contextNotesDirty ? { contextNotes: state.contextNotes } : {}),
+      ...(state.memosDirty ? { memos: state.memos } : {}),
       ...(state.personaDirty ? { persona: state.persona } : {}),
       ...(state.referenceFilesDirty ? { referenceFiles: state.referenceFiles } : {})
     });

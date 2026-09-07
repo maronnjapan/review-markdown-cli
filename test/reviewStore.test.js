@@ -260,6 +260,56 @@ test('buildReviewMarkdown writes the notes between the reading context and the c
   assert.match(markdown, /- 未決（2026-08-03）: 付録を入れるか未定。\n  担当と相談中。/);
 });
 
+test('memos live with the review, survive a comment only save, and stay out of the handoff', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-store-'));
+  await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n', 'utf8');
+
+  await writeReview(root, 'guide.md', [], {
+    aiContext: '入門書の第3章。',
+    memos: [
+      { type: 'paragraph', body: '第4章と重複していないか、あとで確かめる', targetText: 'Run the program.' },
+      { type: 'document', body: '通しで読むのは、図を入れ替えてからにする' }
+    ]
+  });
+  // コメントだけを保存する要求（画面を離れるときのビーコンがこの形です）。
+  await writeReview(root, 'guide.md', [{ type: 'document', comment: '結論を先に書く' }]);
+  const review = await readReview(root, 'guide.md');
+
+  assert.equal(review.memos.length, 2, 'コメントだけの保存でメモは消えない');
+  assert.equal(review.aiContext, '入門書の第3章。');
+  assert.ok(review.memos[0].id, '編集と削除のためにidを振る');
+  assert.ok(review.memos[0].createdAt, '残した日時は初めて保存するときに付ける');
+  assert.equal('status' in review.memos[0], false, 'メモは依頼ではないので状態を持たない');
+
+  // レビューMarkdownは渡す相手のためのものなので、自分宛ての覚え書きは書き出しません。
+  const markdown = buildReviewMarkdown(review);
+  assert.match(markdown, /結論を先に書く/);
+  assert.doesNotMatch(markdown, /あとで確かめる/);
+  assert.doesNotMatch(markdown, /メモ/);
+
+  // 空の配列は「最後の1件を消した」です。据え置きの undefined と区別します。
+  await writeReview(root, 'guide.md', [], { memos: [] });
+  const cleared = await readReview(root, 'guide.md');
+  assert.deepEqual(cleared.memos, []);
+  const saved = JSON.parse(await fs.readFile(path.join(root, '.review', 'guide.md.review.json'), 'utf8'));
+  assert.equal('memos' in saved, false, 'メモの無い文書にキーは現れない');
+  assert.equal(saved.aiContext, '入門書の第3章。', '読み取りコンテキストは据え置く');
+});
+
+test('a review written before memos existed reads back as an empty list', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-store-'));
+  const reviewFile = path.join(root, '.review', 'guide.md.review.json');
+  await fs.mkdir(path.dirname(reviewFile), { recursive: true });
+  await fs.writeFile(reviewFile, `${JSON.stringify({
+    targetFile: 'guide.md',
+    comments: [{ id: 'comment-existing', type: 'document', comment: '既存コメント' }]
+  })}\n`, 'utf8');
+
+  const review = await readReview(root, 'guide.md');
+  assert.deepEqual(review.memos, []);
+  assert.equal(review.comments.length, 1);
+});
+
 test('the document brief lives with the review and survives a comment only save', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-store-brief-'));
   await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n', 'utf8');

@@ -1,4 +1,4 @@
-import { createId, escapeHtml, truncate } from './util.js';
+import { createId, escapeHtml, formatTimestamp, truncate } from './util.js';
 
 const TYPE_LABELS = {
   document: '文書全体',
@@ -7,11 +7,46 @@ const TYPE_LABELS = {
   'text-selection': '範囲選択'
 };
 
-const TYPE_HINTS = {
-  document: 'この文書全体に対する指摘として保存します。',
-  section: 'この見出しと、その配下の本文に対する指摘として保存します。',
-  paragraph: 'この段落に対する指摘として保存します。',
-  'text-selection': '選択した文字列に対する指摘として保存します。'
+/**
+ * 残し方。同じ対象へ、同じダイアログから、どちらとして残すかだけを選びます。
+ *
+ * コメントは書き手やAIエージェントへの依頼です。だから未解決・解決済みという状態を持ち、
+ * レビューMarkdownへ書き出され、本文の修正では直す理由として読まれます。
+ * メモ（`memos.js`）は自分に宛てた覚え書きで、そのどれにも入りません。
+ * ここで選ばせているのは、読んでいて浮かんだことが、置いた瞬間に誰かの仕事に
+ * なってしまわないようにするためです。
+ */
+const KINDS = {
+  comment: {
+    title: 'コメントを追加',
+    documentTitle: '文書全体にコメント',
+    targetLabel: 'この対象にコメントします',
+    fieldLabel: 'コメント',
+    submit: 'この対象にコメントを追加',
+    placeholder: '修正してほしい内容や意図を書いてください',
+    hint: '書き手とAIへの依頼として残します。レビューMarkdownにも書き出します。',
+    typeHints: {
+      document: 'この文書全体に対する指摘として保存します。',
+      section: 'この見出しと、その配下の本文に対する指摘として保存します。',
+      paragraph: 'この段落に対する指摘として保存します。',
+      'text-selection': '選択した文字列に対する指摘として保存します。'
+    }
+  },
+  memo: {
+    title: 'メモを残す',
+    documentTitle: '文書全体にメモ',
+    targetLabel: 'この対象にメモを残します',
+    fieldLabel: 'メモ',
+    submit: 'この対象にメモを残す',
+    placeholder: '例：この節、第4章と重複していないか あとで確かめる',
+    hint: '自分のための覚え書きです。AIへは渡さず、レビューMarkdownにも書き出しません。',
+    typeHints: {
+      document: 'この文書全体についての覚え書きとして残します。',
+      section: 'この見出しと、その配下の本文についての覚え書きとして残します。',
+      paragraph: 'この段落についての覚え書きとして残します。',
+      'text-selection': '選択した文字列についての覚え書きとして残します。'
+    }
+  }
 };
 
 const STATUS_LABELS = {
@@ -85,6 +120,10 @@ export function newComment(target, text) {
  * The "what am I about to comment on?" dialog. It shows the target verbatim
  * rather than a truncated one-liner, because picking the wrong paragraph is the
  * mistake that is hardest to notice after the fact.
+ *
+ * 残し方（コメント／メモ）もここで選びます。対象を決める操作は本文の同じボタンなので、
+ * 選ぶ場所を分けると、押してから「こちらではなかった」と気づいて開き直すことになります。
+ * 選び直しても書きかけの本文は消しません。
  */
 export function createCommentDialog(refs, { onSubmit }) {
   let pendingTarget = null;
@@ -94,6 +133,7 @@ export function createCommentDialog(refs, { onSubmit }) {
     submit();
   });
   refs.cancelDialog.addEventListener('click', close);
+  refs.dialogKind.addEventListener('change', syncKind);
   refs.commentInput.addEventListener('input', syncSubmitState);
   refs.commentInput.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' || !(event.ctrlKey || event.metaKey)) return;
@@ -105,15 +145,15 @@ export function createCommentDialog(refs, { onSubmit }) {
     const text = refs.commentInput.value.trim();
     if (!text || !pendingTarget) return;
     const target = pendingTarget;
+    const kind = selectedKind();
     close();
-    onSubmit(target, text);
+    onSubmit(target, text, kind);
   }
 
-  function open(target) {
+  function open(target, kind = 'comment') {
     pendingTarget = target;
     refs.dialogTypeBadge.textContent = labelForType(target.type, target.documentType);
     refs.dialogTypeBadge.dataset.type = target.type || 'comment';
-    refs.dialogTitle.textContent = target.type === 'document' ? '文書全体にコメント' : 'コメントを追加';
 
     const headingPath = target.documentType === 'pdf' && target.pageNumber
       ? [`ページ ${target.pageNumber}`]
@@ -121,12 +161,9 @@ export function createCommentDialog(refs, { onSubmit }) {
     refs.dialogTargetPath.textContent = headingPath.length ? headingPath.join(' › ') : '';
     refs.dialogTargetPath.hidden = headingPath.length === 0;
 
-    const quoted = target.type === 'document' ? '' : commentTargetText(target);
-    refs.dialogTargetQuote.textContent = quoted || TYPE_HINTS[target.type] || '';
-    refs.dialogTargetQuote.classList.toggle('is-hint', !quoted);
-
     refs.commentInput.value = '';
-    syncSubmitState();
+    for (const radio of kindRadios()) radio.checked = radio.value === (KINDS[kind] ? kind : 'comment');
+    syncKind();
     refs.dialog.showModal();
     refs.commentInput.focus();
   }
@@ -134,6 +171,32 @@ export function createCommentDialog(refs, { onSubmit }) {
   function close() {
     pendingTarget = null;
     refs.dialog.close();
+  }
+
+  function kindRadios() {
+    return refs.dialogKind.querySelectorAll('input[type="radio"]');
+  }
+
+  function selectedKind() {
+    return [...kindRadios()].find((radio) => radio.checked)?.value === 'memo' ? 'memo' : 'comment';
+  }
+
+  /** 選んだ残し方に合わせて、題・説明・ボタンの文言を入れ替えます。 */
+  function syncKind() {
+    if (!pendingTarget) return;
+    const labels = KINDS[selectedKind()];
+    refs.dialogTitle.textContent = pendingTarget.type === 'document' ? labels.documentTitle : labels.title;
+    refs.dialogTargetLabel.textContent = labels.targetLabel;
+    refs.dialogKindHint.textContent = labels.hint;
+    refs.dialogFieldLabel.textContent = labels.fieldLabel;
+    refs.submitDialog.textContent = labels.submit;
+    refs.commentInput.placeholder = labels.placeholder;
+
+    // 対象の文字が出せないとき（文書全体）だけ、どこへ残すのかを言葉で書きます。
+    const quoted = pendingTarget.type === 'document' ? '' : commentTargetText(pendingTarget);
+    refs.dialogTargetQuote.textContent = quoted || labels.typeHints[pendingTarget.type] || '';
+    refs.dialogTargetQuote.classList.toggle('is-hint', !quoted);
+    syncSubmitState();
   }
 
   function syncSubmitState() {
@@ -248,9 +311,4 @@ function deleteConfirmHtml(index) {
         <button type="button" class="danger" data-action="onConfirmDelete" data-index="${index}">削除する</button>
       </div>
     </div>`;
-}
-
-function formatTimestamp(value) {
-  const date = value ? new Date(value) : new Date();
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString();
 }

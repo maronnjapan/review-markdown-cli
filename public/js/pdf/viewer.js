@@ -50,36 +50,47 @@ export function createPdfViewer({ document, content, onSelectComment = () => {} 
     return buildPdfSelectionTarget(range, String(selectedText || '').trim());
   }
 
-  function renderHighlights(comments) {
+  /**
+   * ページに重ねる印。コメントと、レビュアーが自分のために残したメモを描きます。
+   * メモには状態がないので、色分けするのは「メモであること」だけです。
+   */
+  function renderHighlights(comments, memos = []) {
     content.querySelectorAll('.pdf-comment-highlight-layer').forEach((layer) => layer.replaceChildren());
-    for (const comment of comments || []) {
-      const anchor = pdfAnchorOf(comment);
-      if (!anchor?.rectangles.length) continue;
-      const layer = content.querySelector(
-        `.pdf-page[data-page-number="${anchor.pageNumber}"] .pdf-comment-highlight-layer`
-      );
-      if (!layer) continue;
-      for (const rectangle of anchor.rectangles) {
-        const highlight = document.createElement('span');
-        highlight.className = 'pdf-comment-highlight';
-        highlight.dataset.status = comment.status === 'resolved' ? 'resolved' : 'open';
-        highlight.dataset.commentId = comment.id || '';
-        highlight.setAttribute('role', 'button');
-        highlight.tabIndex = 0;
-        highlight.setAttribute('aria-label', `ページ${anchor.pageNumber}のコメントを表示`);
-        highlight.style.left = `${rectangle.x * 100}%`;
-        highlight.style.top = `${rectangle.y * 100}%`;
-        highlight.style.width = `${rectangle.width * 100}%`;
-        highlight.style.height = `${rectangle.height * 100}%`;
-        const select = () => onSelectComment(comment.id);
-        highlight.addEventListener('click', select);
-        highlight.addEventListener('keydown', (event) => {
-          if (event.key !== 'Enter' && event.key !== ' ') return;
-          event.preventDefault();
-          select();
-        });
-        layer.append(highlight);
+    for (const comment of comments || []) markOne(comment, 'comment');
+    for (const memo of memos) markOne(memo, 'memo');
+  }
+
+  function markOne(written, kind) {
+    const anchor = pdfAnchorOf(written);
+    if (!anchor?.rectangles.length) return;
+    const layer = content.querySelector(
+      `.pdf-page[data-page-number="${anchor.pageNumber}"] .pdf-comment-highlight-layer`
+    );
+    if (!layer) return;
+    const label = kind === 'memo' ? 'メモ' : 'コメント';
+    for (const rectangle of anchor.rectangles) {
+      const highlight = document.createElement('span');
+      highlight.className = kind === 'memo' ? 'pdf-comment-highlight pdf-memo-highlight' : 'pdf-comment-highlight';
+      if (kind === 'memo') highlight.dataset.memoId = written.id || '';
+      else {
+        highlight.dataset.status = written.status === 'resolved' ? 'resolved' : 'open';
+        highlight.dataset.commentId = written.id || '';
       }
+      highlight.setAttribute('role', 'button');
+      highlight.tabIndex = 0;
+      highlight.setAttribute('aria-label', `ページ${anchor.pageNumber}の${label}を表示`);
+      highlight.style.left = `${rectangle.x * 100}%`;
+      highlight.style.top = `${rectangle.y * 100}%`;
+      highlight.style.width = `${rectangle.width * 100}%`;
+      highlight.style.height = `${rectangle.height * 100}%`;
+      const select = () => onSelectComment(written.id, kind);
+      highlight.addEventListener('click', select);
+      highlight.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        select();
+      });
+      layer.append(highlight);
     }
   }
 

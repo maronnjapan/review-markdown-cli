@@ -223,7 +223,7 @@ export function createEditor({ refs, state, api, onCommentsChanged, onDocumentUp
   }
 
   /**
-   * サーバーが返した組み上がりの上で、コメントの指す先がまだ在るかを引き直します。
+   * サーバーが返した組み上がりの上で、コメントとメモの指す先がまだ在るかを引き直します。
    *
    * 画面には出しません。書く幅を削ってまで並べるものではなく、ここで要るのは
    * 「いまの本文で見つかるか」という答えだけだからです。
@@ -232,6 +232,7 @@ export function createEditor({ refs, state, api, onCommentsChanged, onDocumentUp
     const rendered = source.ownerDocument.createElement('div');
     rendered.innerHTML = html || '';
     refreshCommentAttachment(rendered, state.comments);
+    refreshCommentAttachment(rendered, state.memos, 'memo');
     onCommentsChanged();
   }
 

@@ -281,8 +281,22 @@ test('the reading context travels with the review, and a context only save keeps
   assert.equal(opened.review.aiContext, '第3章。読者は当番の担当者。');
   assert.equal(opened.projectAiContext, 'このディレクトリは入門書の原稿。', '設定ファイル側の前提も画面へ返す');
 
+  // 自分のためのメモも同じ窓口から入ります。据え置きの決まりはほかの項目と同じです。
+  const withMemo = await saveReview({
+    path: 'guide.md',
+    memos: [{ type: 'document', body: '通しで読むのは、図を入れ替えてからにする' }]
+  });
+  assert.equal(withMemo.review.memos.length, 1);
+  assert.equal(withMemo.review.comments.length, 1, 'メモだけの保存でコメントは消えない');
+  const keptMemo = await saveReview({ path: 'guide.md', comments: [{ type: 'document', comment: '結論を先に' }] });
+  assert.equal(keptMemo.review.memos.length, 1, 'コメントだけの保存でメモは消えない');
+  const openedWithMemo = await fetch(`${baseUrl}/api/file?path=guide.md`).then((response) => response.json());
+  assert.equal(openedWithMemo.review.memos[0].body, '通しで読むのは、図を入れ替えてからにする', '開き直してもメモは残る');
+
   const exported = await fetch(`${baseUrl}/api/export?path=guide.md`).then((response) => response.text());
   assert.match(exported, /## 読み取りコンテキスト\n\n第3章。読者は当番の担当者。/);
+  // 出力は渡す相手のためのものなので、自分宛ての覚え書きは載りません。
+  assert.doesNotMatch(exported, /図を入れ替えてから/);
 });
 
 test('a directory wide reading context is saved once and applies to every document under the root', async (t) => {

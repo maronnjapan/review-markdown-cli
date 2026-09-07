@@ -939,17 +939,22 @@ async function commentsFor(rootDir, relativeFile, body) {
 
 /**
  * A request that says nothing about the reading context, the document brief, the
- * context notes, the reader persona or the attached files keeps the saved ones:
- * the page beacon on the way out carries comments only. `persona: null` and
- * `brief: null` are how the reviewer clears those, and an empty `contextNotes`
- * or `referenceFiles` array is how they clear the last note or detach the last
- * file.
+ * context notes, the reviewer's memos, the reader persona or the attached files
+ * keeps the saved ones: the page beacon on the way out carries comments only.
+ * `persona: null` and `brief: null` are how the reviewer clears those, and an
+ * empty `contextNotes`, `memos` or `referenceFiles` array is how they clear the
+ * last note, memo or attached file.
+ *
+ * メモだけは前提ではありません（AIへは渡りません）。ここに並べているのは、
+ * 保存の据え置き方がまったく同じだからです。1回の保存でレビューファイルへ入るものを
+ * 2か所に分けて書くと、片方へ足し忘れたときに黙って消える項目ができます。
  */
 function reviewPremiseOf(body) {
   return {
     ...(typeof body.aiContext === 'string' ? { aiContext: body.aiContext } : {}),
     ...(body.brief !== undefined ? { brief: body.brief } : {}),
     ...(Array.isArray(body.contextNotes) ? { contextNotes: body.contextNotes } : {}),
+    ...(Array.isArray(body.memos) ? { memos: body.memos } : {}),
     ...(body.persona !== undefined ? { persona: body.persona } : {}),
     ...(Array.isArray(body.referenceFiles) ? { referenceFiles: body.referenceFiles } : {})
   };

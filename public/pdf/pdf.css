@@ -94,6 +94,12 @@
   box-shadow: inset 0 0 0 1px rgb(5 150 105 / 24%);
 }
 
+/* 自分のために残したメモ。状態を持たないので、分けるのは「メモであること」だけです。 */
+.pdf-memo-highlight {
+  background: rgb(147 178 240 / 32%);
+  box-shadow: inset 0 0 0 1px rgb(61 99 179 / 26%);
+}
+
 .pdf-comment-highlight:focus {
   outline: 2px solid var(--primary);
   outline-offset: 1px;

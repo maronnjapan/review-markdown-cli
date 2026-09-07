@@ -1382,6 +1382,83 @@ test('clicking a commented place brings up the comment that was written there', 
   await waitFor(() => savedRequests.length === 1, 1600);
 });
 
+test('メモはコメントとは別に残り、状態も持たず、レビューMarkdownの依頼にも混ざらない', async (t) => {
+  const memoText = '第4章と重複していないか、あとで確かめる';
+  const markdown = '# 設計メモ\n\n## 背景\n\nこの段落はレビュー対象です。\n';
+  const saved = [];
+  const { document, window } = await startApp(t, 'http://localhost/#/review/docs%2Fnote.md', {
+    '/api/file': async () => ({
+      path: 'docs/note.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'docs/note.md', comments: [], memos: [] },
+      reviewFile: '.review/docs/note.md.review.json'
+    }),
+    '/api/review': (_input, options) => {
+      const body = JSON.parse(options.body);
+      saved.push(body);
+      return {
+        review: { targetFile: body.path, comments: body.comments || [], memos: body.memos || [] },
+        reviewFile: '.review/docs/note.md.review.json'
+      };
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-comment-button'));
+
+  const paragraph = [...document.querySelectorAll('#markdown-content p')]
+    .find((element) => element.textContent.includes('この段落はレビュー対象です。'));
+  paragraph.querySelector('.inline-comment-button').click();
+
+  // 対象を決める操作は同じで、依頼として残すか自分用に残すかだけをダイアログで選びます。
+  assert.equal(document.querySelector('#dialog-title').textContent, 'コメントを追加');
+  const memoKind = document.querySelector('#dialog-kind input[value="memo"]');
+  memoKind.checked = true;
+  memoKind.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.equal(document.querySelector('#dialog-title').textContent, 'メモを残す');
+  assert.equal(document.querySelector('#dialog-target-label').textContent, 'この対象にメモを残します');
+  assert.match(document.querySelector('#dialog-kind-hint').textContent, /AIへは渡さず/);
+  assert.equal(document.querySelector('#dialog-target-quote').textContent, 'この段落はレビュー対象です。');
+
+  const input = document.querySelector('#comment-input');
+  input.value = memoText;
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }));
+
+  // コメントの件数は動かず、メモは自分のタブに並びます。
+  assert.equal(document.querySelector('#comment-count').textContent, '0');
+  assert.equal(document.querySelector('#memo-count').textContent, '1');
+  assert.match(document.querySelector('#comments-list').textContent, /まだコメントはありません/);
+  const card = document.querySelector('#memos-list .memo-card');
+  assert.equal(card.querySelector('textarea').value, memoText);
+  assert.equal(card.querySelector('.target-badge').textContent, '段落');
+  // 誰かへの依頼ではないので、未解決・解決済みは持ちません。
+  assert.equal(card.querySelector('.comment-status'), null);
+  assert.equal(card.querySelector('[data-action="onToggleStatus"]'), null);
+
+  // 本文の印も、コメントの黄色とは分けます。
+  const marked = document.querySelector('#markdown-content .memo-highlight-target');
+  assert.match(marked.textContent, /この段落はレビュー対象です。/);
+  assert.equal(marked.classList.contains('comment-highlight-target'), false, 'コメントの印は付けない');
+  assert.equal(marked.querySelector('.comment-marker').textContent, 'メモ1件');
+
+  // 押したときに開くのも、コメントではなくメモのタブです。
+  document.querySelector('#placement-tab-button').click();
+  marked.click();
+  assert.equal(document.querySelector('#memos-panel').classList.contains('hidden'), false);
+  assert.equal(document.querySelector('#comments-panel').classList.contains('hidden'), true);
+  assert.ok(document.querySelector('#memos-list .memo-card').classList.contains('revealed'));
+
+  const sentMemo = (body) => (body.memos || []).some((memo) => memo.body === memoText);
+  await waitFor(() => saved.some(sentMemo), 1600);
+  const request = saved.find(sentMemo);
+  assert.deepEqual(request.comments, [], 'メモはコメントとして保存しない');
+  assert.equal(request.memos.length, 1);
+  assert.equal(request.memos[0].type, 'paragraph');
+  assert.equal(request.memos[0].targetText, 'この段落はレビュー対象です。');
+  assert.equal('status' in request.memos[0], false);
+});
+
+
 test('AI comment placement anchors a pasted note and only saves it once the reviewer adds it', async (t) => {
   const markdown = [
     '# 設計メモ',
@@ -2247,6 +2324,7 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
   // パネルが伸びる部分は、外へはみ出さずここでスクロールします。
   for (const selector of [
     '#comments-list', '#export-button',
+    '#memos-list',
     '#brief-form', '#brief-compose',
     '#ai-context', '#ai-target', '#translation-result', '#ai-messages',
     '#placement-form', '#placement-results',
@@ -2265,7 +2343,7 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
   assert.equal(document.querySelector('#save-button').closest('.pane-scroll'), null);
 
   for (const panel of [
-    '#comments-panel', '#manager-panel', '#ai-panel',
+    '#comments-panel', '#memos-panel', '#manager-panel', '#ai-panel',
     '#placement-panel', '#review-panel', '#revise-panel',
     '#recap-panel', '#tasks-panel'
   ]) {
@@ -2282,7 +2360,7 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
    * パネルが実際にそうなり、押しても結果がパネルの下で切れたままになっていました。
    */
   const panels = [...document.querySelectorAll('#side-pane > section')];
-  assert.equal(panels.length, 9, 'サイドパネルのタブを数え漏らしていない');
+  assert.equal(panels.length, 10, 'サイドパネルのタブを数え漏らしていない');
 
   const withoutComments = styles.replace(/\/\*[\s\S]*?\*\//g, '');
   const [, selectorList, declarations] = /([^{}]*#comments-panel[^{}]*)\{([^}]*)\}/.exec(withoutComments);

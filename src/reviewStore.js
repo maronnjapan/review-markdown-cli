@@ -10,6 +10,7 @@ import {
 } from './autoTaskVocabulary.js';
 import { CONTEXT_NOTE_LABELS, normalizeContextNotes, readContextNotes } from './contextNotes.js';
 import { BRIEF_FIELDS, normalizeDocumentBrief, readDocumentBrief } from './documentBrief.js';
+import { normalizeMemos, readMemos } from './memos.js';
 import { PERSONA_FIELD_LABELS, normalizePersona } from './persona.js';
 import { normalizeReferenceFiles, readReferenceFilePaths } from './referenceFiles.js';
 
@@ -52,6 +53,9 @@ export async function readReview(rootDir, relativeFile) {
       // メモを持たないレビューファイルは、この機能より前に書かれたものです。空の一覧として読みます。
       // 壊れた値でも投げません。ここで投げると、その文書は画面から開けなくなります。
       contextNotes: readContextNotes(parsed.contextNotes),
+      // レビュアーが自分のために残したメモ。読み方はコンテキストメモと同じで、
+      // 壊れた値でも投げません。渡す先が違うだけです（`memos.js`）。
+      memos: readMemos(parsed.memos),
       persona: normalizePersona(parsed.persona),
       // 添えた参照ファイルも、壊れた値や同階層以下から外れたパスでは投げません。
       // 落とす理由はメモと同じで、レビューファイルの1行でその文書が開けなくなるのを避けるためです。
@@ -61,7 +65,14 @@ export async function readReview(rootDir, relativeFile) {
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
     return {
-      targetFile, comments: [], aiContext: '', brief: null, contextNotes: [], persona: null, referenceFiles: []
+      targetFile,
+      comments: [],
+      aiContext: '',
+      brief: null,
+      contextNotes: [],
+      memos: [],
+      persona: null,
+      referenceFiles: []
     };
   }
 }
@@ -69,29 +80,30 @@ export async function readReview(rootDir, relativeFile) {
 /**
  * Replaces the comments of one review.
  *
- * 本文以外の5つ、読み取りコンテキスト（`aiContext`）・資料の管理者（`brief`）・
- * コンテキストメモ（`contextNotes`）・読み手ペルソナ（`persona`）・参照ファイル
- * （`referenceFiles`）は、渡さなければファイルにあるものを据え置きます。コメントだけを
- * 保存するとき（画面を離れるときのビーコンもそうです）に、書いた前提が黙って消えない
- * ようにするためです。
+ * 本文以外の6つ、読み取りコンテキスト（`aiContext`）・資料の管理者（`brief`）・
+ * コンテキストメモ（`contextNotes`）・メモ（`memos`）・読み手ペルソナ（`persona`）・
+ * 参照ファイル（`referenceFiles`）は、渡さなければファイルにあるものを据え置きます。
+ * コメントだけを保存するとき（画面を離れるときのビーコンもそうです）に、書いた前提や
+ * 残したメモが黙って消えないようにするためです。
  */
 export async function writeReview(
   rootDir,
   relativeFile,
   comments,
-  { aiContext, brief, contextNotes, persona, referenceFiles } = {}
+  { aiContext, brief, contextNotes, memos, persona, referenceFiles } = {}
 ) {
   const requestedTargetFile = relativeFile.split(path.sep).join('/');
   const { filePath, targetFile } = await findExistingReviewLocation(rootDir, requestedTargetFile);
   // 1つでも省かれていれば、据え置く値を知るために現在の中身を読みます。
   // 条件を `a === undefined || b === undefined` と書き足していくと、項目が増えたときに
   // 足し忘れて、保存のたびに前提が消えるようになります。
-  const saved = [aiContext, brief, contextNotes, persona, referenceFiles].some((value) => value === undefined)
+  const saved = [aiContext, brief, contextNotes, memos, persona, referenceFiles].some((value) => value === undefined)
     ? await readReview(rootDir, requestedTargetFile)
     : null;
   const nextAiContext = aiContext === undefined ? saved.aiContext : normalizeAiContext(aiContext);
   const nextBrief = brief === undefined ? saved.brief : normalizeDocumentBrief(brief);
   const nextNotes = contextNotes === undefined ? saved.contextNotes : normalizeContextNotes(contextNotes);
+  const nextMemos = memos === undefined ? saved.memos : normalizeMemos(memos);
   const nextPersona = persona === undefined ? saved.persona : normalizePersona(persona);
   // 「同階層以下」を測る起点は `targetFile` ではなく、頼まれたパスのほうです。
   // レビューファイルが対象ディレクトリより上にあると `targetFile` はその上からの
@@ -108,6 +120,7 @@ export async function writeReview(
     ...(nextAiContext ? { aiContext: nextAiContext } : {}),
     ...(nextBrief ? { brief: nextBrief } : {}),
     ...(nextNotes.length ? { contextNotes: nextNotes.map(withNoteTimestamp) } : {}),
+    ...(nextMemos.length ? { memos: nextMemos.map(withNoteTimestamp) } : {}),
     ...(nextPersona ? { persona: nextPersona } : {}),
     ...(nextReferenceFiles.length ? { referenceFiles: nextReferenceFiles } : {}),
     comments: comments.map((comment) => ({
@@ -158,7 +171,7 @@ export function createCommentId() {
 
 /**
  * 残した日時。読むときには補わないので、初めて保存するここで付けます。
- * コメントの `createdAt` と同じ扱いです。
+ * コメントの `createdAt` と同じ扱いで、コンテキストメモとメモが同じ関数を通ります。
  */
 function withNoteTimestamp(note) {
   return { ...note, createdAt: note.createdAt || new Date().toISOString() };
@@ -207,6 +220,9 @@ export function buildReviewMarkdown(review) {
   appendContextNotes(lines, review.contextNotes);
   appendPersona(lines, review.persona);
   appendReferenceFiles(lines, review.referenceFiles);
+  // メモ（`review.memos`）は、ここには書き出しません。この出力は結果を渡す相手のための
+  // ものですが、メモは自分に宛てた覚え書きだからです。書き出すと、誰にも頼んでいない
+  // 独り言が依頼と同じ紙に並び、受け取った側はどれに手を付けるべきかを決められません。
   appendAutoTasks(lines, review.tasks);
   for (const group of [...COMMENT_GROUPS, OTHER_GROUP]) {
     appendCommentGroup(lines, group.title, grouped.get(group) || [], group.render, statusLabels);

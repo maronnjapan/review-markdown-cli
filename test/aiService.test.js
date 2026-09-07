@@ -520,6 +520,55 @@ test('what the reviewer kept as a note reaches the review, the chat and the tran
   }
 });
 
+test('what the reviewer left as a memo is theirs alone, and never reaches the model', async (t) => {
+  const { root, store } = await testStore(t);
+  await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\n## 再起動\n\nRun the program.\n', 'utf8');
+  await fs.mkdir(path.join(root, '.claude', 'skills', 'fixture-skill'), { recursive: true });
+  await fs.writeFile(
+    path.join(root, '.claude', 'skills', 'fixture-skill', 'SKILL.md'),
+    '---\nname: fixture-skill\n---\n\n読み手が手を止める箇所を挙げる。\n',
+    'utf8'
+  );
+  // 同じ保存に、AIへ渡す前提（コンテキストメモ）と、自分宛ての覚え書き（メモ）を並べます。
+  await writeReview(root, 'guide.md', [], {
+    contextNotes: [{ kind: 'decision', body: '節の並び順は検討済みで、変えない', createdAt: '2026-08-01T00:00:00.000Z' }],
+    memos: [{ type: 'paragraph', body: '第4章と重複していないか、あとで確かめる', targetText: 'Run the program.' }]
+  });
+  const prompts = [];
+  const codex = fakeCodex({
+    async runTurn(input) {
+      prompts.push(input.prompt);
+      return {
+        text: JSON.stringify({
+          contextualMeaning: '実行する',
+          meanings: [],
+          explanation: '',
+          summary: '',
+          placements: [],
+          unplaced: [],
+          verdicts: [],
+          unplacedVerdicts: []
+        })
+      };
+    }
+  });
+  const service = new AiService(root, { store, client: codex });
+
+  await service.translate('guide.md', { type: 'text-selection', selectedText: 'run' });
+  await service.placeComments('guide.md', '導入が長い');
+  await service.reviewDocument('guide.md', { skillIds: ['fixture-skill'] });
+  const conversation = await service.createConversation({ documentPath: 'guide.md', target: { type: 'document' } });
+  await service.sendMessage(conversation.id, 'この節の並びはどう？');
+
+  assert.ok(prompts.length >= 4);
+  for (const prompt of prompts) {
+    assert.match(prompt, /節の並び順は検討済み/, '前提として残したメモは、これまでどおり渡す');
+    assert.doesNotMatch(prompt, /あとで確かめる/, '自分宛ての覚え書きは、どのAI操作にも渡さない');
+  }
+  const context = await service.readingContext('guide.md');
+  assert.equal('memos' in context, false, '前提の組み立てにメモという入口を作らない');
+});
+
 test('a conversation catches up when a note is kept, and the note survives the reviewer clearing the context', async (t) => {
   const { root, store } = await testStore(t);
   await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\nRun the program.\n', 'utf8');

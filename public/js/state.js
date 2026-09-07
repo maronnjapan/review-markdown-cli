@@ -31,6 +31,10 @@ export function createState() {
 
     // Review comments
     comments: [],
+    // 本文の場所に残した、自分のための覚え書き（`memos.js`）。コメントと同じ自動保存で
+    // レビューファイルへ入りますが、AIへは渡しません。
+    memos: [],
+    memosDirty: false,
     // What the AI should assume while reading this document, and the directory
     // wide one the server was started with.
     aiContext: '',
@@ -132,6 +136,8 @@ export function resetDocumentState(state, filePath) {
   state.markdown = '';
   state.rawHtml = '';
   state.comments = [];
+  state.memos = [];
+  state.memosDirty = false;
   state.aiContext = '';
   state.aiContextDirty = false;
   state.brief = null;

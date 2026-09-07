@@ -25,3 +25,9 @@ export function cssEscape(value) {
 export function createId(prefix = 'comment') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
+
+/** カードに出す日時。読めない値のときは、行ごと空にします。 */
+export function formatTimestamp(value) {
+  const date = value ? new Date(value) : new Date();
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString();
+}

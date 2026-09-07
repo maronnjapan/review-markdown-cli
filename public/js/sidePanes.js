@@ -1,6 +1,7 @@
 const PANES = {
   outline: { panel: 'outlinePanel', tab: 'outlineTabButton' },
   comments: { panel: 'commentsPanel', tab: 'commentsTabButton' },
+  memos: { panel: 'memosPanel', tab: 'memosTabButton' },
   manager: { panel: 'managerPanel', tab: 'managerTabButton' },
   ai: { panel: 'aiPanel', tab: 'aiTabButton' },
   placement: { panel: 'placementPanel', tab: 'placementTabButton' },

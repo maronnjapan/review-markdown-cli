@@ -87,6 +87,7 @@
           <div class="side-pane-tabs" role="tablist" aria-label="サイドパネル">
             <button id="outline-tab-button" type="button" role="tab" aria-selected="false" aria-controls="outline-panel">文書</button>
             <button id="comments-tab-button" class="active" type="button" role="tab" aria-selected="true" aria-controls="comments-panel">コメント <span id="comment-count" class="comment-count">0</span></button>
+            <button id="memos-tab-button" type="button" role="tab" aria-selected="false" aria-controls="memos-panel">メモ <span id="memo-count" class="comment-count">0</span></button>
             <button id="manager-tab-button" class="hidden" type="button" role="tab" aria-selected="false" aria-controls="manager-panel">管理者<span id="manager-tab-count" class="tab-count" hidden></span></button>
             <button id="ai-tab-button" type="button" role="tab" aria-selected="false" aria-controls="ai-panel">AI</button>
             <button id="placement-tab-button" type="button" role="tab" aria-selected="false" aria-controls="placement-panel">指摘の配置</button>
@@ -129,6 +130,19 @@
               <button id="export-button" type="button" class="wide-button">レビューMarkdownを出力</button>
               <textarea id="export-output" class="export-output" readonly hidden></textarea>
               <div id="comments-list" class="comments-list"></div>
+            </div>
+          </section>
+          <section id="memos-panel" class="hidden" role="tabpanel" aria-labelledby="memos-tab-button">
+            <div class="comments-header">
+              <div>
+                <p class="eyebrow">Private memos</p>
+                <h2>メモ</h2>
+              </div>
+            </div>
+            <div class="pane-scroll">
+              <p class="memo-lede">読みながら浮かんだことを、その場所に残す自分用の覚え書きです。コメントと違って対応の状態を持たず、AIへも渡さず、レビューMarkdownにも書き出しません。</p>
+              <p id="memo-status" class="save-status" aria-live="polite"></p>
+              <div id="memos-list" class="comments-list"></div>
             </div>
           </section>
           <section id="manager-panel" class="manager-panel hidden" role="tabpanel" aria-labelledby="manager-tab-button" aria-live="polite">
@@ -661,13 +675,19 @@
         </header>
 
         <section id="dialog-target" class="dialog-target">
-          <p class="dialog-target-label">この対象にコメントします</p>
+          <p id="dialog-target-label" class="dialog-target-label">この対象にコメントします</p>
           <p id="dialog-target-path" class="dialog-target-path" hidden></p>
           <blockquote id="dialog-target-quote" class="dialog-target-quote"></blockquote>
         </section>
 
+        <div id="dialog-kind" class="dialog-kind" role="radiogroup" aria-label="残し方">
+          <label><input type="radio" name="dialog-kind" value="comment" checked> コメント</label>
+          <label><input type="radio" name="dialog-kind" value="memo"> メモ</label>
+        </div>
+        <p id="dialog-kind-hint" class="dialog-kind-hint" aria-live="polite"></p>
+
         <label class="dialog-field">
-          <span class="dialog-field-label">コメント</span>
+          <span id="dialog-field-label" class="dialog-field-label">コメント</span>
           <textarea id="comment-input" rows="6" placeholder="修正してほしい内容や意図を書いてください"></textarea>
         </label>
 

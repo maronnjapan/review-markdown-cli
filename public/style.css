@@ -307,9 +307,30 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   cursor: pointer;
   padding: 0.05rem 0.12rem;
 }
-.comment-highlight-text:focus {
+.comment-highlight-text:focus, .memo-highlight-text:focus {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
+}
+/* メモは自分用の書き込みです。依頼が付いている箇所（黄色）と一目で分かれるように、
+   色を変えたうえで、地の色ではなく下線で控えめに示します。 */
+.memo-highlight-target {
+  background: #eef4ff;
+  outline-color: #9db8f0;
+}
+.memo-highlight-text {
+  background: #e4edff;
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px rgba(120, 152, 224, 0.3);
+  cursor: pointer;
+  padding: 0.05rem 0.12rem;
+}
+/* 同じ文字にコメントとメモの両方があるときは、コメントの黄色を残したまま、
+   メモが付いていることを下線で足します。直す先を本文の色で追えるようにするためです。 */
+.comment-highlight-text.memo-highlight-text {
+  background: #ffe88a;
+  box-shadow: 0 0 0 2px rgba(240, 201, 74, 0.35);
+  text-decoration: underline dotted #4a6fd1 2px;
+  text-underline-offset: 3px;
 }
 .focused-review-target {
   animation: review-target-focus 1.8s ease;
@@ -353,6 +374,18 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   vertical-align: middle;
 }
 .comment-marker:hover { background: #e0b52f; border-color: #b98f14; color: #2f2200; }
+/* メモだけが付いている箇所の印は、本文のハイライトと同じ色にします。コメントも
+   付いている箇所では黄色のままにして、依頼があることを色で見失わせません。 */
+.memo-highlight-target:not(.comment-highlight-target) > .comment-marker {
+  background: #b6cbf3;
+  border-color: #7c9ce0;
+  color: #1b2c58;
+}
+.memo-highlight-target:not(.comment-highlight-target) > .comment-marker:hover {
+  background: #9db8f0;
+  border-color: #5b80cf;
+  color: #101d3d;
+}
 .selection-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -434,8 +467,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
  * 伸びたぶんがパネルの外で切り落とされ、中の .pane-scroll も高さが決まらないため
  * スクロールバーが出ません。下に出したものが、どうやっても読めなくなります。
  */
-#comments-panel, .manager-panel, .ai-panel, .placement-panel, .review-panel, .revise-panel,
-.outline-panel, .recap-panel, .tasks-panel {
+#comments-panel, #memos-panel, .manager-panel, .ai-panel, .placement-panel, .review-panel,
+.revise-panel, .outline-panel, .recap-panel, .tasks-panel {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -615,6 +648,22 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   border-color: #f0c94a;
 }
 .comment-card.confirming { border-color: #d92d20; }
+.memo-card { background: #f7faff; border-color: #cddcf7; }
+.memo-card textarea { background: #fff; }
+.memo-badge {
+  background: #e4edff;
+  border-radius: 999px;
+  color: #2f4f9e;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.12rem 0.5rem;
+}
+.memo-lede {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin: 0.8rem 1rem 0;
+}
+#memo-status { margin: 0.4rem 1rem 0.8rem; }
 .comment-confirm {
   background: #fdecea;
   border-radius: 10px;
@@ -1479,6 +1528,21 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   color: var(--muted);
   font-style: italic;
 }
+/* 残し方。ここで選んだものが、そのまま保存先（コメントかメモか）になります。 */
+.dialog-kind {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.2rem;
+}
+.dialog-kind label {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  font-size: 0.9rem;
+  font-weight: 700;
+  gap: 0.35rem;
+}
+.dialog-kind-hint { color: var(--muted); font-size: 0.78rem; margin: -0.6rem 0 0; }
 .dialog-field { display: grid; gap: 0.35rem; }
 .dialog-field-label { font-size: 0.85rem; font-weight: 700; }
 .dialog-footer {
