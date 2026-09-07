@@ -33,7 +33,7 @@ import {
 import { purposeFor } from './codexProfiles.js';
 import { collectCommentContext, commentContextBlock } from './commentContext.js';
 import { applyConversationEdits } from './conversationEdits.js';
-import { readDirectoryContext } from './directoryContext.js';
+import { readDirectoryPremise } from './directoryContext.js';
 import { buildBriefDraft, normalizeBriefInput } from './documentBrief.js';
 import {
   REVISE_SCHEMA,
@@ -140,15 +140,16 @@ export class AiService {
    * 効きません。設定ファイルの `projectContext` が起動時のままなのとは、ここが違います。
    */
   async readingContext(documentPath) {
-    const [{ aiContext, brief, contextNotes, persona, referenceFiles }, directoryContext] = await Promise.all([
+    const [{ aiContext, brief, contextNotes, persona, referenceFiles }, directory] = await Promise.all([
       readReview(this.rootDir, documentPath),
-      readDirectoryContext(this.rootDir)
+      readDirectoryPremise(this.rootDir)
     ]);
     return resolveAiContext({
       project: this.projectContext,
-      directory: directoryContext,
+      directory: directory.aiContext,
       document: aiContext,
       brief: this.managerEnabled ? brief : null,
+      directoryNotes: directory.contextNotes,
       notes: contextNotes,
       persona,
       files: await readReferenceFiles(this.rootDir, documentPath, referenceFiles)
@@ -313,14 +314,15 @@ export class AiService {
     // 走り書きだけ、というのは読み手ペルソナと同じです。
     // 参照ファイルも同じ理由で渡しません。隣に置いてある資料は「すでに書かれているもの」
     // そのもので、そこから目的を起こすのは本文から起こすのと変わりません。
-    const [{ aiContext, contextNotes, persona }, directoryContext] = await Promise.all([
+    const [{ aiContext, contextNotes, persona }, directory] = await Promise.all([
       readReview(this.rootDir, documentPath),
-      readDirectoryContext(this.rootDir)
+      readDirectoryPremise(this.rootDir)
     ]);
     const readingContext = resolveAiContext({
       project: this.projectContext,
-      directory: directoryContext,
+      directory: directory.aiContext,
       document: aiContext,
+      directoryNotes: directory.contextNotes,
       notes: contextNotes,
       persona
     });
@@ -348,15 +350,16 @@ export class AiService {
     // 読み取りコンテキストと残したメモ、そして管理者が決めた3点は渡します。
     // どんな原稿の読み手なのかが決まるからで、なかでも期待値は「読んだあと何ができれば
     // よいか」なので、読み手そのものの説明に一番近い前提です。
-    const [{ aiContext, brief, contextNotes }, directoryContext] = await Promise.all([
+    const [{ aiContext, brief, contextNotes }, directory] = await Promise.all([
       readReview(this.rootDir, documentPath),
-      readDirectoryContext(this.rootDir)
+      readDirectoryPremise(this.rootDir)
     ]);
     const readingContext = resolveAiContext({
       project: this.projectContext,
-      directory: directoryContext,
+      directory: directory.aiContext,
       document: aiContext,
       brief: this.managerEnabled ? brief : null,
+      directoryNotes: directory.contextNotes,
       notes: contextNotes
     });
     const { answer } = await this.askForJson({

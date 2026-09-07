@@ -336,7 +336,9 @@ export function createAiController({
   /** Says what else goes to the AI, so the target quote is not the whole story. */
   function renderSharedComments() {
     const count = state.comments.length;
-    const noteCount = (state.contextNotes || []).length;
+    // メモは「このファイルだけ」と「ディレクトリ全体」に分かれて入っています。渡るのは
+    // 両方なので、両方を数えます。片方だけ数えると、渡っている件数より少なく見えます。
+    const noteCount = (state.contextNotes || []).length + (state.directoryContextNotes || []).length;
     const fileCount = (state.referenceFiles || []).length;
     const hasContext = Boolean((state.aiContext || '').trim() || (state.directoryAiContext || '').trim()
       || (state.projectAiContext || '').trim());
@@ -434,7 +436,7 @@ export function createAiController({
     translate,
     prefetchTranslation,
     cancelTranslationPrefetch,
-    // 保存した会話は、コンテキスト画面からも直せます。直したあとの記録を、
+    // 保存した会話は、AIチャットの記録の画面からも直せます。直したあとの記録を、
     // こちらの一覧と吹き出しへも映し直すための入口です。
     refreshConversations() {
       renderConversationOptions();

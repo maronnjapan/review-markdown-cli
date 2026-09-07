@@ -48,6 +48,13 @@ export function createState() {
     // 読み取りコンテキストの欄がいまどちらを書いているか（`document` / `directory`）。
     // 文書をまたいでも変えません。同じ範囲で書き続けるレビューのほうが多いからです。
     aiContextScope: 'document',
+    // 画面で「ディレクトリ全体」を選んで残したコンテキストメモ。読み取りコンテキストと
+    // 同じ `.review/context.json` に入り、配下のどの文書を開いても同じものが効きます。
+    directoryContextNotes: [],
+    directoryContextNotesDirty: false,
+    // メモの欄がいまどちらへ残そうとしているか。読み取りコンテキストの範囲と同じく、
+    // 文書をまたいでも変えません。
+    contextNoteScope: 'document',
     // 資料の管理者が決めた目的・ストーリー・期待値。前提としてAIへ渡し、
     // 3つが揃うまでAIレビューは一度止まります。
     brief: null,

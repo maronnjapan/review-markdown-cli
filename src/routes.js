@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { normalizeAiContext } from './aiContext.js';
 import { serveAsset } from './assets.js';
 import {
   applyTasksChange,
@@ -9,7 +8,7 @@ import {
   relativeTasksPath,
   updateTasks
 } from './autoTasks.js';
-import { DIRECTORY_CONTEXT_PATH, readDirectoryContext, writeDirectoryContext } from './directoryContext.js';
+import { DIRECTORY_CONTEXT_PATH, readDirectoryPremise, writeDirectoryPremise } from './directoryContext.js';
 import { documentRevision } from './documentEdits.js';
 import { applyBlockEdits } from './editorMarkdown.js';
 import { extensionDir } from './extensionCommand.js';
@@ -791,8 +790,10 @@ async function openFile({ rootDir, filter, projectAiContext, features, transcrip
  * レビューファイルのパス（`reviewFile`）を返しているのと同じ理由です。
  */
 async function directoryContextOf(rootDir) {
+  const { aiContext, contextNotes } = await readDirectoryPremise(rootDir);
   return {
-    directoryAiContext: await readDirectoryContext(rootDir),
+    directoryAiContext: aiContext,
+    directoryContextNotes: contextNotes,
     directoryContextFile: DIRECTORY_CONTEXT_PATH
   };
 }
@@ -880,25 +881,42 @@ async function saveReview({ rootDir, filter, features, request, response }) {
 }
 
 /**
- * コマンドを実行したディレクトリ配下すべてに効く読み取りコンテキストを保存します。
+ * コマンドを実行したディレクトリ配下すべてに効く前提（読み取りコンテキストとメモ）を保存します。
  *
  * 文書ごとの前提（`/api/review`）と分けているのは、書き込む先が文書のレビューファイルでは
  * なく、対象ディレクトリに1つだけある `.review/context.json` だからです。どの文書を開いて
  * 書いても、行き先は同じ1か所です。
+ *
+ * 送ってこなかった項目は据え置きます。レビューファイルの保存（`reviewPremiseOf`）と同じで、
+ * 「触っていない」と「消した」を、キーの有無で区別するためです。
  */
 async function saveDirectoryContext({ rootDir, request, response }) {
   const body = await readJsonBody(request);
-  if (typeof body.aiContext !== 'string') throw httpError('aiContext は文字列で送ってください', 400);
-  // 長すぎる前提は切り詰めずに断ります（`aiContext.js`）。書いたものが黙って半分になると、
-  // 何が前提として渡っているのかが画面から分からなくなります。
-  let aiContext;
+  if (body.aiContext !== undefined && typeof body.aiContext !== 'string') {
+    throw httpError('aiContext は文字列で送ってください', 400);
+  }
+  if (body.contextNotes !== undefined && !Array.isArray(body.contextNotes)) {
+    throw httpError('contextNotes は配列で送ってください', 400);
+  }
+  if (body.aiContext === undefined && body.contextNotes === undefined) {
+    throw httpError('aiContext か contextNotes のどちらかを送ってください', 400);
+  }
+  // 長すぎる前提と多すぎるメモは切り詰めずに断ります（`aiContext.js` / `contextNotes.js`）。
+  // 書いたものが黙って半分になると、何が前提として渡っているのかが画面から分からなくなります。
+  let saved;
   try {
-    aiContext = normalizeAiContext(body.aiContext, 'ディレクトリ全体の読み取りコンテキスト');
+    saved = await writeDirectoryPremise(rootDir, {
+      ...(body.aiContext === undefined ? {} : { aiContext: body.aiContext }),
+      ...(body.contextNotes === undefined ? {} : { contextNotes: body.contextNotes })
+    });
   } catch (error) {
     throw httpError(error.message, 400);
   }
-  await writeDirectoryContext(rootDir, aiContext);
-  return sendJson(response, { directoryAiContext: aiContext, directoryContextFile: DIRECTORY_CONTEXT_PATH });
+  return sendJson(response, {
+    directoryAiContext: saved.aiContext,
+    directoryContextNotes: saved.contextNotes,
+    directoryContextFile: DIRECTORY_CONTEXT_PATH
+  });
 }
 
 async function exportReview({ rootDir, filter, features, url, response }) {
@@ -907,9 +925,11 @@ async function exportReview({ rootDir, filter, features, url, response }) {
   // 出力したレビューを渡す相手には、どの前提の上で読まれたレビューかまで届けます。
   // ディレクトリ全体の前提は別のファイルにあるので、ここで足してから組み立てます。
   // 自動タスクも同じです。有効なときだけ、起こしたタスクと今すべきことを書き出します。
+  const directory = await readDirectoryPremise(rootDir);
   const markdown = buildReviewMarkdown({
     ...visibleReview(review, features),
-    directoryAiContext: await readDirectoryContext(rootDir),
+    directoryAiContext: directory.aiContext,
+    directoryContextNotes: directory.contextNotes,
     tasks: features.autoTasks && isTextDocumentPath(relativeFile) ? await readTasks(rootDir, relativeFile) : null
   });
   const outputPath = await exportPathForExistingReview(rootDir, relativeFile);

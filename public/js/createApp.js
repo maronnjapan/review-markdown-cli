@@ -25,6 +25,7 @@ import { createReferenceFilesController } from './referenceFiles.js';
 import { aliasRefs, queryRefs } from './dom.js';
 import { createEditor } from './editor.js';
 import { createFileListView } from './fileListView.js';
+import { createPersonaController } from './persona.js';
 import { createLinkNavigator, isPlainClick, onPlainClick } from './links.js';
 import { createLiveCaptionsController } from './liveCaptions.js';
 import { copyMemoTarget, newMemo, renderMemoList } from './memos.js';
@@ -53,12 +54,12 @@ const ROUTE_PATTERN = /^#\/review\/([^#]+)(#.*)?$/;
 const TOOL_ROUTE_PATTERN = new RegExp(`^#/(${TOOL_ROUTES.join('|')})/([^#]+)$`);
 
 /**
- * コンテキスト画面へ出す操作盤の、要素の読み替え表です。
+ * 広い画面へ出す操作盤の、要素の読み替え表です。
  *
- * 読み取りコンテキスト・コンテキストメモ・資料の管理者の3点は、サイドパネルと
- * コンテキスト画面の2か所から書けます。操作盤（`aiContext.js` などが返すもの）を
- * 2つ作って、片方にはこの表で読み替えた要素を渡します。画面ごとに同じ処理を
- * 書き写さずに済ませるためで、書き換えた中身はどちらも同じ state に入ります。
+ * 読み取りコンテキスト・コンテキストメモ・読み手ペルソナ・参照ファイルは、サイドパネルと
+ * それぞれの画面の2か所から書けます。操作盤（`aiContext.js` などが返すもの）を2つ作って、
+ * 片方にはこの表で読み替えた要素を渡します。画面ごとに同じ処理を書き写さずに
+ * 済ませるためで、書き換えた中身はどちらも同じ state に入ります。
  */
 const WORKSPACE_AI_CONTEXT_REFS = {
   aiContextInput: 'workspaceAiContextInput',
@@ -76,6 +77,8 @@ const WORKSPACE_NOTES_REFS = {
   contextNotes: 'workspaceNotes',
   contextNotesState: 'workspaceContextNotesState',
   contextNoteForm: 'workspaceContextNoteForm',
+  contextNoteScope: 'workspaceContextNoteScope',
+  contextNoteScopeHint: 'workspaceContextNoteScopeHint',
   contextNoteKind: 'workspaceContextNoteKind',
   contextNoteKindHint: 'workspaceContextNoteKindHint',
   contextNoteInput: 'workspaceContextNoteInput',
@@ -112,20 +115,23 @@ const WORKSPACE_REFERENCE_FILE_REFS = {
   referenceFilesStatus: 'workspaceReferenceFilesStatus',
   referenceFilesList: 'workspaceReferenceFilesList'
 };
-const WORKSPACE_BRIEF_REFS = {
-  briefState: 'workspaceBriefState',
-  briefPurpose: 'workspaceBriefPurpose',
-  briefStory: 'workspaceBriefStory',
-  briefExpectation: 'workspaceBriefExpectation',
-  briefClearButton: 'workspaceBriefClearButton',
-  briefStatus: 'workspaceBriefStatus',
-  briefComposeForm: 'workspaceBriefComposeForm',
-  briefInput: 'workspaceBriefInput',
-  briefComposeButton: 'workspaceBriefComposeButton',
-  briefStopButton: 'workspaceBriefStopButton',
-  briefResult: 'workspaceBriefResult',
-  // 「あと何個決まっていないか」の印は1つしかないので、どちらの操作盤も同じものを書きます。
-  managerLinkCount: 'managerLinkCount'
+/**
+ * 読み手ペルソナの操作盤を、専用の画面へもう1つ出すための読み替え表です。
+ *
+ * 決める場所は「AIレビュー」の画面にも残してあります。読み手はレビューの直前に
+ * 決まるものだからです。どちらで決めても同じ1組の state です。
+ * `reviewPersonaHint`（読み手が未設定だとレビューがどうなるか）はレビューを実行する
+ * 場所にしかないので、こちらの表には入れません。
+ */
+const WORKSPACE_PERSONA_REFS = {
+  personaState: 'workspacePersonaState',
+  personaForm: 'workspacePersonaForm',
+  personaInput: 'workspacePersonaInput',
+  personaComposeButton: 'workspacePersonaComposeButton',
+  personaUseButton: 'workspacePersonaUseButton',
+  personaStopButton: 'workspacePersonaStopButton',
+  personaClearButton: 'workspacePersonaClearButton',
+  personaResult: 'workspacePersonaResult'
 };
 /** パネルを1枚ずつ出し入れするツール画面。コンテキストは専用の面なので入りません。 */
 const TOOL_PAGES_WITH_PANEL = TOOL_PAGES.filter((page) => page.panel);
@@ -162,6 +168,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     // メモは編集モードでも書き換えられないので、コメントと同じ扱いです。
     hasPendingWork: () => (state.mode !== 'edit' && state.commentsDirty)
       || state.aiContextDirty || state.directoryAiContextDirty || state.briefDirty || state.contextNotesDirty
+      || state.directoryContextNotesDirty
       || state.memosDirty || state.personaDirty || state.referenceFilesDirty
   });
   // 前提を書く欄は、サイドパネルとコンテキスト画面の2か所に出ます。操作盤を2つ作って
@@ -188,23 +195,23 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     flushComments: () => commentSaves.flush(),
     onChange: markBriefDirty
   };
-  const documentBrief = fanOut([
-    createDocumentBriefController({ refs, ...briefControllerOptions }),
-    createDocumentBriefController({ refs: aliasRefs(refs, WORKSPACE_BRIEF_REFS), ...briefControllerOptions })
-  ]);
+  // 3点を決める場所は「管理者」の画面1か所です。前提のなかで唯一「この資料はどうあるべきか」
+  // なので、読み方を決める欄と並べず、決めるための画面をそれだけで1枚使います。
+  const documentBrief = createDocumentBriefController({ refs, ...briefControllerOptions });
   // 相談の答えを下書きにする導線は、押した画面の欄へ入れます。両方へ入れると、
   // 見えていないほうの欄にも書きかけが残ります。
-  const sideContextNotes = createContextNotesController({
-    refs,
+  const contextNoteOptions = {
     state,
     toaster,
-    onChange: markContextNotesDirty
-  });
+    onChange: markContextNotesDirty,
+    onDirectoryChange: markDirectoryContextNotesDirty,
+    // 選んだ範囲は1組の state なので、片方で切り替えたらもう片方も描き直させます。
+    onScopeChange: () => contextNotes.sync()
+  };
+  const sideContextNotes = createContextNotesController({ refs, ...contextNoteOptions });
   const workspaceContextNotes = createContextNotesController({
     refs: aliasRefs(refs, WORKSPACE_NOTES_REFS),
-    state,
-    toaster,
-    onChange: markContextNotesDirty
+    ...contextNoteOptions
   });
   const contextNotes = fanOut([sideContextNotes, workspaceContextNotes]);
   // 添えたファイルも2か所から選べます。一覧を取りに行くのは先に load() された1つだけで、
@@ -279,10 +286,27 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     toaster,
     prepareAi: () => ai.prepare(),
     flushComments: () => commentSaves.flush(),
-    onPersonaChanged: markPersonaDirty,
     onAddComments: addComments,
     onRevealTarget: revealTarget
   });
+  // 読み手を決める欄も2か所に出ます。レビューを実行する画面と、読み手だけを開く画面です。
+  // 片方で決め直したらもう片方も描き直し、レビューの実行できる・できないも見直します。
+  const personaControllerOptions = {
+    state,
+    api,
+    toaster,
+    prepareAi: () => ai.prepare(),
+    flushComments: () => commentSaves.flush(),
+    onChange: markPersonaDirty,
+    onSettled: () => {
+      persona.refresh();
+      documentReview.refresh();
+    }
+  };
+  const persona = fanOut([
+    createPersonaController({ refs, ...personaControllerOptions }),
+    createPersonaController({ refs: aliasRefs(refs, WORKSPACE_PERSONA_REFS), ...personaControllerOptions })
+  ]);
   const revise = createDocumentReviseController({
     refs,
     state,
@@ -465,6 +489,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     if (key === 'tasks') return autoTasks.available();
     // 指摘の配置はPDFに置けず、本文の修正はMarkdown以外を書き換えられません。
     if (key === 'placement') return state.documentType !== 'pdf';
+    // 読み手・参照ファイル・相談の記録は前提そのもので、どの文書でも決められます。
     if (key === 'revise') return state.documentType === 'markdown';
     return true;
   }
@@ -484,12 +509,14 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       state.directoryAiContextDirty = false;
       state.briefDirty = false;
       state.contextNotesDirty = false;
+      state.directoryContextNotesDirty = false;
       state.personaDirty = false;
       state.referenceFilesDirty = false;
       return true;
     }
     if (state.commentsDirty || state.aiContextDirty || state.directoryAiContextDirty || state.briefDirty
-      || state.contextNotesDirty || state.personaDirty || state.referenceFilesDirty || commentSaves.isBusy()) {
+      || state.contextNotesDirty || state.directoryContextNotesDirty || state.personaDirty
+      || state.referenceFilesDirty || commentSaves.isBusy()) {
       if (await commentSaves.flush()) return true;
       if (!window.confirm('コメントを保存できていません。破棄して移動しますか？')) return false;
       state.commentsDirty = false;
@@ -497,6 +524,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       state.directoryAiContextDirty = false;
       state.briefDirty = false;
       state.contextNotesDirty = false;
+      state.directoryContextNotesDirty = false;
       state.personaDirty = false;
       state.referenceFilesDirty = false;
     }
@@ -542,6 +570,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     contextNotes.load();
     referenceFiles.load();
     contextPage.load();
+    persona.load();
     documentReview.load();
     revise.reset();
     recap.load();
@@ -612,6 +641,9 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     if (typeof data.directoryAiContext === 'string' && !state.directoryAiContextDirty) {
       state.directoryAiContext = data.directoryAiContext;
     }
+    if (Array.isArray(data.directoryContextNotes) && !state.directoryContextNotesDirty) {
+      state.directoryContextNotes = data.directoryContextNotes;
+    }
     // A save that carried the context back confirms it; nothing typed since is lost.
     if (!state.aiContextDirty) state.aiContext = data.review?.aiContext || '';
     if (!state.briefDirty) state.brief = state.features.manager ? (data.review?.brief || null) : null;
@@ -624,6 +656,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     documentBrief.refresh();
     contextNotes.render();
     referenceFiles.render();
+    persona.refresh();
     documentReview.refresh();
     contextPage.render();
     bodyCopy.syncControl();
@@ -644,9 +677,8 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       autoTasks: features?.autoTasks === true
     };
     syncToolLinks();
-    // 管理者が無効なときの3点は、保存側も断ります。書ける欄を出しておくと、
-    // 書いたあとの保存で初めて断られることになります。
-    refs.workspaceBriefCard.classList.toggle('hidden', !state.features.manager);
+    // 管理者が無効なときの3点は、保存側も断ります。画面ごと出さないので、書ける欄が
+    // 出たまま、書いたあとの保存で初めて断られることにはなりません（`toolAvailable`）。
     refs.documentTranslateButton.classList.toggle('hidden', !state.features.translation);
     refs.sideDocumentTranslateButton.classList.toggle('hidden', !state.features.translation);
     refs.selectionTranslateButton.classList.toggle('hidden', !state.features.translation);
@@ -1240,6 +1272,23 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
    * 画面を離れるときの確認を、文書ごとの前提と1本で済ませるためです。別の仕組みにすると、
    * 書いた直後に質問したときだけ、ディレクトリ全体の前提が渡らないことになります。
    */
+  /**
+   * ディレクトリ全体へ残したメモも、文書ごとのメモと同じ自動保存に乗せます。行き先だけが
+   * 別のファイルで、レビュアーにとっては同じ「メモを残した」1つの操作だからです。
+   */
+  function markDirectoryContextNotesDirty() {
+    state.directoryContextNotesDirty = true;
+    // The AI pane promises to say what travels with a question; the notes are part of it.
+    ai.refreshTarget();
+    // 「指摘の配置にも渡る」の表示は書いた前提と合わせて決まるので、そちらへ見直させます。
+    aiContext.renderSummary();
+    // 残したメモは2か所へ出しているので、押していないほうの一覧も描き直します。
+    contextNotes.render();
+    contextNotes.setDirectoryStatus('dirty');
+    if (!state.currentPath) return;
+    commentSaves.schedule();
+  }
+
   function markDirectoryAiContextDirty() {
     state.directoryAiContextDirty = true;
     // 同じ前提を2か所へ出しているので、書いていないほうの欄にも同じ文面を映します。
@@ -1313,8 +1362,8 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     state.personaDirty = true;
     // Every edit invalidates in-flight saves: their response must not overwrite newer text.
     state.commentsVersion += 1;
-    // コンテキスト画面にも読み手を出しているので、決め直した内容をそちらへ映します。
-    contextPage.render();
+    // 読み手は2か所から決められるので、押していないほうの欄にも決まった読み手を映します。
+    persona.refresh();
     if (!state.currentPath) return;
     commentSaves.schedule();
   }
@@ -1400,7 +1449,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     // ディレクトリ全体の前提は開いている文書に紐づかないので、文書の有無より先に片づけます。
     // ここを `currentPath` の後ろに置くと、文書を閉じたあとに保存待ちが残ったとき、
     // 送る先がないまま「まだ保存するものがある」と言い続けることになります。
-    if (!(await pushDirectoryAiContext())) return false;
+    if (!(await pushDirectoryPremise())) return false;
     if (!state.currentPath) return true;
     if (state.mode === 'edit' && !state.aiContextDirty && !state.briefDirty
       && !state.contextNotesDirty && !state.memosDirty && !state.personaDirty && !state.referenceFilesDirty) {
@@ -1493,19 +1542,30 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
    * 更新日時だけが動き、レビューファイルの隣に「いつ変えたのか」の当てにならない記録が
    * 残ります。
    */
-  async function pushDirectoryAiContext() {
-    if (!state.directoryAiContextDirty) return true;
-    const saved = state.directoryAiContext;
-    aiContext.setDirectoryStatus('saving');
+  async function pushDirectoryPremise() {
+    const savingContext = state.directoryAiContextDirty;
+    const savingNotes = state.directoryContextNotesDirty;
+    if (!savingContext && !savingNotes) return true;
+    const savedContext = state.directoryAiContext;
+    const savedNotes = state.directoryContextNotes;
+    if (savingContext) aiContext.setDirectoryStatus('saving');
+    if (savingNotes) contextNotes.setDirectoryStatus('saving');
     try {
-      const result = await api.saveDirectoryContext({ aiContext: saved });
+      const result = await api.saveDirectoryContext({
+        ...(savingContext ? { aiContext: savedContext } : {}),
+        // 空の配列は「最後の1件を消した」なので、触っていない undefined と区別して送ります。
+        ...(savingNotes ? { contextNotes: savedNotes } : {})
+      });
       state.directoryContextFile = result.directoryContextFile || state.directoryContextFile;
       // 送っている間に書き足されていれば、保存待ちのままにします。次の自動保存で送ります。
-      if (state.directoryAiContext === saved) state.directoryAiContextDirty = false;
-      aiContext.setDirectoryStatus(state.directoryAiContextDirty ? 'dirty' : 'saved');
+      if (savingContext && state.directoryAiContext === savedContext) state.directoryAiContextDirty = false;
+      if (savingNotes && state.directoryContextNotes === savedNotes) state.directoryContextNotesDirty = false;
+      if (savingContext) aiContext.setDirectoryStatus(state.directoryAiContextDirty ? 'dirty' : 'saved');
+      if (savingNotes) contextNotes.setDirectoryStatus(state.directoryContextNotesDirty ? 'dirty' : 'saved');
       return true;
     } catch (error) {
-      aiContext.setDirectoryStatus('error', `保存できませんでした: ${error.message}`);
+      if (savingContext) aiContext.setDirectoryStatus('error', `保存できませんでした: ${error.message}`);
+      if (savingNotes) contextNotes.setDirectoryStatus('error', `保存できませんでした: ${error.message}`);
       return false;
     }
   }
@@ -1643,6 +1703,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       || state.directoryAiContextDirty
       || state.briefDirty
       || state.contextNotesDirty
+      || state.directoryContextNotesDirty
       || state.memosDirty
       || state.personaDirty
       || state.referenceFilesDirty
@@ -1653,7 +1714,12 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
   function beaconComments() {
     // ディレクトリ全体の前提は行き先が別のファイルで、開いている文書にも紐づきません。
     // 閉じ際も、文書の有無より先に別便で送ります。
-    if (state.directoryAiContextDirty) api.beaconDirectoryContext({ aiContext: state.directoryAiContext });
+    if (state.directoryAiContextDirty || state.directoryContextNotesDirty) {
+      api.beaconDirectoryContext({
+        ...(state.directoryAiContextDirty ? { aiContext: state.directoryAiContext } : {}),
+        ...(state.directoryContextNotesDirty ? { contextNotes: state.directoryContextNotes } : {})
+      });
+    }
     if (!state.currentPath) return;
     const savingComments = state.mode === 'comment' && state.commentsDirty;
     if (!savingComments && !state.aiContextDirty && !state.briefDirty

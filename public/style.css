@@ -912,6 +912,15 @@ button.danger:hover { background: #9b2116; border-color: #9b2116; color: #fff; }
 .context-note-kind[data-kind="decision"] { background: #e3f4ea; color: #087443; }
 .context-note-kind[data-kind="constraint"] { background: #fdecea; color: #b42318; }
 .context-note-kind[data-kind="question"] { background: #fdf3e2; color: #8a5b00; }
+/* 効く範囲。種類とは別の軸なので、色ではなく枠線で見分けます。 */
+.context-note-scope {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  padding: 0.1rem 0.45rem;
+}
+.context-note-scope[data-scope="directory"] { border-color: #2557d6; color: #2557d6; }
 .context-note-date, .context-note-source { color: var(--muted); font-size: 0.68rem; }
 .context-note-source::before { content: '· '; }
 .context-note-body {
@@ -2234,9 +2243,17 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   margin-top: 0.6rem;
 }
 .workspace-notes-layout .context-note-form { margin-top: 0; }
-.workspace-notes-layout .context-notes-list { margin-top: 0; }
+.workspace-notes-layout .context-notes-list,
+.workspace-notes-layout .reference-files-list {
+  /* 1件ずつの高さは中身で決まります。行を伸ばすと、短いメモが縦長の箱になります。 */
+  align-content: start;
+  margin-top: 0;
+}
 .workspace-notes-layout .reference-file-form { margin-top: 0; }
-.workspace-notes-layout .reference-files-list { margin-top: 0; }
+/* 読み手を決めるボタンは4つ並ぶので、この画面だけ左の欄を広く取ります。 */
+#persona-page-panel .workspace-notes-layout {
+  grid-template-columns: minmax(320px, 30rem) minmax(0, 1fr);
+}
 .workspace-conversations {
   display: grid;
   gap: 1rem;

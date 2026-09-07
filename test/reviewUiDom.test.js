@@ -186,6 +186,9 @@ test('本文の隣に置かないものは、別タブでも開けるリンク�
     links.map((link) => [link.tagName, link.dataset.toolLink, link.getAttribute('href')]),
     [
       ['A', 'context', '#/context/docs%2Fnote.md'],
+      ['A', 'persona', '#/persona/docs%2Fnote.md'],
+      ['A', 'files', '#/files/docs%2Fnote.md'],
+      ['A', 'chat', '#/chat/docs%2Fnote.md'],
       ['A', 'manager', '#/manager/docs%2Fnote.md'],
       ['A', 'placement', '#/placement/docs%2Fnote.md'],
       ['A', 'review', '#/ai-review/docs%2Fnote.md'],
@@ -263,11 +266,6 @@ test('the manager and translation controls stay hidden until the server enables 
   assert.equal(document.querySelector('#markdown-content .inline-translate-button'), null);
   assert.equal(document.querySelector('#ai-tab-button').textContent, 'AI');
   assert.equal(document.querySelector('#review-brief-hint').hidden, true);
-  assert.equal(
-    document.querySelector('#workspace-brief').classList.contains('hidden'),
-    true,
-    'コンテキスト画面にも、保存できない3点の欄は出さない'
-  );
 });
 
 test('設定から翻訳を有効にすると、開いている文書の翻訳ボタンがその場で出る', async (t) => {
@@ -767,6 +765,112 @@ test('the reading context can be written for the whole directory instead of one 
   await waitFor(() => document.querySelector('#ai-context-status').dataset.state === 'saved');
 });
 
+/**
+ * 「用語は原著の訳語に合わせる」のような制約は、章の数だけ残すものではありません。
+ * メモにも範囲を選ばせて、ディレクトリ全体のぶんは `.review/context.json` へ送ります。
+ */
+test('a context note can be recorded for the whole directory, and moved between the two scopes', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const requests = [];
+  const { document, window } = await startApp(t, 'http://localhost/#/review/chapter3.md', {
+    '/api/file': async () => ({
+      path: 'chapter3.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: {
+        targetFile: 'chapter3.md',
+        comments: [],
+        contextNotes: [
+          { id: 'note-own', kind: 'background', body: 'この節は前の版から移してきた', createdAt: '2026-08-01T00:00:00.000Z' }
+        ]
+      },
+      directoryContextNotes: [
+        { id: 'note-wide', kind: 'constraint', body: '用語は原著の訳語に合わせる', createdAt: '2026-08-01T00:00:00.000Z' }
+      ],
+      directoryContextFile: '.review/context.json',
+      reviewFile: '.review/chapter3.md.review.json'
+    }),
+    '/api/review': (_input, options) => {
+      const body = JSON.parse(options.body);
+      // 前のテストの自動保存もこのスタブへ届くので、この文書ぶんだけを見ます。
+      if (body.path === 'chapter3.md') requests.push(['review', body]);
+      return {
+        review: { targetFile: body.path, comments: body.comments || [], contextNotes: body.contextNotes },
+        reviewFile: '.review/chapter3.md.review.json'
+      };
+    },
+    '/api/context/directory': (_input, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(['directory', body]);
+      return {
+        directoryAiContext: body.aiContext || '',
+        directoryContextNotes: body.contextNotes || [],
+        directoryContextFile: '.review/context.json'
+      };
+    },
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: false, error: 'Codexへログインしてください' }),
+    '/api/ai/conversations': () => ({ conversations: [] })
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-comment-button'));
+
+  // どちらの範囲のメモも1本の一覧に並びます。効く範囲は札で分かります。
+  const notes = [...document.querySelectorAll('#context-notes-list .context-note')];
+  assert.deepEqual(notes.map((note) => note.dataset.noteScope), ['directory', 'document'], '広いほうが先');
+  assert.deepEqual(
+    notes.map((note) => note.querySelector('.context-note-scope').textContent),
+    ['ディレクトリ全体', 'このファイルだけ']
+  );
+  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), 'このファイル1件＋全体1件');
+
+  // 範囲を選んでから残すと、送り先が変わります。
+  const directoryRadio = document.querySelector('#context-note-scope input[value="directory"]');
+  directoryRadio.checked = true;
+  directoryRadio.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.match(document.querySelector('#context-note-scope-hint').textContent, /\.review\/context\.json/);
+  // 選んだ範囲は、広い画面の同じ欄にも映ります。
+  assert.equal(
+    document.querySelector('#workspace-context-note-scope input[value="directory"]').checked,
+    true,
+    '2か所の欄が別々の範囲へ残そうとしていることはない'
+  );
+
+  const noteInput = document.querySelector('#context-note-input');
+  noteInput.value = '図の単位はSIで統一する';
+  noteInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+  document.querySelector('#context-note-form').requestSubmit();
+  assert.match(document.querySelector('#toast-region').textContent, /「ディレクトリ全体」に残しました/);
+  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), 'このファイル1件＋全体2件');
+
+  document.querySelector('#save-button').click();
+  await waitFor(() => requests.some(([type]) => type === 'directory'));
+  const [, directoryBody] = requests.find(([type]) => type === 'directory');
+  assert.deepEqual(
+    directoryBody.contextNotes.map(({ body }) => body),
+    ['用語は原著の訳語に合わせる', '図の単位はSIで統一する'],
+    'ディレクトリ全体のメモだけを、残した順で送る'
+  );
+  assert.equal('aiContext' in directoryBody, false, '触っていない読み取りコンテキストは送らない');
+
+  // 範囲を選び直して保存すると、メモが移ります。両方の行き先へ送り直します。
+  requests.length = 0;
+  const own = document.querySelector('.context-note[data-note-scope="document"] [data-note-edit]');
+  own.click();
+  assert.equal(document.querySelector('#context-note-scope input[value="document"]').checked, true, '直す間はそのメモの範囲');
+  const wideRadio = document.querySelector('#context-note-scope input[value="directory"]');
+  wideRadio.checked = true;
+  wideRadio.dispatchEvent(new window.Event('change', { bubbles: true }));
+  document.querySelector('#context-note-form').requestSubmit();
+  assert.match(document.querySelector('#toast-region').textContent, /「ディレクトリ全体」へ移しました/);
+  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), 'ディレクトリ全体3件');
+
+  document.querySelector('#save-button').click();
+  await waitFor(() => requests.some(([type]) => type === 'directory') && requests.some(([type]) => type === 'review'));
+  const [, movedDirectory] = requests.find(([type]) => type === 'directory');
+  assert.equal(movedDirectory.contextNotes.at(-1).id, 'note-own', '移したメモはidごと引っ越す');
+  const [, movedReview] = requests.find(([type]) => type === 'review');
+  assert.deepEqual(movedReview.contextNotes, [], '空の配列で「最後の1件が出ていった」と伝える');
+});
+
 test('a document without a reading context says so and offers an empty box', async (t) => {
   const markdown = '# Guide\n\nRun the program.\n';
   const { document } = await startApp(t, 'http://localhost/#/review/guide.md', {
@@ -850,8 +954,8 @@ test('a note kept from a chat answer is saved with the review and travels with t
   });
   await waitFor(() => document.querySelector('#markdown-content p .inline-comment-button'));
 
-  // 保存済みのメモは、開いた時点で一覧と要約に出ます。
-  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), '1件');
+  // 保存済みのメモは、開いた時点で一覧と要約に出ます。要約には効く範囲まで出します。
+  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), 'このファイル1件');
   assert.equal(document.querySelector('.context-note-kind').textContent, '制約');
   assert.match(document.querySelector('.context-note-body').textContent, /原著の訳語/);
   assert.equal(document.querySelector('#review-context-hint').hidden, false, 'AIレビューにも効くと言う');
@@ -880,8 +984,8 @@ test('a note kept from a chat answer is saved with the review and travels with t
   assert.match(document.querySelector('#context-note-kind-hint').textContent, /蒸し返しません/);
   document.querySelector('#context-note-form').requestSubmit();
 
-  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), '2件');
-  // メモの一覧はサイドパネルとコンテキスト画面の2か所に出るので、片方を数えます。
+  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), 'このファイル2件');
+  // メモの一覧はサイドパネルとコンテキストの画面の2か所に出るので、片方を数えます。
   assert.equal(
     document.querySelectorAll('#context-notes-list .context-note-source').length,
     1,
@@ -902,7 +1006,7 @@ test('a note kept from a chat answer is saved with the review and travels with t
   document.querySelector('[data-note-delete]').click();
   assert.match(document.querySelector('.context-note-confirm').textContent, /削除しますか/);
   document.querySelector('[data-note-confirm-delete]').click();
-  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), '1件');
+  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), 'このファイル1件');
 });
 
 test('添えた参照ファイルは前提として渡り、レビューファイルへ保存される', async (t) => {
@@ -1152,7 +1256,7 @@ test('the notes pane stays quiet about a save it had nothing in, and says the ri
   document.querySelector('#context-note-form').requestSubmit();
 
   assert.match(document.querySelector('#toast-region').textContent, /メモを直しました/);
-  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), '1件', '直しても件数は増えない');
+  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), 'このファイル1件', '直しても件数は増えない');
 });
 
 test('at the limit the notes pane stops before the reviewer writes, but still lets them fix a note', async (t) => {
@@ -1173,7 +1277,7 @@ test('at the limit the notes pane stops before the reviewer writes, but still le
   });
   await waitFor(() => document.querySelector('#markdown-content p .inline-comment-button'));
 
-  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), '20件');
+  assert.equal(document.querySelector('#context-notes-state').textContent.trim(), 'このファイル20件');
   assert.equal(document.querySelector('#context-note-full').hidden, false, '上限に達したと先に言う');
   const input = document.querySelector('#context-note-input');
   input.value = '21件目';
@@ -2463,7 +2567,7 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
    * ページごとスクロールできることを見ます。
    */
   const toolPanels = [...document.querySelectorAll('.tool-page-body > section')];
-  assert.equal(toolPanels.length, 6, 'ツール画面のパネルを数え漏らしていない');
+  assert.equal(toolPanels.length, 9, 'ツール画面のパネルを数え漏らしていない');
   for (const panel of toolPanels) {
     assert.ok(
       selectors.every((selector) => !panel.matches(selector)),
@@ -2481,7 +2585,7 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
   );
 });
 
-test('the context screen opens the saved premises wide, and lets the reviewer fix a saved chat', async (t) => {
+test('the premise screens open one at a time, and let the reviewer decide a reader and fix a saved chat', async (t) => {
   const markdown = '# Guide\n\nRun the program.\n';
   const requests = [];
   const conversation = {
@@ -2522,6 +2626,8 @@ test('the context screen opens the saved premises wide, and lets the reviewer fi
       token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model', effort: 'low'
     }),
     '/api/ai/conversations': () => ({ conversations: [conversation] }),
+    // AIパネルは会話の一覧と同じ往復でスキルの選択肢も引きます。
+    '/api/ai/review-skills': () => ({ skills: [] }),
     '/api/ai/conversation': (_input, options) => {
       const body = JSON.parse(options.body);
       requests.push([options.method, body]);
@@ -2541,19 +2647,26 @@ test('the context screen opens the saved premises wide, and lets the reviewer fi
   await waitFor(() => document.querySelector('#markdown-content p'));
   await waitFor(() => document.querySelectorAll('#ai-conversation-select option').length === 2);
 
-  document.querySelector('#context-open-button').click();
+  // 本文からの入口はリンクです。押す前から行き先が入っているので、別のタブでも開けます。
+  const openLink = document.querySelector('#context-open-button');
+  assert.equal(openLink.getAttribute('href'), '#/context/guide.md');
+  openLink.click();
   await waitFor(() => !document.querySelector('#context-view').classList.contains('hidden'));
   assert.equal(document.querySelector('#review-view').classList.contains('hidden'), true, 'レビュー画面とは入れ替わる');
   assert.equal(document.querySelector('#workspace-document-title').textContent, 'guide.md');
 
+  // この画面はコンテキスト専用です。読み手も参照ファイルも相談の記録も、別の画面にあります。
+  assert.deepEqual(
+    [...document.querySelectorAll('#context-view .workspace-card')].map((card) => card.id),
+    ['workspace-ai-context', 'workspace-notes']
+  );
+
   // 保存済みの前提が、そのまま広い欄へ出ています。
   assert.equal(document.querySelector('#workspace-ai-context-input').value, '第3章。読者は初学者。');
-  assert.equal(document.querySelector('#workspace-brief-purpose').value, '当番が一人で再起動できる');
   assert.equal(
     document.querySelector('#workspace-context-notes-list .context-note-body').textContent,
     '用語は原著の訳語に合わせる'
   );
-  assert.equal(document.querySelector('#workspace-conversation-state').textContent, '1件');
 
   // 片方の画面で書いたものは、もう片方の欄にも出ます。
   const contextInput = document.querySelector('#workspace-ai-context-input');
@@ -2565,10 +2678,23 @@ test('the context screen opens the saved premises wide, and lets the reviewer fi
   noteInput.value = '図の単位はSIで統一済み。変えない。';
   noteInput.dispatchEvent(new window.Event('input', { bubbles: true }));
   document.querySelector('#workspace-context-note-form').requestSubmit();
-  assert.equal(document.querySelector('#workspace-context-notes-state').textContent, '2件');
+  assert.equal(document.querySelector('#workspace-context-notes-state').textContent, 'このファイル2件');
   assert.equal(document.querySelectorAll('#context-notes-list .context-note').length, 2, 'サイドパネルの一覧にも出る');
 
-  // 保存した相談は、ここで読み直して直せます。
+  // 読み手はこの画面で決められます。決めた読み手は「AIレビュー」の画面にも映ります。
+  await openToolPage(document, 'persona');
+  assert.equal(document.querySelector('#tool-page-label').textContent, '読み手ペルソナ');
+  const personaInput = document.querySelector('#workspace-persona-input');
+  personaInput.value = '当番の運用担当。この製品は初めて。';
+  personaInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+  document.querySelector('#workspace-persona-use-button').click();
+  assert.equal(document.querySelector('#workspace-persona-state').textContent, '設定済み');
+  assert.equal(document.querySelector('#persona-state').textContent, '設定済み', 'レビューの画面にも映る');
+  assert.equal(document.querySelector('#persona-input').value, '当番の運用担当。この製品は初めて。');
+
+  // 保存した相談は、専用の画面で読み直して直せます。
+  await openToolPage(document, 'chat');
+  assert.equal(document.querySelector('#workspace-conversation-state').textContent, '1件');
   document.querySelector('[data-open-conversation]').click();
   assert.equal(document.querySelectorAll('#workspace-conversation-detail .workspace-message').length, 2);
   document.querySelector('[data-edit-message="user-1"]').click();
@@ -2598,17 +2724,15 @@ test('the context screen opens the saved premises wide, and lets the reviewer fi
   );
   await waitFor(() => document.querySelectorAll('#workspace-conversation-detail .workspace-message').length === 1);
 
-  document.querySelector('#workspace-back-button').click();
+  document.querySelector('#tool-back-link').click();
   await waitFor(() => !document.querySelector('#review-view').classList.contains('hidden'));
-  assert.equal(document.querySelector('#context-view').classList.contains('hidden'), true);
+  assert.equal(document.querySelector('#tool-view').classList.contains('hidden'), true);
 
-  // 読み手を決めるのはレビューを実行する場所と同じなので、そこへ連れて行きます。
-  document.querySelector('#context-open-button').click();
-  await waitFor(() => !document.querySelector('#context-view').classList.contains('hidden'));
-  document.querySelector('#workspace-persona-edit-button').click();
-  await waitFor(() => !document.querySelector('#tool-view').classList.contains('hidden'));
-  assert.equal(document.querySelector('#review-panel').classList.contains('hidden'), false, 'AIレビューの画面を開く');
-  assert.equal(document.querySelector('#context-view').classList.contains('hidden'), true);
+  // 住所を直に開いても、その1枚が出ます。人に渡せるのはこれのためです。
+  window.location.hash = '#/files/guide.md';
+  await waitFor(() => !document.querySelector('#reference-files-panel').classList.contains('hidden'));
+  assert.equal(document.querySelector('#tool-page-label').textContent, '参照ファイル');
+  assert.equal(document.querySelector('#review-view').classList.contains('hidden'), true);
 });
 
 test('文字起こしを開くと、押す前に読む範囲が出て、聞くと要約と次の行動が並ぶ', async (t) => {

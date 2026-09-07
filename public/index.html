@@ -43,7 +43,7 @@
               <button id="document-comment-button" type="button">文書全体にコメント</button>
               <button id="document-translate-button" class="hidden" type="button">文書全体を翻訳</button>
               <button id="document-ai-button" type="button">文書全体をAIに相談</button>
-              <a id="context-open-button" class="toolbar-link" data-tool-link="context" href="#/" title="前提と保存した相談をまとめて見る画面を開きます">コンテキスト</a>
+              <a id="context-open-button" class="toolbar-link" data-tool-link="context" href="#/" title="読み取りコンテキストとメモを広い画面で残します">コンテキスト</a>
               <button id="copy-body-button" class="hidden" type="button" title="本文をそのままクリップボードへコピーします">本文をコピー</button>
             </div>
           </div>
@@ -94,6 +94,9 @@
             <p class="side-pane-tools-label">別の画面で開く</p>
             <div class="tool-links">
               <a class="tool-link" data-tool-link="context" href="#/">コンテキスト</a>
+              <a class="tool-link" data-tool-link="persona" href="#/">読み手ペルソナ</a>
+              <a class="tool-link" data-tool-link="files" href="#/">参照ファイル</a>
+              <a class="tool-link" data-tool-link="chat" href="#/">AIチャットの記録</a>
               <a class="tool-link hidden" data-tool-link="manager" href="#/">管理者<span id="manager-link-count" class="tab-count" hidden></span></a>
               <a class="tool-link" data-tool-link="placement" href="#/">指摘の配置</a>
               <a class="tool-link" data-tool-link="review" href="#/">AIレビュー</a>
@@ -188,8 +191,13 @@
                   コンテキストメモ
                   <span id="context-notes-state" class="ai-context-state">未設定</span>
                 </summary>
-                <p class="ai-context-hint">この文書について分かったことを1件ずつ残します。残したメモは前提として、翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。</p>
+                <p class="ai-context-hint">この文書について分かったことを1件ずつ残します。効く範囲を「このファイルだけ」と「ディレクトリ全体」から選べます。残したメモは前提として、翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。</p>
                 <form id="context-note-form" class="context-note-form">
+                  <div id="context-note-scope" class="context-scope" role="radiogroup" aria-label="コンテキストメモの適用範囲">
+                    <label><input type="radio" name="context-note-scope" value="document" checked> このファイルだけ</label>
+                    <label><input type="radio" name="context-note-scope" value="directory"> ディレクトリ全体</label>
+                  </div>
+                  <p id="context-note-scope-hint" class="ai-context-hint context-scope-hint"></p>
                   <select id="context-note-kind" aria-label="メモの種類" aria-describedby="context-note-kind-hint"></select>
                   <p id="context-note-kind-hint" class="context-note-kind-hint" aria-live="polite"></p>
                   <textarea id="context-note-input" rows="3" placeholder="例：この節は前の版から移してきた。並び順は検討済みで、変えない。"></textarea>
@@ -218,9 +226,10 @@
                 </form>
                 <p id="reference-files-full" class="context-note-full" hidden>参照ファイルが上限に達しました。読ませないものを外してください。</p>
                 <p id="reference-files-status" class="ai-context-status" aria-live="polite"></p>
-                <a id="reference-files-open-page" class="context-open-link" data-tool-link="context" href="#/">広い画面で編集</a>
+                <a id="reference-files-open-page" class="context-open-link" data-tool-link="files" href="#/">広い画面で編集</a>
                 <div id="reference-files-list" class="reference-files-list"></div>
               </details>
+              <a id="ai-conversations-open-page" class="context-open-link" data-tool-link="chat" href="#/">記録を広い画面で読む・直す</a>
               <div class="ai-conversation-controls">
                 <select id="ai-conversation-select" aria-label="保存された会話">
                   <option value="">新しい会話</option>
@@ -278,6 +287,9 @@
           <nav class="tool-page-nav tool-links" aria-label="この文書の画面">
             <a class="tool-link" data-tool-link="body" href="#/">レビュー本文</a>
             <a class="tool-link" data-tool-link="context" href="#/">コンテキスト</a>
+            <a class="tool-link" data-tool-link="persona" href="#/">読み手ペルソナ</a>
+            <a class="tool-link" data-tool-link="files" href="#/">参照ファイル</a>
+            <a class="tool-link" data-tool-link="chat" href="#/">AIチャットの記録</a>
             <a class="tool-link hidden" data-tool-link="manager" href="#/">管理者</a>
             <a class="tool-link" data-tool-link="placement" href="#/">指摘の配置</a>
             <a class="tool-link" data-tool-link="review" href="#/">AIレビュー</a>
@@ -287,6 +299,70 @@
           </nav>
         </header>
         <div class="tool-page-body">
+          <section id="persona-page-panel" class="persona-page-panel tool-panel card hidden" aria-live="polite">
+            <div class="pane-scroll">
+              <div class="ai-header">
+                <div>
+                  <p class="eyebrow">Reader persona</p>
+                  <h2>読み手ペルソナ</h2>
+                </div>
+                <span id="workspace-persona-state" class="ai-context-state">未設定</span>
+              </div>
+              <p class="placement-hint">誰がこの文書を読むかです。書いた文章をそのまま読み手として使うか、AIに立場・前提知識・目的へ組み直させるかを選べます。決めた読み手は前提として、翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。</p>
+              <div class="workspace-notes-layout">
+              <form id="workspace-persona-form" class="persona-form">
+                <textarea id="workspace-persona-input" rows="10" placeholder="例：他チームから異動してきたばかりの運用担当。Linuxは触れるがこの製品は初めて。当番中に手順を見ながら作業する。"></textarea>
+                <div class="persona-actions">
+                  <button id="workspace-persona-stop-button" class="hidden" type="button">停止</button>
+                  <button id="workspace-persona-clear-button" type="button" disabled>ペルソナを削除</button>
+                  <button id="workspace-persona-use-button" type="button" title="書いた文章をそのまま読み手の説明として使います">そのまま使う</button>
+                  <button id="workspace-persona-compose-button" type="submit">AIで組み立てる</button>
+                </div>
+              </form>
+              <div id="workspace-persona-result" class="persona-result"></div>
+              </div>
+            </div>
+          </section>
+          <section id="reference-files-panel" class="reference-files-panel tool-panel card hidden" aria-live="polite">
+            <div class="pane-scroll">
+              <div class="ai-header">
+                <div>
+                  <p class="eyebrow">Reference files</p>
+                  <h2>参照ファイル</h2>
+                </div>
+                <span id="workspace-reference-files-state" class="ai-context-state">未設定</span>
+              </div>
+              <p class="placement-hint">この文書と同じ階層以下にあるファイルを添えると、AIがその中身も読みます。添えられるのはこの文書のディレクトリとその下だけで、ファイル一覧から外したファイルも選べます。</p>
+              <div class="workspace-notes-layout">
+                <form id="workspace-reference-file-form" class="reference-file-form">
+                  <input id="workspace-reference-file-filter" type="search" placeholder="パスで絞り込む" aria-label="添えるファイルをパスで絞り込む">
+                  <select id="workspace-reference-file-select" size="12" aria-label="添えるファイル"></select>
+                  <div class="reference-file-actions">
+                    <button id="workspace-reference-file-add" type="submit" disabled>添える</button>
+                  </div>
+                  <p id="workspace-reference-files-full" class="context-note-full" hidden>参照ファイルが上限に達しました。読ませないものを外してください。</p>
+                  <p id="workspace-reference-files-status" class="ai-context-status" aria-live="polite"></p>
+                </form>
+                <div id="workspace-reference-files-list" class="reference-files-list"></div>
+              </div>
+            </div>
+          </section>
+          <section id="conversations-panel" class="conversations-panel tool-panel card hidden" aria-live="polite">
+            <div class="pane-scroll">
+              <div class="ai-header">
+                <div>
+                  <p class="eyebrow">Saved chats</p>
+                  <h2>AIチャットの記録</h2>
+                </div>
+                <span id="workspace-conversation-state" class="ai-context-state">0件</span>
+              </div>
+              <p class="placement-hint">この文書で交わした相談です。言い間違えた質問や、間違ったまま残っている回答はここで直せます。直したやり取りは、次にこの会話を続けるときAIが読み直します。</p>
+              <div class="workspace-conversations">
+                <nav id="workspace-conversation-list" class="workspace-conversation-list" aria-label="保存された会話"></nav>
+                <div id="workspace-conversation-detail" class="workspace-conversation-detail"></div>
+              </div>
+            </div>
+          </section>
           <section id="manager-panel" class="manager-panel tool-panel card hidden" aria-live="polite">
             <div class="pane-scroll">
               <div class="ai-header">
@@ -393,6 +469,7 @@
                     <button id="persona-compose-button" type="submit">AIで組み立てる</button>
                   </div>
                 </form>
+                <a id="persona-open-page" class="context-open-link" data-tool-link="persona" href="#/">広い画面で編集</a>
                 <div id="persona-result" class="persona-result"></div>
               </details>
 
@@ -411,7 +488,7 @@
                 </form>
                 <p id="review-reference-files-full" class="context-note-full" hidden>参照ファイルが上限に達しました。読ませないものを外してください。</p>
                 <p id="review-reference-files-status" class="ai-context-status" aria-live="polite"></p>
-                <a id="review-reference-files-open-page" class="context-open-link" data-tool-link="context" href="#/">広い画面で編集</a>
+                <a id="review-reference-files-open-page" class="context-open-link" data-tool-link="files" href="#/">広い画面で編集</a>
                 <div id="review-reference-files-list" class="reference-files-list"></div>
               </details>
 
@@ -549,10 +626,13 @@
               <h2 id="workspace-document-title"></h2>
             </div>
           </div>
-          <p class="workspace-lead">ここにあるものは、翻訳・AIチャット・指摘の配置・AIレビューが本文より先に読みます。書き換えは自動保存され、次のAI操作から効きます。</p>
+          <p class="workspace-lead">AIがこの文書を読むときの前提です。1枚に整えた読み取りコンテキストと、1件ずつ積み上げるメモ。どちらも効く範囲を「このファイルだけ」と「ディレクトリ全体」から選べます。書き換えは自動保存され、次のAI操作から効きます。</p>
           <nav class="tool-page-nav tool-links" aria-label="この文書の画面">
             <a class="tool-link" data-tool-link="body" href="#/">レビュー本文</a>
             <a class="tool-link" data-tool-link="context" href="#/">コンテキスト</a>
+            <a class="tool-link" data-tool-link="persona" href="#/">読み手ペルソナ</a>
+            <a class="tool-link" data-tool-link="files" href="#/">参照ファイル</a>
+            <a class="tool-link" data-tool-link="chat" href="#/">AIチャットの記録</a>
             <a class="tool-link hidden" data-tool-link="manager" href="#/">管理者</a>
             <a class="tool-link" data-tool-link="placement" href="#/">指摘の配置</a>
             <a class="tool-link" data-tool-link="review" href="#/">AIレビュー</a>
@@ -563,48 +643,7 @@
         </header>
 
         <div class="workspace-grid">
-          <section id="workspace-brief" class="card workspace-card">
-            <header class="workspace-card-head">
-              <h3>資料の管理者が決めた3点</h3>
-              <span id="workspace-brief-state" class="ai-context-state">0 / 3</span>
-            </header>
-            <p class="ai-context-hint">この資料が何のためにあるかです。3点から外れた箇所は、AIレビューが指摘します。</p>
-            <div class="brief-form">
-              <div class="brief-field">
-                <label class="brief-field-label" for="workspace-brief-purpose">目的</label>
-                <p id="workspace-brief-purpose-hint" class="brief-field-hint">この資料が終わったとき、読み手に何が起きていれば成功か。「資料を作ること」は目的になりません。</p>
-                <textarea id="workspace-brief-purpose" rows="3" aria-describedby="workspace-brief-purpose-hint" placeholder="例：当番が、手順書を見ながら一人で再起動を完了できるようになる。"></textarea>
-              </div>
-              <div class="brief-field">
-                <label class="brief-field-label" for="workspace-brief-story">ストーリー</label>
-                <p id="workspace-brief-story-hint" class="brief-field-hint">その結論まで、何をどの順に示して連れて行くか。節の一覧ではなく、前が次を支える並びを書きます。</p>
-                <textarea id="workspace-brief-story" rows="3" aria-describedby="workspace-brief-story-hint" placeholder="例：止めてよい条件を先に決める → 止める手順 → 戻ったことの確かめ方 → 戻らなかったときの連絡先。"></textarea>
-              </div>
-              <div class="brief-field">
-                <label class="brief-field-label" for="workspace-brief-expectation">期待値</label>
-                <p id="workspace-brief-expectation-hint" class="brief-field-hint">読んだあと、読み手や頼んだ人が何を判断・実行できるか。</p>
-                <textarea id="workspace-brief-expectation" rows="3" aria-describedby="workspace-brief-expectation-hint" placeholder="例：当番から運用チームへの問い合わせが、再起動については来なくなる。"></textarea>
-              </div>
-              <div class="brief-actions">
-                <button id="workspace-brief-clear-button" type="button" disabled>3つを消す</button>
-              </div>
-              <p id="workspace-brief-status" class="ai-context-status" aria-live="polite"></p>
-            </div>
-            <details id="workspace-brief-compose" class="ai-context">
-              <summary>管理者に組み立てさせる</summary>
-              <p class="ai-context-hint">決まっていることを走り書きで渡すと、管理者が3つの欄へ組み直し、決まっていない分は問いとして返します。本文は読ませません。</p>
-              <form id="workspace-brief-compose-form" class="persona-form">
-                <textarea id="workspace-brief-input" rows="4" placeholder="例：運用チームから当番向けの再起動手順を頼まれた。事故が月1件ある。締め切りは来週。"></textarea>
-                <div class="persona-actions">
-                  <button id="workspace-brief-stop-button" class="hidden" type="button">停止</button>
-                  <button id="workspace-brief-compose-button" type="submit">管理者に聞く</button>
-                </div>
-              </form>
-              <div id="workspace-brief-result" class="brief-result"></div>
-            </details>
-          </section>
-
-          <section id="workspace-ai-context" class="card workspace-card">
+          <section id="workspace-ai-context" class="card workspace-card workspace-card-wide">
             <header class="workspace-card-head">
               <h3>読み取りコンテキスト</h3>
               <span id="workspace-ai-context-state" class="ai-context-state">未設定</span>
@@ -633,9 +672,14 @@
               <h3>コンテキストメモ</h3>
               <span id="workspace-context-notes-state" class="ai-context-state">未設定</span>
             </header>
-            <p class="ai-context-hint">この文書について分かったことを1件ずつ残します。読み取りコンテキストが「この文書はこう読む」の1枚なのに対して、こちらは「このとき、こう分かった」の積み上げです。</p>
+            <p class="ai-context-hint">この文書について分かったことを1件ずつ残します。読み取りコンテキストが「この文書はこう読む」の1枚なのに対して、こちらは「このとき、こう分かった」の積み上げです。効く範囲を選んでから残せます。</p>
             <div class="workspace-notes-layout">
               <form id="workspace-context-note-form" class="context-note-form">
+                <div id="workspace-context-note-scope" class="context-scope" role="radiogroup" aria-label="コンテキストメモの適用範囲">
+                  <label><input type="radio" name="workspace-context-note-scope" value="document" checked> このファイルだけ</label>
+                  <label><input type="radio" name="workspace-context-note-scope" value="directory"> ディレクトリ全体</label>
+                </div>
+                <p id="workspace-context-note-scope-hint" class="ai-context-hint context-scope-hint"></p>
                 <select id="workspace-context-note-kind" aria-label="メモの種類" aria-describedby="workspace-context-note-kind-hint"></select>
                 <p id="workspace-context-note-kind-hint" class="context-note-kind-hint" aria-live="polite"></p>
                 <textarea id="workspace-context-note-input" rows="5" placeholder="例：この節は前の版から移してきた。並び順は検討済みで、変えない。"></textarea>
@@ -647,48 +691,6 @@
                 <p id="workspace-context-notes-status" class="ai-context-status" aria-live="polite"></p>
               </form>
               <div id="workspace-context-notes-list" class="context-notes-list"></div>
-            </div>
-          </section>
-
-          <section id="workspace-reference-files" class="card workspace-card workspace-card-wide">
-            <header class="workspace-card-head">
-              <h3>参照ファイル</h3>
-              <span id="workspace-reference-files-state" class="ai-context-state">未設定</span>
-            </header>
-            <p class="ai-context-hint">この文書と同じ階層以下にあるファイルを添えると、AIがその中身も読みます。添えられるのはこの文書のディレクトリとその下だけで、ファイル一覧から外したファイルも選べます。</p>
-            <div class="workspace-notes-layout">
-              <form id="workspace-reference-file-form" class="reference-file-form">
-                <input id="workspace-reference-file-filter" type="search" placeholder="パスで絞り込む" aria-label="添えるファイルをパスで絞り込む">
-                <select id="workspace-reference-file-select" size="8" aria-label="添えるファイル"></select>
-                <div class="reference-file-actions">
-                  <button id="workspace-reference-file-add" type="submit" disabled>添える</button>
-                </div>
-                <p id="workspace-reference-files-full" class="context-note-full" hidden>参照ファイルが上限に達しました。読ませないものを外してください。</p>
-                <p id="workspace-reference-files-status" class="ai-context-status" aria-live="polite"></p>
-              </form>
-              <div id="workspace-reference-files-list" class="reference-files-list"></div>
-            </div>
-          </section>
-
-          <section id="workspace-persona" class="card workspace-card">
-            <header class="workspace-card-head">
-              <h3>読み手ペルソナ</h3>
-              <span id="workspace-persona-state" class="ai-context-state">未設定</span>
-            </header>
-            <p class="ai-context-hint">誰がこの文書を読むかです。組み立てと書き換えは、レビューを実行する場所と同じ「AIレビュー」の画面で行います。</p>
-            <div id="workspace-persona-result" class="persona-result"></div>
-            <a id="workspace-persona-edit-button" data-tool-link="review" href="#/">「AIレビュー」の画面で編集</a>
-          </section>
-
-          <section id="workspace-conversations" class="card workspace-card workspace-card-wide">
-            <header class="workspace-card-head">
-              <h3>AIチャットの記録</h3>
-              <span id="workspace-conversation-state" class="ai-context-state">0件</span>
-            </header>
-            <p class="ai-context-hint">この文書で交わした相談です。言い間違えた質問や、間違ったまま残っている回答はここで直せます。直したやり取りは、次にこの会話を続けるときAIが読み直します。</p>
-            <div class="workspace-conversations">
-              <nav id="workspace-conversation-list" class="workspace-conversation-list" aria-label="保存された会話"></nav>
-              <div id="workspace-conversation-detail" class="workspace-conversation-detail"></div>
             </div>
           </section>
         </div>

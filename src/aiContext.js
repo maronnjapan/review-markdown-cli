@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { MAX_AI_CONTEXT_CHARS } from './aiLimits.js';
-import { contextNotesBlock, hasContextNotes, readContextNotes } from './contextNotes.js';
+import { contextNotesBlock, hasContextNotes, readContextNotes, scopedNotes } from './contextNotes.js';
 import { documentBriefBlock, hasDocumentBrief, readDocumentBrief } from './documentBrief.js';
 import { hasPersonaContent, normalizePersona, personaBlock } from './persona.js';
 import { readingContextBlock } from './prompts/readingContext.js';
@@ -12,11 +12,12 @@ import { hasReferenceFiles, readReferenceEntries, referenceFilesBlock } from './
  * 対象読者、原稿の位置づけ、守りたい用語など、本文からは読み取れない前提を渡すと、
  * 翻訳・AIチャット・指摘の配置・AIレビューが同じ前提の上で動きます。
  *
- * コンテキストは7か所から集めます。
+ * コンテキストは8か所から集めます。
  *   - project : 設定ファイルの `aiContext`（`--ai-context` で上書きできる。全文書に効く）
  *   - directory: 画面で「ディレクトリ全体」を選んで書いた前提（`directoryContext.js`。全文書に効く）
  *   - document: レビューファイルへ保存した文書ごとのコンテキスト
  *   - brief   : 資料の管理者が決めた目的・ストーリー・期待値（`documentBrief.js`）
+ *   - directoryNotes: 「ディレクトリ全体」を選んで残したコンテキストメモ（全文書に効く）
  *   - notes   : レビューファイルへ残したコンテキストメモ（`contextNotes.js`）
  *   - persona : レビューファイルへ保存した読み手ペルソナ（`persona.js`）
  *   - files   : 同階層以下から添えた参照ファイルの中身（`referenceFiles.js`）
@@ -38,14 +39,16 @@ export function normalizeAiContext(value, source = '読み取りコンテキス�
 }
 
 /**
- * Merges the seven sources into the object every prompt builder takes.
+ * Merges the eight sources into the object every prompt builder takes.
  * `revision` changes whenever any of them changes, and stays empty while all are unset.
  *
  * `files` は読み終えた参照ファイルです。ここでファイルを開かないのは、この関数を
- * 同期のままにしておくためで、他の5つと同じく「保存済みの値を受け取って確かめる」
+ * 同期のままにしておくためで、他の6つと同じく「保存済みの値を受け取って確かめる」
  * 形に揃えています。読むのは `aiService.readingContext()` です。
  */
-export function resolveAiContext({ project, directory, document, brief, notes, persona, files } = {}) {
+export function resolveAiContext({
+  project, directory, document, brief, directoryNotes, notes, persona, files
+} = {}) {
   const context = {
     project: normalizeAiContext(project, 'aiContext'),
     // 設定ファイルの前提と別に持つのは、決める場所が違うからです（`directoryContext.js`）。
@@ -55,7 +58,12 @@ export function resolveAiContext({ project, directory, document, brief, notes, p
     document: normalizeAiContext(document, '読み取りコンテキスト'),
     // ここへ来るのは保存済みの値なので、上限では断りません（断るのは受け取る側）。
     brief: readDocumentBrief(brief),
-    notes: readContextNotes(notes),
+    // 2つの範囲のメモを1本に束ねます。読み方は範囲によって変わらないので、枠を分けても
+    // モデルには同じ指示を2回読ませるだけです（`project` と `directory` の前提を1つの枠へ
+    // まとめているのと同じ考え方）。ディレクトリ全体のぶんを先に置くのは、あとのメモほど
+    // 強い、という並びの約束（`recordedNotesBlock` の "n"）を、範囲の広さと揃えるためです。
+    // 同じ論点でぶつかったときは、その文書について残したメモのほうが残ります。
+    notes: [...scopedNotes(directoryNotes, 'directory'), ...readContextNotes(notes)],
     persona: normalizePersona(persona),
     files: readReferenceEntries(files)
   };

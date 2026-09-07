@@ -107,11 +107,14 @@ export function createAiContextController({
     // 添えたファイルをまとめて見ます。
     // 出す・出さないを1か所で決めるため、どれが増えたときもここを呼び直します。
     if (refs.placementContextHint) {
+      // メモは2つの範囲に分かれて入っているので、両方を数えます。片方だけ見ると、
+      // ディレクトリ全体にだけメモを残した文書で「何も渡らない」ことになります。
+      const noteCount = (state.contextNotes || []).length + (state.directoryContextNotes || []).length;
       refs.placementContextHint.hidden = !hasProjectContext
         && !hasDirectoryContext
         && !hasDocumentContext
         && !state.brief
-        && (state.contextNotes || []).length === 0
+        && noteCount === 0
         && (state.referenceFiles || []).length === 0;
     }
   }
@@ -160,7 +163,7 @@ export function createAiContextController({
   /**
    * もう一方の画面で書き換えられた前提を、こちらの欄へ映します。
    *
-   * この欄は同じ内容をサイドパネルとコンテキスト画面の2か所へ出しています。片方で
+   * この欄は同じ内容をサイドパネルとコンテキストの画面の2か所へ出しています。片方で
    * 書いたものがもう片方に映らないと、古い文面の残った側で1文字打った瞬間に、
    * さっき書いた分がまるごと消えます。打っている最中の欄には触りません。
    * 選んでいる範囲も同じ state に置いてあるので、片方で切り替えればもう片方も従います。

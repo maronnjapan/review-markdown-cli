@@ -299,7 +299,7 @@ test('the reading context travels with the review, and a context only save keeps
   assert.doesNotMatch(exported, /図を入れ替えてから/);
 });
 
-test('a directory wide reading context is saved once and applies to every document under the root', async (t) => {
+test('a directory wide premise is saved once and applies to every document under the root', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'review-directory-context-routes-'));
   await fs.writeFile(path.join(root, 'guide.md'), '# Guide\n\nRun the program.\n', 'utf8');
   await fs.mkdir(path.join(root, 'docs'), { recursive: true });
@@ -329,8 +329,22 @@ test('a directory wide reading context is saved once and applies to every docume
   assert.equal(saved.status, 200);
   assert.deepEqual(await saved.json(), {
     directoryAiContext: 'この本は入門者向け。用語は原著の訳語に合わせる。',
+    directoryContextNotes: [],
     directoryContextFile: '.review/context.json'
   });
+
+  // メモも同じ範囲へ残せます。読み取りコンテキストだけを送った保存で消えないよう、
+  // 送らなかった項目は据え置きます。
+  const savedNotes = await saveDirectoryContext({
+    contextNotes: [{ id: 'note-d', kind: 'constraint', body: '図の単位はSIで統一する' }]
+  });
+  assert.equal(savedNotes.status, 200);
+  const savedNotesBody = await savedNotes.json();
+  assert.equal(savedNotesBody.directoryAiContext, 'この本は入門者向け。用語は原著の訳語に合わせる。');
+  assert.deepEqual(
+    savedNotesBody.directoryContextNotes.map(({ id, kind, body }) => ({ id, kind, body })),
+    [{ id: 'note-d', kind: 'constraint', body: '図の単位はSIで統一する' }]
+  );
 
   // 保存先は1か所なので、配下のどの文書を開いても同じ前提が返ります。
   for (const documentPath of ['guide.md', 'docs/plan.md']) {
@@ -338,7 +352,9 @@ test('a directory wide reading context is saved once and applies to every docume
       .then((response) => response.json());
     assert.equal(opened.directoryAiContext, 'この本は入門者向け。用語は原著の訳語に合わせる。');
     assert.equal(opened.directoryContextFile, '.review/context.json');
+    assert.equal(opened.directoryContextNotes.length, 1, 'メモも文書をまたいで同じものが返る');
     assert.equal(opened.review.aiContext, '', '文書ごとの前提とは別に持つ');
+    assert.deepEqual(opened.review.contextNotes, [], '文書ごとのメモとも別に持つ');
   }
 
   // 文書ごとの前提を保存しても、ディレクトリ全体の前提は消えません。
@@ -350,13 +366,20 @@ test('a directory wide reading context is saved once and applies to every docume
   const exported = await fetch(`${baseUrl}/api/export?path=guide.md`).then((response) => response.text());
   assert.match(exported, /## 読み取りコンテキスト（ディレクトリ全体）\n\nこの本は入門者向け。/);
   assert.match(exported, /## 読み取りコンテキスト\n\n第3章。読者は初学者。/);
+  // 効く範囲の広いメモも、渡す相手が読み分けられる見出しで書き出します。
+  assert.match(exported, /## コンテキストメモ（ディレクトリ全体）\n\n- 制約: 図の単位はSIで統一する/);
 
   const tooLong = await saveDirectoryContext({ aiContext: 'あ'.repeat(4001) });
   assert.equal(tooLong.status, 400, '長すぎる前提は切り詰めずに断る');
   const notText = await saveDirectoryContext({ aiContext: { text: '前提' } });
   assert.equal(notText.status, 400);
+  const notArray = await saveDirectoryContext({ contextNotes: 'メモ' });
+  assert.equal(notArray.status, 400);
+  const nothing = await saveDirectoryContext({});
+  assert.equal(nothing.status, 400, '何を保存したいのか分からない要求は断る');
   const stillSaved = await fetch(`${baseUrl}/api/file?path=guide.md`).then((response) => response.json());
   assert.equal(stillSaved.directoryAiContext, 'この本は入門者向け。用語は原著の訳語に合わせる。');
+  assert.equal(stillSaved.directoryContextNotes.length, 1, '断った保存でメモも消さない');
 });
 
 test('the manager endpoint streams a draft, and the three settled points save with the review', async (t) => {

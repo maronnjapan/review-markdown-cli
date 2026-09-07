@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { AiService } from '../src/aiService.js';
 import { AiStore } from '../src/aiStore.js';
-import { writeDirectoryContext } from '../src/directoryContext.js';
+import { writeDirectoryPremise } from '../src/directoryContext.js';
 import { writeReview } from '../src/reviewStore.js';
 
 test('short contextual translations return multiple meanings and reuse the local cache', async (t) => {
@@ -307,7 +307,7 @@ test('a directory wide reading context reaches every document without being copi
   for (const documentPath of ['guide.md', 'plan.md']) {
     await fs.writeFile(path.join(root, documentPath), '# Guide\n\nRun the program.\n', 'utf8');
   }
-  await writeDirectoryContext(root, 'この本は入門者向け。用語は原著の訳語に合わせる。');
+  await writeDirectoryPremise(root, { aiContext: 'この本は入門者向け。用語は原著の訳語に合わせる。' });
   await writeReview(root, 'guide.md', [], { aiContext: 'この章だけ英語のまま残している。' });
   const prompts = [];
   const codex = fakeCodex({
@@ -332,7 +332,7 @@ test('a directory wide reading context reaches every document without being copi
   assert.doesNotMatch(prompts[1], /この章だけ英語のまま残している/, '他の文書の前提までは渡さない');
 
   // 書き換えは立ち上げ直さずに効きます。設定ファイルの前提と違うのはここです。
-  await writeDirectoryContext(root, 'この本は熟練者向けに書き直した。');
+  await writeDirectoryPremise(root, { aiContext: 'この本は熟練者向けに書き直した。' });
   const context = await service.readingContext('plan.md');
   assert.equal(context.directory, 'この本は熟練者向けに書き直した。');
   assert.equal(context.project, '設定ファイルで決めた前提。');

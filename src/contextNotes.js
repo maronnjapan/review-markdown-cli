@@ -14,6 +14,13 @@ import { recordedNotesBlock } from './prompts/readingContext.js';
  * どちらも同じ「前提」としてモデルへ渡します。翻訳・AIチャット・指摘の配置・AIレビューの
  * すべてが、本文より先にこれを読みます。
  *
+ * ── メモにも効く範囲がある ────────────────────────────────
+ * メモは、この文書だけに効くもの（レビューファイル）と、対象ディレクトリ配下すべてに
+ * 効くもの（`.review/context.json`。`directoryContext.js`）の2か所へ残せます。
+ * 「用語は原著の訳語に合わせる」のような制約を章の数だけ書き写さずに済ませるためです。
+ * 範囲はメモ自身ではなく、どのファイルに入っているかが持ちます。モデルへ渡すときだけ
+ * `scopedNotes` で印を付けます。
+ *
  * ── 種類を持たせている理由 ────────────────────────────────
  * 4つの種類は、飾りではなく読み方の指示です。「決定」と書かれたメモは、レビューで
  * もう一度指摘してほしくないことで、「制約」は逆に、破っていたら指摘してほしいことです。
@@ -118,6 +125,18 @@ function assertBodyFits(value, source) {
   }
 }
 
+/**
+ * ディレクトリ全体のメモに、範囲の印を付けます。
+ *
+ * 保存するときは付けません。どちらの範囲かはファイルの場所が持っているので、メモ自身にも
+ * 書かせると、場所と食い違った1件が作れてしまいます。付けるのはモデルへ渡す直前だけです。
+ * 文書ごとのメモには何も付けません。印の無いメモが既定で、いま開いている文書についての
+ * 記録である、という読み方をモデルへ渡す文面（`recordedNotesBlock`）が決めています。
+ */
+export function scopedNotes(value, scope) {
+  return readContextNotes(value).map((note) => ({ ...note, scope }));
+}
+
 export function hasContextNotes(notes) {
   return Array.isArray(notes) && notes.length > 0;
 }
@@ -131,6 +150,9 @@ export function contextNotesBlock(notes) {
     return {
       n: index + 1,
       kind: note.kind,
+      // 範囲はディレクトリ全体のメモにだけ付きます。この文書について残したメモは、
+      // 印の無いほうが既定だと決めてあるので、`scope="document"` を毎回渡しません。
+      ...(note.scope ? { scope: note.scope } : {}),
       note: note.body,
       ...(recordedAt ? { recordedAt } : {})
     };

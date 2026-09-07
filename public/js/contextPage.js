@@ -1,4 +1,3 @@
-import { personaHtml } from './documentReview.js';
 import { escapeHtml, truncate } from './util.js';
 
 /** サーバー側の上限と同じです（src/aiLimits.js の CONVERSATION_TITLE_CHARS）。 */
@@ -7,19 +6,12 @@ const MAX_CONVERSATION_TITLE_CHARS = 48;
 const ROLE_LABELS = { user: 'あなた', assistant: 'Codex' };
 
 /**
- * コンテキスト画面。
+ * 保存したAIチャットの記録（`#/chat/<path>`）と、コンテキストの画面の見出しです。
  *
- * サイドパネルは本文の隣に置くものなので、幅も高さも本文に譲ります。前提を書くのは
- * そこでもできますが、「いま何が前提として渡っているのか」を一度に見るには狭すぎます。
- * この画面は、その全部を1枚に開くための場所です。
+ * どの画面を出すかと、行き来のリンクは `toolPages.js` と `createApp.js` が持ちます。
+ * ここが持つのは、記録を読み直して直す操作だけです。
  *
- * 出しているものは4つ。資料の管理者が決めた3点、読み取りコンテキスト、コンテキストメモ、
- * 読み手ペルソナ。前の3つはここで書き換えられます（同じ操作盤をサイドパネルと2か所へ
- * 出しているだけで、実体は `createApp.js` が作る1組の state です）。ペルソナだけは
- * 表示に留めて、決めるのはレビューを実行する場所と同じ「AIレビュー」の画面に残しました。
- * 読み手はレビューの直前に決めるもので、決める場所を本文から離すと手順が増えるからです。
- *
- * ── AIチャットの記録をここへ置いた理由 ────────────────────
+ * ── 相談の記録を、独立した1枚にしてある理由 ────────────────
  * 相談の記録も前提です。Codexのスレッドが切れていれば、次に同じ会話を続けるときの
  * 1回目のプロンプトへ、残っている発言がそのまま入ります（`src/prompts/chat.js`）。
  * 言い間違えた質問や、間違ったまま残っている回答を直せないと、その会話を続けるかぎり
@@ -55,20 +47,7 @@ export function createContextPageController({
   function render() {
     refs.workspaceDocumentTitle.textContent = state.currentPath || '';
     refs.workspaceDocumentTitle.title = state.currentPath || '';
-    renderPersona();
     renderConversations();
-  }
-
-  /* ---------------------------------------------------------------- *
-   * 読み手ペルソナ（表示だけ）
-   * ---------------------------------------------------------------- */
-
-  function renderPersona() {
-    refs.workspacePersonaState.textContent = state.persona ? '設定済み' : '未設定';
-    refs.workspacePersonaState.dataset.state = state.persona ? 'set' : 'unset';
-    refs.workspacePersonaResult.innerHTML = state.persona
-      ? personaHtml(state.persona)
-      : '<p class="muted">まだ読み手は決まっていません。「AIレビュー」の画面で、書いた文章をそのまま使うか、AIに立場・前提知識・目的へ組み直させるかを選べます。</p>';
   }
 
   /* ---------------------------------------------------------------- *

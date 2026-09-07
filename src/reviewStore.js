@@ -217,6 +217,9 @@ export function buildReviewMarkdown(review) {
     lines.push('## 読み取りコンテキスト（ディレクトリ全体）', '', review.directoryAiContext, '');
   }
   if (review.aiContext) lines.push('## 読み取りコンテキスト', '', review.aiContext, '');
+  // メモも効く範囲の広いほうから書きます。渡された相手が「どこまでに効く決まりごとか」を
+  // 見出しで読み分けられるようにするためで、読み取りコンテキストと同じ並べ方です。
+  appendContextNotes(lines, review.directoryContextNotes, 'コンテキストメモ（ディレクトリ全体）');
   appendContextNotes(lines, review.contextNotes);
   appendPersona(lines, review.persona);
   appendReferenceFiles(lines, review.referenceFiles);
@@ -263,9 +266,9 @@ function appendDocumentBrief(lines, brief) {
  * 「何が決まっていて、何がまだ決まっていないか」が要ります。
  * 種類と日付を添えるのは、画面で読むときと同じ手掛かりを紙の上でも残すためです。
  */
-function appendContextNotes(lines, notes) {
+function appendContextNotes(lines, notes, title = 'コンテキストメモ') {
   if (!notes?.length) return;
-  lines.push('## コンテキストメモ', '');
+  lines.push(`## ${title}`, '');
   for (const note of notes) {
     const recordedAt = String(note.updatedAt || note.createdAt || '').slice(0, 10);
     const head = `${CONTEXT_NOTE_LABELS[note.kind] || note.kind}${recordedAt ? `（${recordedAt}）` : ''}`;
