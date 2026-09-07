@@ -28,7 +28,7 @@
         <article class="document-pane card">
           <div class="document-toolbar">
             <div class="document-toolbar-heading">
-              <button id="back-button" type="button">← ファイル一覧</button>
+              <a id="back-button" class="back-link" href="#/">← ファイル一覧</a>
               <div class="document-name">
                 <span class="document-name-label">レビュー中</span>
                 <h2 id="document-title"></h2>
@@ -43,7 +43,7 @@
               <button id="document-comment-button" type="button">文書全体にコメント</button>
               <button id="document-translate-button" class="hidden" type="button">文書全体を翻訳</button>
               <button id="document-ai-button" type="button">文書全体をAIに相談</button>
-              <button id="context-open-button" type="button" title="前提と保存した相談をまとめて見る画面を開きます">コンテキスト</button>
+              <a id="context-open-button" class="toolbar-link" data-tool-link="context" href="#/" title="前提と保存した相談をまとめて見る画面を開きます">コンテキスト</a>
               <button id="copy-body-button" class="hidden" type="button" title="本文をそのままクリップボードへコピーします">本文をコピー</button>
             </div>
           </div>
@@ -88,14 +88,20 @@
             <button id="outline-tab-button" type="button" role="tab" aria-selected="false" aria-controls="outline-panel">文書</button>
             <button id="comments-tab-button" class="active" type="button" role="tab" aria-selected="true" aria-controls="comments-panel">コメント <span id="comment-count" class="comment-count">0</span></button>
             <button id="memos-tab-button" type="button" role="tab" aria-selected="false" aria-controls="memos-panel">メモ <span id="memo-count" class="comment-count">0</span></button>
-            <button id="manager-tab-button" class="hidden" type="button" role="tab" aria-selected="false" aria-controls="manager-panel">管理者<span id="manager-tab-count" class="tab-count" hidden></span></button>
             <button id="ai-tab-button" type="button" role="tab" aria-selected="false" aria-controls="ai-panel">AI</button>
-            <button id="placement-tab-button" type="button" role="tab" aria-selected="false" aria-controls="placement-panel">指摘の配置</button>
-            <button id="review-tab-button" type="button" role="tab" aria-selected="false" aria-controls="review-panel">AIレビュー</button>
-            <button id="revise-tab-button" type="button" role="tab" aria-selected="false" aria-controls="revise-panel">本文の修正</button>
-            <button id="recap-tab-button" class="hidden" type="button" role="tab" aria-selected="false" aria-controls="recap-panel">文字起こし</button>
-            <button id="tasks-tab-button" class="hidden" type="button" role="tab" aria-selected="false" aria-controls="tasks-panel">タスク<span id="tasks-tab-count" class="tab-count" hidden></span></button>
           </div>
+          <nav class="side-pane-tools" aria-label="この文書の別画面">
+            <p class="side-pane-tools-label">別の画面で開く</p>
+            <div class="tool-links">
+              <a class="tool-link" data-tool-link="context" href="#/">コンテキスト</a>
+              <a class="tool-link hidden" data-tool-link="manager" href="#/">管理者<span id="manager-link-count" class="tab-count" hidden></span></a>
+              <a class="tool-link" data-tool-link="placement" href="#/">指摘の配置</a>
+              <a class="tool-link" data-tool-link="review" href="#/">AIレビュー</a>
+              <a class="tool-link" data-tool-link="revise" href="#/">本文の修正</a>
+              <a class="tool-link hidden" data-tool-link="recap" href="#/">文字起こし</a>
+              <a class="tool-link hidden" data-tool-link="tasks" href="#/">タスク<span id="tasks-link-count" class="tab-count" hidden></span></a>
+            </div>
+          </nav>
           <section id="outline-panel" class="outline-panel hidden" role="tabpanel" aria-labelledby="outline-tab-button">
             <div class="side-section-header">
               <div>
@@ -145,51 +151,6 @@
               <div id="memos-list" class="comments-list"></div>
             </div>
           </section>
-          <section id="manager-panel" class="manager-panel hidden" role="tabpanel" aria-labelledby="manager-tab-button" aria-live="polite">
-            <div class="pane-scroll">
-              <div class="ai-header">
-                <div>
-                  <p class="eyebrow">Document manager</p>
-                  <h2>資料の管理者</h2>
-                </div>
-                <span id="brief-state" class="ai-context-state">0 / 3</span>
-              </div>
-              <p class="placement-hint">資料を作り始める前に、目的・ストーリー・期待値の3つを決めます。3つは前提として、翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。揃うまで、AIレビューは一度止まります。</p>
-              <div id="brief-form" class="brief-form">
-                <div class="brief-field">
-                  <label class="brief-field-label" for="brief-purpose">目的</label>
-                  <p id="brief-purpose-hint" class="brief-field-hint">この資料が終わったとき、読み手に何が起きていれば成功か。「資料を作ること」は目的になりません。</p>
-                  <textarea id="brief-purpose" rows="3" aria-describedby="brief-purpose-hint" placeholder="例：当番が、手順書を見ながら一人で再起動を完了できるようになる。"></textarea>
-                </div>
-                <div class="brief-field">
-                  <label class="brief-field-label" for="brief-story">ストーリー</label>
-                  <p id="brief-story-hint" class="brief-field-hint">その結論まで、何をどの順に示して連れて行くか。節の一覧ではなく、前が次を支える並びを書きます。</p>
-                  <textarea id="brief-story" rows="3" aria-describedby="brief-story-hint" placeholder="例：止めてよい条件を先に決める → 止める手順 → 戻ったことの確かめ方 → 戻らなかったときの連絡先。"></textarea>
-                </div>
-                <div class="brief-field">
-                  <label class="brief-field-label" for="brief-expectation">期待値</label>
-                  <p id="brief-expectation-hint" class="brief-field-hint">読んだあと、読み手や頼んだ人が何を判断・実行できるか。</p>
-                  <textarea id="brief-expectation" rows="3" aria-describedby="brief-expectation-hint" placeholder="例：当番から運用チームへの問い合わせが、再起動については来なくなる。"></textarea>
-                </div>
-                <div class="brief-actions">
-                  <button id="brief-clear-button" type="button" disabled>3つを消す</button>
-                </div>
-                <p id="brief-status" class="ai-context-status" aria-live="polite"></p>
-              </div>
-              <details id="brief-compose" class="ai-context">
-                <summary>管理者に組み立てさせる</summary>
-                <p class="ai-context-hint">決まっていることを走り書きで渡すと、管理者が3つの欄へ組み直し、決まっていない分は問いとして返します。本文は読ませません。書いてあることをそのまま目的として追認させないためです。</p>
-                <form id="brief-compose-form" class="persona-form">
-                  <textarea id="brief-input" rows="4" placeholder="例：運用チームから当番向けの再起動手順を頼まれた。事故が月1件ある。締め切りは来週。"></textarea>
-                  <div class="persona-actions">
-                    <button id="brief-stop-button" class="hidden" type="button">停止</button>
-                    <button id="brief-compose-button" type="submit">管理者に聞く</button>
-                  </div>
-                </form>
-                <div id="brief-result" class="brief-result"></div>
-              </details>
-            </div>
-          </section>
           <section id="ai-panel" class="ai-panel hidden" role="tabpanel" aria-labelledby="ai-tab-button" aria-live="polite">
             <div class="pane-scroll">
               <div class="ai-header">
@@ -212,7 +173,7 @@
                 <p id="ai-context-scope-hint" class="ai-context-hint context-scope-hint"></p>
                 <textarea id="ai-context-input" rows="4" placeholder="例：Node.js入門書の第3章。読者はJavaScriptの基礎を知っている前提。用語は原著の訳語に合わせる。"></textarea>
                 <p id="ai-context-status" class="ai-context-status" aria-live="polite"></p>
-                <button id="ai-context-open-page" class="context-open-link" type="button">広い画面で編集</button>
+                <a id="ai-context-open-page" class="context-open-link" data-tool-link="context" href="#/">広い画面で編集</a>
                 <div id="ai-context-other" class="ai-context-project" hidden>
                   <p id="ai-context-other-label" class="ai-context-project-label"></p>
                   <blockquote id="ai-context-other-text"></blockquote>
@@ -239,7 +200,7 @@
                 </form>
                 <p id="context-note-full" class="context-note-full" hidden>メモが上限に達しました。古いものを消すか、まとめてください。</p>
                 <p id="context-notes-status" class="ai-context-status" aria-live="polite"></p>
-                <button id="context-notes-open-page" class="context-open-link" type="button">広い画面で編集</button>
+                <a id="context-notes-open-page" class="context-open-link" data-tool-link="context" href="#/">広い画面で編集</a>
                 <div id="context-notes-list" class="context-notes-list"></div>
               </details>
               <details id="reference-files" class="ai-context">
@@ -257,7 +218,7 @@
                 </form>
                 <p id="reference-files-full" class="context-note-full" hidden>参照ファイルが上限に達しました。読ませないものを外してください。</p>
                 <p id="reference-files-status" class="ai-context-status" aria-live="polite"></p>
-                <button id="reference-files-open-page" class="context-open-link" type="button">広い画面で編集</button>
+                <a id="reference-files-open-page" class="context-open-link" data-tool-link="context" href="#/">広い画面で編集</a>
                 <div id="reference-files-list" class="reference-files-list"></div>
               </details>
               <div class="ai-conversation-controls">
@@ -302,7 +263,76 @@
               </div>
             </form>
           </section>
-          <section id="placement-panel" class="placement-panel hidden" aria-live="polite">
+        </aside>
+      </section>
+      <section id="tool-view" class="tool-page hidden" aria-label="この文書の別画面">
+        <header class="workspace-header card">
+          <div class="workspace-header-heading">
+            <a id="tool-back-link" class="back-link" data-tool-link="body" href="#/">← レビュー本文へ戻る</a>
+            <div class="document-name">
+              <span id="tool-page-label" class="document-name-label"></span>
+              <h2 id="tool-document-title"></h2>
+            </div>
+          </div>
+          <p id="tool-page-lead" class="workspace-lead"></p>
+          <nav class="tool-page-nav tool-links" aria-label="この文書の画面">
+            <a class="tool-link" data-tool-link="body" href="#/">レビュー本文</a>
+            <a class="tool-link" data-tool-link="context" href="#/">コンテキスト</a>
+            <a class="tool-link hidden" data-tool-link="manager" href="#/">管理者</a>
+            <a class="tool-link" data-tool-link="placement" href="#/">指摘の配置</a>
+            <a class="tool-link" data-tool-link="review" href="#/">AIレビュー</a>
+            <a class="tool-link" data-tool-link="revise" href="#/">本文の修正</a>
+            <a class="tool-link hidden" data-tool-link="recap" href="#/">文字起こし</a>
+            <a class="tool-link hidden" data-tool-link="tasks" href="#/">タスク</a>
+          </nav>
+        </header>
+        <div class="tool-page-body">
+          <section id="manager-panel" class="manager-panel tool-panel card hidden" aria-live="polite">
+            <div class="pane-scroll">
+              <div class="ai-header">
+                <div>
+                  <p class="eyebrow">Document manager</p>
+                  <h2>資料の管理者</h2>
+                </div>
+                <span id="brief-state" class="ai-context-state">0 / 3</span>
+              </div>
+              <p class="placement-hint">資料を作り始める前に、目的・ストーリー・期待値の3つを決めます。3つは前提として、翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。揃うまで、AIレビューは一度止まります。</p>
+              <div id="brief-form" class="brief-form">
+                <div class="brief-field">
+                  <label class="brief-field-label" for="brief-purpose">目的</label>
+                  <p id="brief-purpose-hint" class="brief-field-hint">この資料が終わったとき、読み手に何が起きていれば成功か。「資料を作ること」は目的になりません。</p>
+                  <textarea id="brief-purpose" rows="3" aria-describedby="brief-purpose-hint" placeholder="例：当番が、手順書を見ながら一人で再起動を完了できるようになる。"></textarea>
+                </div>
+                <div class="brief-field">
+                  <label class="brief-field-label" for="brief-story">ストーリー</label>
+                  <p id="brief-story-hint" class="brief-field-hint">その結論まで、何をどの順に示して連れて行くか。節の一覧ではなく、前が次を支える並びを書きます。</p>
+                  <textarea id="brief-story" rows="3" aria-describedby="brief-story-hint" placeholder="例：止めてよい条件を先に決める → 止める手順 → 戻ったことの確かめ方 → 戻らなかったときの連絡先。"></textarea>
+                </div>
+                <div class="brief-field">
+                  <label class="brief-field-label" for="brief-expectation">期待値</label>
+                  <p id="brief-expectation-hint" class="brief-field-hint">読んだあと、読み手や頼んだ人が何を判断・実行できるか。</p>
+                  <textarea id="brief-expectation" rows="3" aria-describedby="brief-expectation-hint" placeholder="例：当番から運用チームへの問い合わせが、再起動については来なくなる。"></textarea>
+                </div>
+                <div class="brief-actions">
+                  <button id="brief-clear-button" type="button" disabled>3つを消す</button>
+                </div>
+                <p id="brief-status" class="ai-context-status" aria-live="polite"></p>
+              </div>
+              <details id="brief-compose" class="ai-context">
+                <summary>管理者に組み立てさせる</summary>
+                <p class="ai-context-hint">決まっていることを走り書きで渡すと、管理者が3つの欄へ組み直し、決まっていない分は問いとして返します。本文は読ませません。書いてあることをそのまま目的として追認させないためです。</p>
+                <form id="brief-compose-form" class="persona-form">
+                  <textarea id="brief-input" rows="4" placeholder="例：運用チームから当番向けの再起動手順を頼まれた。事故が月1件ある。締め切りは来週。"></textarea>
+                  <div class="persona-actions">
+                    <button id="brief-stop-button" class="hidden" type="button">停止</button>
+                    <button id="brief-compose-button" type="submit">管理者に聞く</button>
+                  </div>
+                </form>
+                <div id="brief-result" class="brief-result"></div>
+              </details>
+            </div>
+          </section>
+          <section id="placement-panel" class="placement-panel tool-panel card hidden" aria-live="polite">
             <div class="pane-scroll">
               <div class="ai-header">
                 <div>
@@ -311,7 +341,7 @@
                 </div>
               </div>
               <p class="placement-hint">指摘コメントを貼り付けると、AIが対象箇所を探してコメント候補を作ります。追加するまでレビューには保存しません。</p>
-              <p id="placement-context-hint" class="placement-hint" hidden>「管理者」タブで決めた3点と、AIパネルの読み取りコンテキストとコンテキストメモも、ここへ渡します。</p>
+              <p id="placement-context-hint" class="placement-hint" hidden>「管理者」の画面で決めた3点と、AIパネルの読み取りコンテキストとコンテキストメモも、ここへ渡します。</p>
               <form id="placement-form" class="placement-form">
                 <textarea id="placement-input" rows="5" placeholder="例：&#10;- 導入が長い。結論を先に書いてほしい&#10;- 図の説明に単位がない"></textarea>
                 <div class="placement-actions">
@@ -322,7 +352,7 @@
               <div id="placement-results" class="placement-results"></div>
             </div>
           </section>
-          <section id="review-panel" class="review-panel hidden" aria-live="polite">
+          <section id="review-panel" class="review-panel tool-panel card hidden" aria-live="polite">
             <div class="pane-scroll">
               <div class="ai-header">
                 <div>
@@ -381,7 +411,7 @@
                 </form>
                 <p id="review-reference-files-full" class="context-note-full" hidden>参照ファイルが上限に達しました。読ませないものを外してください。</p>
                 <p id="review-reference-files-status" class="ai-context-status" aria-live="polite"></p>
-                <button id="review-reference-files-open-page" class="context-open-link" type="button">広い画面で編集</button>
+                <a id="review-reference-files-open-page" class="context-open-link" data-tool-link="context" href="#/">広い画面で編集</a>
                 <div id="review-reference-files-list" class="reference-files-list"></div>
               </details>
 
@@ -396,7 +426,7 @@
               <div id="review-results" class="placement-results"></div>
             </div>
           </section>
-          <section id="revise-panel" class="revise-panel hidden" aria-live="polite">
+          <section id="revise-panel" class="revise-panel tool-panel card hidden" aria-live="polite">
             <div class="pane-scroll">
               <div class="ai-header">
                 <div>
@@ -416,7 +446,7 @@
               <div id="revise-results" class="placement-results"></div>
             </div>
           </section>
-          <section id="recap-panel" class="recap-panel hidden" role="tabpanel" aria-labelledby="recap-tab-button" aria-live="polite">
+          <section id="recap-panel" class="recap-panel tool-panel card hidden" aria-live="polite">
             <div class="pane-scroll">
               <div class="ai-header">
                 <div>
@@ -450,7 +480,7 @@
               <div id="recap-results" class="placement-results"></div>
             </div>
           </section>
-          <section id="tasks-panel" class="tasks-panel hidden" role="tabpanel" aria-labelledby="tasks-tab-button" aria-live="polite">
+          <section id="tasks-panel" class="tasks-panel tool-panel card hidden" aria-live="polite">
             <div class="pane-scroll">
               <div class="ai-header">
                 <div>
@@ -508,18 +538,28 @@
               <p class="ai-context-hint tasks-settings-hint">何を任せるか（整理・今すべきこと・調査・サンプル実装・問い合わせ対応）と見守りの間隔、特にしてほしいことは、画面右上の「設定」で変えられます。費用を抑えたいときは、そこで自動タスクを切ってください。</p>
             </div>
           </section>
-        </aside>
+        </div>
       </section>
       <section id="context-view" class="context-workspace hidden" aria-label="コンテキスト">
         <header class="workspace-header card">
           <div class="workspace-header-heading">
-            <button id="workspace-back-button" type="button">← レビューへ戻る</button>
+            <a id="workspace-back-button" class="back-link" data-tool-link="body" href="#/">← レビュー本文へ戻る</a>
             <div class="document-name">
               <span class="document-name-label">コンテキスト</span>
               <h2 id="workspace-document-title"></h2>
             </div>
           </div>
           <p class="workspace-lead">ここにあるものは、翻訳・AIチャット・指摘の配置・AIレビューが本文より先に読みます。書き換えは自動保存され、次のAI操作から効きます。</p>
+          <nav class="tool-page-nav tool-links" aria-label="この文書の画面">
+            <a class="tool-link" data-tool-link="body" href="#/">レビュー本文</a>
+            <a class="tool-link" data-tool-link="context" href="#/">コンテキスト</a>
+            <a class="tool-link hidden" data-tool-link="manager" href="#/">管理者</a>
+            <a class="tool-link" data-tool-link="placement" href="#/">指摘の配置</a>
+            <a class="tool-link" data-tool-link="review" href="#/">AIレビュー</a>
+            <a class="tool-link" data-tool-link="revise" href="#/">本文の修正</a>
+            <a class="tool-link hidden" data-tool-link="recap" href="#/">文字起こし</a>
+            <a class="tool-link hidden" data-tool-link="tasks" href="#/">タスク</a>
+          </nav>
         </header>
 
         <div class="workspace-grid">
@@ -635,9 +675,9 @@
               <h3>読み手ペルソナ</h3>
               <span id="workspace-persona-state" class="ai-context-state">未設定</span>
             </header>
-            <p class="ai-context-hint">誰がこの文書を読むかです。組み立てと書き換えは、レビューを実行する場所と同じ「AIレビュー」タブで行います。</p>
+            <p class="ai-context-hint">誰がこの文書を読むかです。組み立てと書き換えは、レビューを実行する場所と同じ「AIレビュー」の画面で行います。</p>
             <div id="workspace-persona-result" class="persona-result"></div>
-            <button id="workspace-persona-edit-button" type="button">「AIレビュー」タブで編集</button>
+            <a id="workspace-persona-edit-button" data-tool-link="review" href="#/">「AIレビュー」の画面で編集</a>
           </section>
 
           <section id="workspace-conversations" class="card workspace-card workspace-card-wide">
@@ -737,7 +777,7 @@
             <input id="settings-auto-tasks" type="checkbox">
             <span>自動タスクを有効にする</span>
           </label>
-          <p class="ai-context-hint">文字起こしや書きかけの資料からAIがやることを起こし、任せた自動化を裏で走らせます。無効にすると「タスク」タブが消え、見守りも止まり、AIへは何も送りません。</p>
+          <p class="ai-context-hint">文字起こしや書きかけの資料からAIがやることを起こし、任せた自動化を裏で走らせます。無効にすると「タスク」の画面へのリンクが消え、見守りも止まり、AIへは何も送りません。</p>
           <div class="settings-fields">
             <label class="settings-field">
               <span class="settings-field-label">見守りの間隔</span>

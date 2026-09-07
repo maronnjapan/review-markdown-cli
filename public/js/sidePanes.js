@@ -2,18 +2,16 @@ const PANES = {
   outline: { panel: 'outlinePanel', tab: 'outlineTabButton' },
   comments: { panel: 'commentsPanel', tab: 'commentsTabButton' },
   memos: { panel: 'memosPanel', tab: 'memosTabButton' },
-  manager: { panel: 'managerPanel', tab: 'managerTabButton' },
-  ai: { panel: 'aiPanel', tab: 'aiTabButton' },
-  placement: { panel: 'placementPanel', tab: 'placementTabButton' },
-  review: { panel: 'reviewPanel', tab: 'reviewTabButton' },
-  revise: { panel: 'revisePanel', tab: 'reviseTabButton' },
-  recap: { panel: 'recapPanel', tab: 'recapTabButton' },
-  tasks: { panel: 'tasksPanel', tab: 'tasksTabButton' }
+  ai: { panel: 'aiPanel', tab: 'aiTabButton' }
 };
 
 /**
  * The tabs of the right-hand pane. Controllers switch panes through this rather
  * than each toggling the others' elements.
+ *
+ * ここに残すのは、本文の位置に紐づくものだけです（目次・コメント・メモ・その場の相談）。
+ * 腰を据えて読み書きするものは、細長い欄へ押し込まず、それぞれの画面へ出します
+ * （`toolPages.js`）。
  */
 export function createSidePanes({ refs, state }) {
   function show(name) {

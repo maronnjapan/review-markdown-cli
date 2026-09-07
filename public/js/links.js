@@ -63,3 +63,25 @@ function decodeSafely(value) {
 function cssAttrValue(value) {
   return String(value).replace(/["\\]/g, '\\$&');
 }
+
+/**
+ * 別タブで開ける `<a>` のまま、同じタブのクリックだけをアプリ側で受け取ります。
+ *
+ * 画面の移動はアドレス（`#/...`）でするので、導線はボタンではなくリンクで書けます。
+ * ただし「移る前に書きかけを保存する」ような手順が要るリンクは、素の遷移に任せられません。
+ * 修飾キー付きや中クリック（＝別タブで開きたいとき）はブラウザへ譲り、
+ * それ以外だけをこちらで受けます。
+ */
+export function onPlainClick(anchor, handler) {
+  anchor.addEventListener('click', (event) => {
+    if (!isPlainClick(event)) return;
+    event.preventDefault();
+    handler(event);
+  });
+}
+
+/** 素のクリックか。別タブで開こうとしている操作なら false です。 */
+export function isPlainClick(event) {
+  if (event.defaultPrevented || event.button !== 0) return false;
+  return !(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey);
+}

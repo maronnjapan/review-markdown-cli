@@ -25,11 +25,19 @@ import { createReferenceFilesController } from './referenceFiles.js';
 import { aliasRefs, queryRefs } from './dom.js';
 import { createEditor } from './editor.js';
 import { createFileListView } from './fileListView.js';
-import { createLinkNavigator } from './links.js';
+import { createLinkNavigator, isPlainClick, onPlainClick } from './links.js';
 import { createLiveCaptionsController } from './liveCaptions.js';
 import { copyMemoTarget, newMemo, renderMemoList } from './memos.js';
 import { createSettingsController } from './settings.js';
 import { createSidePanes } from './sidePanes.js';
+import {
+  TOOL_PAGES,
+  TOOL_ROUTES,
+  markCurrentToolLink,
+  toolPageByKey,
+  toolPageByRoute,
+  updateToolLinks
+} from './toolPages.js';
 import { createRangeFor, findTextRange } from './textAnchor.js';
 import { createPdfViewer } from './pdf/viewer.js';
 import { targetTextOf } from './textAnchor.js';
@@ -38,8 +46,11 @@ import { normalizeText } from './util.js';
 import { createState, resetDocumentState } from './state.js';
 
 const ROUTE_PATTERN = /^#\/review\/([^#]+)(#.*)?$/;
-/** 同じ文書の前提と相談の記録を、本文の隣ではなく1枚に開く画面です。 */
-const CONTEXT_ROUTE_PATTERN = /^#\/context\/([^#]+)$/;
+/**
+ * 本文の隣に置かないものを開く画面です（`toolPages.js`）。同じ文書の別の面なので、
+ * 行き来しても文書は開いたままにします。
+ */
+const TOOL_ROUTE_PATTERN = new RegExp(`^#/(${TOOL_ROUTES.join('|')})/([^#]+)$`);
 
 /**
  * コンテキスト画面へ出す操作盤の、要素の読み替え表です。
@@ -113,9 +124,11 @@ const WORKSPACE_BRIEF_REFS = {
   briefComposeButton: 'workspaceBriefComposeButton',
   briefStopButton: 'workspaceBriefStopButton',
   briefResult: 'workspaceBriefResult',
-  // タブの「あと何個決まっていないか」は1つしかないので、どちらの操作盤も同じものを書きます。
-  managerTabCount: 'managerTabCount'
+  // 「あと何個決まっていないか」の印は1つしかないので、どちらの操作盤も同じものを書きます。
+  managerLinkCount: 'managerLinkCount'
 };
+/** パネルを1枚ずつ出し入れするツール画面。コンテキストは専用の面なので入りません。 */
+const TOOL_PAGES_WITH_PANEL = TOOL_PAGES.filter((page) => page.panel);
 const REVEAL_FLASH_MS = 1600;
 const PDF_STATUS_LABELS = {
   open: '未確認',
@@ -282,7 +295,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     onApplyEdits: applyDocumentEdits,
     onRevealTarget: revealTarget
   });
-  // 会議中の聞き直し。文字起こしのファイルを開いたときだけタブが出ます。
+  // 会議中の聞き直し。文字起こしのファイルを開いたときだけリンクが出ます。
   const recap = createCaptionRecapController({
     refs,
     state,
@@ -293,7 +306,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     // 読むので、他のAI機能と同じく先に画面の内容を保存します。
     flushComments: () => commentSaves.flush()
   });
-  // 自動タスク。有効なときだけタブが出て、一覧はサーバーの記録の写しです。
+  // 自動タスク。有効なときだけリンクが出て、一覧はサーバーの記録の写しです。
   const autoTasks = createAutoTasksController({
     refs,
     state,
@@ -301,7 +314,9 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     toaster,
     prepareAi: () => ai.prepare(),
     // タスクを起こすときも前提（3点・メモ・参照ファイル）を読むので、先に画面の内容を保存します。
-    flushComments: () => commentSaves.flush()
+    flushComments: () => commentSaves.flush(),
+    // タスクが出せる文書かどうかは裏でも変わるので、そのつどリンクを出し入れします。
+    onVisibilityChanged: () => syncToolLinks()
   });
   const pdfViewer = pdfViewerFactory({
     document,
@@ -327,14 +342,11 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     toaster,
     // 記録から残すメモは、いま開いているコンテキスト画面の欄へ入れます。
     onKeepNote: (text) => workspaceContextNotes.keepFromChat(text),
-    onEditPersona: openPersonaEditor,
     // 会話を直したら、サイドパネルのAIチャットも同じ記録を映し直します。
     onConversationsChanged: () => ai.refreshConversations()
   });
 
   let pendingAnchor = '';
-  // コンテキスト画面から戻るとき、レビュー画面で開き直すタブ。
-  let pendingPane = null;
   let pendingDeleteId = null;
   // 削除の確認は一覧ごとに持ちます。1つにまとめると、コメントの確認を出したまま
   // メモの削除を押したときに、押していないほうの一覧を描き直すことになります。
@@ -359,11 +371,12 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
   async function route() {
     const hash = window.location.hash;
     const reviewMatch = hash.match(ROUTE_PATTERN);
-    // コンテキスト画面は同じ文書の別の面なので、行き来しても文書は開いたままです。
-    const contextMatch = hash.match(CONTEXT_ROUTE_PATTERN);
-    const match = reviewMatch || contextMatch;
-    const nextPath = match ? decodeURIComponent(match[1]) : null;
+    // ツール画面は同じ文書の別の面なので、行き来しても文書は開いたままです。
+    const toolMatch = hash.match(TOOL_ROUTE_PATTERN);
+    const match = reviewMatch || toolMatch;
+    const nextPath = match ? decodeURIComponent(reviewMatch ? reviewMatch[1] : toolMatch[2]) : null;
     const anchor = reviewMatch ? reviewMatch[2] || '' : '';
+    const tool = toolMatch ? toolPageByRoute(toolMatch[1]).key : null;
 
     if (state.currentPath && nextPath !== state.currentPath && !(await leaveDocument())) {
       window.location.hash = `#/review/${encodeURIComponent(state.currentPath)}`;
@@ -373,62 +386,87 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     if (!match) {
       pdfViewer.dispose();
       refs.contextView.classList.add('hidden');
+      refs.toolView.classList.add('hidden');
       fileList.revealPath(state.currentPath);
       state.currentPath = null;
       state.documentType = null;
+      syncToolLinks();
       hideSidePane();
       await fileList.show();
       return;
     }
 
     if (nextPath === state.currentPath) {
-      showDocumentView(contextMatch ? 'context' : 'review');
+      showDocumentView(tool);
       if (reviewMatch) linkNavigator.scrollToAnchor(anchor);
       return;
     }
     pendingAnchor = anchor;
     await openFile(nextPath);
-    if (contextMatch && state.currentPath === nextPath) showDocumentView('context');
+    if (tool && state.currentPath === nextPath) showDocumentView(tool);
   }
 
   /**
-   * 開いている文書の、どちらの面を出すか。
+   * 開いている文書の、どの面を出すか。`tool` が null ならレビュー本文です。
    *
-   * コンテキスト画面はレビュー画面と同じ文書を別の面から見るもので、開き直しではありません。
-   * サイドパネルはレビュー画面のものなので、コンテキスト画面では畳みます。隠れた要素の
-   * 中にフォーカスや読み上げが入り込まないようにするためです。
+   * ツール画面はレビュー本文と同じ文書を別の面から見るもので、開き直しではありません。
+   * サイドパネルは本文の隣に置くものなので、ツール画面では畳みます。隠れた要素の中に
+   * フォーカスや読み上げが入り込まないようにするためです。
    */
-  function showDocumentView(view) {
+  function showDocumentView(tool) {
+    // その文書では開けない画面のアドレスを踏んだとき（PDFの「本文の修正」など）は、
+    // 空の操作盤を見せずに本文へ戻します。履歴には積まないので、戻るで往復しません。
+    if (tool && !toolAvailable(tool)) {
+      window.location.replace(`#/review/${encodeURIComponent(state.currentPath)}`);
+      return;
+    }
     refs.fileView.classList.add('hidden');
-    refs.contextView.classList.toggle('hidden', view !== 'context');
-    refs.reviewView.classList.toggle('hidden', view === 'context');
-    if (view === 'context') {
+    const page = tool ? toolPageByKey(tool) : null;
+    // コンテキストだけは前提を一覧に並べる専用の面なので、パネルの入れ物とは別立てです。
+    const context = tool === 'context';
+    refs.contextView.classList.toggle('hidden', !context);
+    refs.toolView.classList.toggle('hidden', !page || context);
+    refs.reviewView.classList.toggle('hidden', Boolean(page));
+    markCurrentToolLink(document, tool);
+    if (page) {
       hideSidePane();
-      contextPage.render();
+      if (context) contextPage.render();
+      else showToolPanel(page);
       return;
     }
     closeSidePane();
-    if (!pendingPane) return;
-    panes.show(pendingPane);
-    openSidePane();
-    pendingPane = null;
   }
 
-  function openContextPage() {
-    if (!state.currentPath) return;
-    window.location.hash = `#/context/${encodeURIComponent(state.currentPath)}`;
+  /** ツール画面の中身。開いた1枚だけを出し、残りは畳んでおきます。 */
+  function showToolPanel(page) {
+    refs.toolPageLabel.textContent = page.title;
+    refs.toolPageLead.textContent = page.lead;
+    refs.toolDocumentTitle.textContent = state.currentPath || '';
+    refs.toolDocumentTitle.title = state.currentPath || '';
+    for (const other of TOOL_PAGES_WITH_PANEL) {
+      refs[other.panel].classList.toggle('hidden', other.key !== page.key);
+    }
   }
 
   /**
-   * 読み手を決める場所は、レビューを実行する場所と同じままにしてあります。
+   * `<a data-tool-link>` の行き先を、いま開いている文書へ向け直します。
    *
-   * ここで開くのではなく、開く先を控えて画面を切り替えます。アドレスを書き換えた直後に
-   * 開いても、あとから走るルーティングがサイドパネルを畳み直してしまうからです。
+   * 押したときの処理はブラウザに任せているので、ここで書き換えるのは行き先と、
+   * その文書で使えるかどうかだけです。使えない画面へのリンクは出しません。
    */
-  function openPersonaEditor() {
-    if (!state.currentPath) return;
-    pendingPane = 'review';
-    window.location.hash = `#/review/${encodeURIComponent(state.currentPath)}`;
+  function syncToolLinks() {
+    updateToolLinks(document, { path: state.currentPath, visible: toolAvailable });
+  }
+
+  /** その文書でその画面を開けるか。開けないものは、リンクごと出しません。 */
+  function toolAvailable(key) {
+    if (key === 'manager') return state.features.manager;
+    if (key === 'recap') return recap.visible();
+    if (key === 'tasks') return autoTasks.available();
+    // 指摘の配置はPDFに置けず、本文の修正はMarkdown以外を書き換えられません。
+    if (key === 'placement') return state.documentType !== 'pdf';
+    if (key === 'revise') return state.documentType === 'markdown';
+    return true;
   }
 
   /** Saves (or asks about) pending work before the current document goes away. */
@@ -490,6 +528,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     refs.exportOutput.hidden = true;
     refs.documentTitle.textContent = filePath;
     refs.documentTitle.title = filePath;
+    syncToolLinks();
     refs.outlineList.innerHTML = '<p class="muted">見出しを読み込み中です。</p>';
     refs.outlineCount.textContent = '0';
     bodyCopy.syncControl();
@@ -588,13 +627,13 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     documentReview.refresh();
     contextPage.render();
     bodyCopy.syncControl();
-    // 文字起こしでない文書にはタブを出しません。本文が入れ替わるたびに見直すのは、
-    // 会議中に書き足されたファイルを開き直したときも、その場でタブが出るようにするためです。
-    // 発言が並んでいるのに文字起こし用のファイルではない文書にはタブを出し、聞き直せない
-    // 理由をパネルに書きます。黙って消すと、機能ごと無いものとして読まれるからです。
-    refs.recapTabButton.classList.toggle('hidden', !recap.visible());
+    // 文字起こしでない文書にはリンクを出しません。本文が入れ替わるたびに見直すのは、
+    // 会議中に書き足されたファイルを開き直したときも、その場でリンクが出るようにするためです。
+    // 発言が並んでいるのに文字起こし用のファイルではない文書にはリンクを出し、聞き直せない
+    // 理由を画面に書きます。黙って消すと、機能ごと無いものとして読まれるからです。
+    syncToolLinks();
     recap.refresh();
-    // 自動タスクのタブも、機能の有無と文書の種類（PDFでは出さない）で出し入れします。
+    // 自動タスクのリンクも、機能の有無と文書の種類（PDFでは出さない）で出し入れします。
     autoTasks.sync();
   }
 
@@ -604,7 +643,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       translation: features?.translation === true,
       autoTasks: features?.autoTasks === true
     };
-    refs.managerTabButton.classList.toggle('hidden', !state.features.manager);
+    syncToolLinks();
     // 管理者が無効なときの3点は、保存側も断ります。書ける欄を出しておくと、
     // 書いたあとの保存で初めて断られることになります。
     refs.workspaceBriefCard.classList.toggle('hidden', !state.features.manager);
@@ -632,7 +671,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
   function applyFeatureChange(features) {
     if (!features) return;
     adoptFeatures(features);
-    // 自動タスクは、設定で入れた直後からタブが出て、切った直後にタブが消えます。
+    // 自動タスクは、設定で入れた直後からリンクが出て、切った直後にリンクが消えます。
     autoTasks.sync();
     if (!state.currentPath || state.mode === 'edit') return;
     if (state.documentType === 'pdf') pdfViewer.renderHighlights(state.comments, state.memos);
@@ -922,12 +961,17 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
   /**
    * Scrolls to where a proposed comment would land, so the reviewer can check
    * the AI picked the right place before accepting it.
+   *
+   * 候補を並べているのはツール画面（指摘の配置・AIレビュー・本文の修正）なので、押されたら
+   * 本文の画面へ戻してから見せます。隠れたままの本文を動かしても、何も見えません。
+   * アドレスも書き換えるので、確かめたあとは「戻る」で候補の一覧へ帰れます。
    */
   function revealTarget(target) {
     if (state.mode !== 'comment') return false;
     const text = target.selectedText || target.targetText || target.heading || '';
     const match = text ? findTextRange(content, text, target.contextBefore, target.contextAfter) : null;
     if (!match) return false;
+    showBodyForReveal();
 
     const startElement = match.startNode.parentElement;
     const element = startElement?.closest('.review-target') || startElement;
@@ -937,6 +981,14 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     setTimeout(() => element.classList.remove('reveal-flash'), REVEAL_FLASH_MS);
     selectRange(match);
     return true;
+  }
+
+  /** ツール画面から本文を確かめに行くとき、本文の画面へ戻します。 */
+  function showBodyForReveal() {
+    if (!state.currentPath || !refs.reviewView.classList.contains('hidden')) return;
+    window.location.hash = `#/review/${encodeURIComponent(state.currentPath)}`;
+    // アドレスの反映を待たずに出します。待つあいだに位置まで動かしても、まだ隠れています。
+    showDocumentView(null);
   }
 
   /**
@@ -1523,12 +1575,13 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     const names = missing.map(({ label }) => label).join('・');
     if (hasWrittenBody(state.markdown)) {
       toaster.info(`資料の管理者が${names}を求めています。`
-        + '「管理者」タブで決めておくと、AIレビューもその3点を基準に読みます。');
+        + '「管理者」の画面で決めておくと、AIレビューもその3点を基準に読みます。');
       return true;
     }
-    panes.show('manager');
+    // 求める役が黙っていては求めたことにならないので、その画面まで連れて行きます。
+    window.location.hash = `#/manager/${encodeURIComponent(state.currentPath)}`;
     toaster.info(`まだ本文の無い資料です。資料の管理者が${names}を求めています。`
-      + '「管理者」タブで決めてから書き始めるか、もう一度「編集」を押してください。');
+      + 'ここで決めてから書き始めるか、もう一度「編集」を押してください。');
     return false;
   }
 
@@ -1554,8 +1607,8 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     refs.sideDocumentTranslateButton.disabled = editing || pdfReadOnly;
     refs.sideDocumentAiButton.disabled = editing || pdfReadOnly;
     refs.saveButton.disabled = editing;
-    refs.placementTabButton.disabled = pdfReadOnly;
-    refs.reviseTabButton.disabled = bodyReadOnly;
+    // 置けない・書き換えられない文書では、その画面へのリンクごと出しません。
+    syncToolLinks();
     refs.documentTranslateButton.title = pdfReadOnly ? 'PDF全体の翻訳には対応していません。文章を選択してください。' : '';
     refs.documentAiButton.title = pdfReadOnly ? 'PDF全体ではなく、文章を選択してAIに相談してください。' : '';
     refs.sideDocumentTranslateButton.title = refs.documentTranslateButton.title;
@@ -1667,7 +1720,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       closeSidePane({ restoreFocus: true });
     });
 
-    refs.backButton.addEventListener('click', navigateBack);
+    onPlainClick(refs.backButton, navigateBack);
     refs.refreshButton.addEventListener('click', () => {
       rememberScrollPosition();
       window.location.reload();
@@ -1680,7 +1733,8 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       window.location.reload();
     });
     refs.headerLink.addEventListener('click', (event) => {
-      if (!hasUnsavedWork()) return;
+      // 別タブで開こうとしているなら、いま開いている文書はそのままなので止めません。
+      if (!isPlainClick(event) || !hasUnsavedWork()) return;
       event.preventDefault();
       navigateBack();
     });
@@ -1692,14 +1746,6 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     refs.sideDocumentTranslateButton.addEventListener('click', () => ai.translate({ type: 'document' }));
     refs.sideDocumentAiButton.addEventListener('click', () => ai.ask({ type: 'document' }));
     refs.outlineTopButton.addEventListener('click', scrollToDocumentTop);
-    refs.contextOpenButton.addEventListener('click', openContextPage);
-    refs.aiContextOpenPage.addEventListener('click', openContextPage);
-    refs.contextNotesOpenPage.addEventListener('click', openContextPage);
-    refs.referenceFilesOpenPage.addEventListener('click', openContextPage);
-    refs.reviewReferenceFilesOpenPage.addEventListener('click', openContextPage);
-    refs.workspaceBackButton.addEventListener('click', () => {
-      if (state.currentPath) window.location.hash = `#/review/${encodeURIComponent(state.currentPath)}`;
-    });
     refs.sidePaneToggle.addEventListener('click', openSidePane);
     refs.sidePaneClose.addEventListener('click', () => closeSidePane({ restoreFocus: true }));
     refs.sidePaneBackdrop.addEventListener('click', () => closeSidePane({ restoreFocus: true }));

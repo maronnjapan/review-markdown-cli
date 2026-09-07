@@ -190,7 +190,7 @@ export function createContextNotesController({ refs, state, toaster, onChange })
     refs.contextNoteSubmit.disabled = full || refs.contextNoteInput.value.trim() === '';
     refs.contextNoteCancel.classList.toggle('hidden', !editingId);
     refs.contextNoteFull.hidden = !full;
-    // AIレビューのパネルは別のタブなので、前提が届くことをそちらでも言います。
+    // AIレビューは別の画面なので、前提が届くことをそちらでも言います。
     // 出す条件は「指摘の配置」と揃えます（前提が1つでもあれば出す）。
     if (refs.reviewContextHint) {
       const fileCount = (state.referenceFiles || []).length;
@@ -201,7 +201,7 @@ export function createContextNotesController({ refs, state, toaster, onChange })
       // 管理者の3点は「この資料はどうあるべきか」なので、読み方ではなく判定の基準が
       // 変わります。渡ることだけでなく、何が変わるかまで言います。
       const premises = [
-        state.brief ? '「管理者」タブで決めた3点' : '',
+        state.brief ? '「管理者」の画面で決めた3点' : '',
         'AIパネルの読み取りコンテキスト',
         notes.length ? 'コンテキストメモ' : '',
         fileCount ? `添えた参照ファイル${fileCount}件` : ''

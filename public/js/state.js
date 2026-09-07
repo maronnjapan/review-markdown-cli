@@ -24,7 +24,7 @@ export function createState() {
     // Only a text body (Markdown or a plain-text file) can be copied out.
     textBody: false,
     // 文字起こしに使えるファイルか（サーバーの `transcriptFiles` が決めます）。
-    // 「文字起こし」タブを出すかどうかと、出せないときの理由に使います。
+    // 「文字起こし」の画面へのリンクを出すかどうかと、出せないときの理由に使います。
     transcript: false,
     transcriptFiles: [],
     mode: 'comment',

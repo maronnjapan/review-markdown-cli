@@ -74,9 +74,13 @@ const MINUTE_MS = 60_000;
  *
  * ── 出す条件 ───────────────────────────────────────────
  * 自動タスクが有効で、本文を読み直せる文書（MarkdownかテキストでPDFでない）のときだけ
- * タブを出します。無効なときは、裏の見守りも止まっているので、タブごと消えます。
+ * リンクを出します。無効なときは、裏の見守りも止まっているので、リンクごと消えます。
  */
-export function createAutoTasksController({ refs, state, api, toaster, prepareAi, flushComments = async () => true }) {
+export function createAutoTasksController({
+  refs, state, api, toaster, prepareAi,
+  flushComments = async () => true,
+  onVisibilityChanged = () => {}
+}) {
   const window = refs.tasksPanel.ownerDocument.defaultView;
   let pendingDeleteId = null;
   let openResultIds = new Set();
@@ -112,7 +116,7 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
   }
 
   /**
-   * 本文が入れ替わった・機能の入り切りが変わったとき。タブの出し入れをやり直し、
+   * 本文が入れ替わった・機能の入り切りが変わったとき。リンクの出し入れをやり直し、
    * まだ写しを持っていなければ取りに行きます。持っていれば、定期の取り直しに任せます。
    */
   function sync() {
@@ -444,9 +448,10 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
 
   function render() {
     const show = available();
-    refs.tasksTabButton.classList.toggle('hidden', !show);
+    // タスクの画面へ渡すリンクを出すかどうかは、呼び出し側がまとめて決めます。
+    onVisibilityChanged();
     if (!show) {
-      refs.tasksTabCount.hidden = true;
+      refs.tasksLinkCount.hidden = true;
       return;
     }
     const record = state.tasks;
@@ -454,8 +459,8 @@ export function createAutoTasksController({ refs, state, api, toaster, prepareAi
     const busy = Boolean(state.tasksAbortController);
     const live = tasks.filter((task) => ['open', 'ready', 'running'].includes(task.status)).length;
 
-    refs.tasksTabCount.hidden = live === 0;
-    refs.tasksTabCount.textContent = live ? String(live) : '';
+    refs.tasksLinkCount.hidden = live === 0;
+    refs.tasksLinkCount.textContent = live ? String(live) : '';
     refs.tasksState.textContent = record ? (tasks.length ? `${tasks.length}件` : '0件') : '読み込み中…';
     refs.tasksState.dataset.state = live ? 'set' : 'unset';
 

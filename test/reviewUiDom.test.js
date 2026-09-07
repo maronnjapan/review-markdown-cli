@@ -157,6 +157,90 @@ test('the persistent review workspace exposes document tools, outline navigation
   assert.equal(document.querySelector('#review-view').classList.contains('side-pane-open'), true);
 });
 
+test('本文の隣に置かないものは、別タブでも開けるリンクで1画面ずつ開く', async (t) => {
+  const markdown = '# 設計メモ\n\n本文です。\n';
+  const { document, window } = await startApp(t, 'http://localhost/#/review/docs%2Fnote.md', {
+    '/api/file': async () => ({
+      path: 'docs/note.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'docs/note.md', comments: [] },
+      reviewFile: '.review/docs/note.md.review.json'
+    })
+  });
+  await waitFor(() => document.querySelector('#markdown-content h1'));
+
+  // サイドパネルに残すのは、本文の位置に紐づくものだけです。
+  assert.deepEqual(
+    [...document.querySelectorAll('.side-pane-tabs button')].map((tab) => tab.id),
+    ['outline-tab-button', 'comments-tab-button', 'memos-tab-button', 'ai-tab-button']
+  );
+
+  /*
+   * 残りは別の画面です。導線はボタンではなく <a> なので、Ctrl/⌘クリックや中クリックで
+   * 別タブへ開けます。ここで見るのは、押さなくても行き先がアドレスとして入っていることです。
+   * それが入っていないと、別タブで開いたときに何も出ません。
+   */
+  const links = [...document.querySelectorAll('.side-pane-tools [data-tool-link]')];
+  assert.deepEqual(
+    links.map((link) => [link.tagName, link.dataset.toolLink, link.getAttribute('href')]),
+    [
+      ['A', 'context', '#/context/docs%2Fnote.md'],
+      ['A', 'manager', '#/manager/docs%2Fnote.md'],
+      ['A', 'placement', '#/placement/docs%2Fnote.md'],
+      ['A', 'review', '#/ai-review/docs%2Fnote.md'],
+      ['A', 'revise', '#/revise/docs%2Fnote.md'],
+      ['A', 'recap', '#/recap/docs%2Fnote.md'],
+      ['A', 'tasks', '#/tasks/docs%2Fnote.md']
+    ]
+  );
+  // ファイル一覧へ戻る導線もリンクです。
+  assert.equal(document.querySelector('#back-button').tagName, 'A');
+  assert.equal(document.querySelector('#back-button').getAttribute('href'), '#/');
+
+  await openToolPage(document, 'review');
+  assert.equal(window.location.hash, '#/ai-review/docs%2Fnote.md');
+  assert.equal(document.querySelector('#review-panel').classList.contains('hidden'), false);
+  assert.equal(document.querySelector('#review-view').classList.contains('hidden'), true, '本文とは入れ替わる');
+  assert.equal(document.querySelector('#tool-page-label').textContent, 'AIレビュー');
+  assert.equal(document.querySelector('#tool-document-title').textContent, 'docs/note.md');
+  // 開いている画面のリンクには、現在地の印が付きます。
+  assert.equal(
+    document.querySelector('.tool-page-nav [data-tool-link="review"]').getAttribute('aria-current'),
+    'page'
+  );
+
+  // 画面から画面へも、同じリンクで移れます。前の画面は畳みます。
+  document.querySelector('.tool-page-nav [data-tool-link="placement"]').click();
+  await waitFor(() => !document.querySelector('#placement-panel').classList.contains('hidden'));
+  assert.equal(document.querySelector('#review-panel').classList.contains('hidden'), true);
+
+  document.querySelector('#tool-back-link').click();
+  await waitFor(() => !document.querySelector('#review-view').classList.contains('hidden'));
+  assert.equal(document.querySelector('#tool-view').classList.contains('hidden'), true);
+});
+
+test('その文書で使えない画面のアドレスを踏んでも、空の操作盤は出さずに本文へ戻す', async (t) => {
+  const body = 'ただのテキストです。\n';
+  const { document, window } = await startApp(t, 'http://localhost/#/revise/docs%2Fplain.txt', {
+    '/api/file': async () => ({
+      path: 'docs/plain.txt',
+      documentType: 'text',
+      markdown: body,
+      html: `<pre>${body}</pre>`,
+      editorHtml: `<pre>${body}</pre>`,
+      review: { targetFile: 'docs/plain.txt', comments: [] },
+      reviewFile: '.review/docs/plain.txt.review.json'
+    })
+  });
+  await waitFor(() => window.location.hash === '#/review/docs%2Fplain.txt');
+  assert.equal(document.querySelector('#tool-view').classList.contains('hidden'), true);
+  assert.equal(document.querySelector('#review-view').classList.contains('hidden'), false);
+  // Markdown でなければ本文を書き換えられないので、リンクごと出しません。
+  assert.equal(toolLink(document, 'revise').classList.contains('hidden'), true);
+  assert.equal(toolLink(document, 'placement').classList.contains('hidden'), false);
+});
+
 test('the manager and translation controls stay hidden until the server enables them', async (t) => {
   const markdown = '# Guide\n\nRun the program.\n';
   const { document } = await startApp(t, 'http://localhost/#/review/guide.md', {
@@ -171,8 +255,8 @@ test('the manager and translation controls stay hidden until the server enables 
   });
   await waitFor(() => document.querySelector('#markdown-content p .inline-ai-button'));
 
-  assert.equal(document.querySelector('#manager-tab-button').classList.contains('hidden'), true);
-  assert.equal(document.querySelector('#tasks-tab-button').classList.contains('hidden'), true, '自動タスクも有効にするまで出ない');
+  assert.equal(toolLink(document, 'manager').classList.contains('hidden'), true);
+  assert.equal(toolLink(document, 'tasks').classList.contains('hidden'), true, '自動タスクも有効にするまで出ない');
   assert.equal(document.querySelector('#document-translate-button').classList.contains('hidden'), true);
   assert.equal(document.querySelector('#side-document-translate-button').classList.contains('hidden'), true);
   assert.equal(document.querySelector('#selection-translate-button').classList.contains('hidden'), true);
@@ -603,8 +687,13 @@ test('the reading context is editable, saved with the review, and announced to t
   assert.match(document.querySelector('#ai-context-status').textContent, /自動保存待ち/);
 
   document.querySelector('#save-button').click();
-  await waitFor(() => requests.length === 1);
-  assert.equal(requests[0].aiContext, '第3章。読者は運用当番の担当者。');
+  // 前のテストの自動保存（800ms）が、window.close のあとでもこのテストの fetch スタブへ届きます。
+  // 何件目かで見分けると、その1件を自分の保存と取り違えるので、宛先で見ます。
+  await waitFor(() => requests.some((request) => request.path === 'guide.md'));
+  assert.equal(
+    requests.find((request) => request.path === 'guide.md').aiContext,
+    '第3章。読者は運用当番の担当者。'
+  );
   await waitFor(() => document.querySelector('#ai-context-status').dataset.state === 'saved');
 
   // The pane promises to say what a question carries; the context is part of it.
@@ -1351,7 +1440,7 @@ test('clicking a commented place brings up the comment that was written there', 
   assert.equal(mark.title, 'コメント2件を確認', '同じ範囲の2件は1つのハイライトにまとまる');
 
   // Reading a comment starts from the document, so the click brings the pane back.
-  document.querySelector('#placement-tab-button').click();
+  document.querySelector('#outline-tab-button').click();
   assert.equal(document.querySelector('#comments-panel').classList.contains('hidden'), true);
 
   paragraph.click();
@@ -1370,7 +1459,7 @@ test('clicking a commented place brings up the comment that was written there', 
   assert.equal(document.querySelector('#dialog-target-quote').textContent, 'この段落はレビュー対象です。');
   document.querySelector('#cancel-dialog').click();
 
-  document.querySelector('#placement-tab-button').click();
+  document.querySelector('#outline-tab-button').click();
   mark.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   assert.equal(document.querySelector('#comments-panel').classList.contains('hidden'), false, 'キーボードでも開ける');
 
@@ -1442,7 +1531,7 @@ test('メモはコメントとは別に残り、状態も持たず、レビュ�
   assert.equal(marked.querySelector('.comment-marker').textContent, 'メモ1件');
 
   // 押したときに開くのも、コメントではなくメモのタブです。
-  document.querySelector('#placement-tab-button').click();
+  document.querySelector('#outline-tab-button').click();
   marked.click();
   assert.equal(document.querySelector('#memos-panel').classList.contains('hidden'), false);
   assert.equal(document.querySelector('#comments-panel').classList.contains('hidden'), true);
@@ -1512,9 +1601,9 @@ test('AI comment placement anchors a pasted note and only saves it once the revi
   });
   await waitFor(() => document.querySelector('#markdown-content h1'));
 
-  document.querySelector('#placement-tab-button').click();
+  await openToolPage(document, 'placement');
   assert.equal(document.querySelector('#placement-panel').classList.contains('hidden'), false);
-  assert.equal(document.querySelector('#comments-panel').classList.contains('hidden'), true);
+  assert.equal(document.querySelector('#review-view').classList.contains('hidden'), true, '本文の隣ではなく1画面で開く');
 
   assert.equal(document.querySelector('#placement-submit-button').disabled, true, '指摘が空のうちは実行できない');
   const notes = document.querySelector('#placement-input');
@@ -1534,7 +1623,10 @@ test('AI comment placement anchors a pasted note and only saves it once the revi
   assert.equal(savedRequests.length, 0);
 
   // Before accepting, the reviewer can check where the proposal would land.
+  // 候補を並べているのは別の画面なので、本文の画面へ戻してから見せます。
   document.querySelector('[data-placement-action="reveal"]').click();
+  assert.equal(document.querySelector('#review-view').classList.contains('hidden'), false);
+  assert.equal(window.location.hash, '#/review/docs%2Fnote.md', '戻るで候補の一覧へ帰れる');
   const revealed = document.querySelector('#markdown-content .reveal-flash');
   assert.match(revealed.textContent, /この段落は冗長な説明を含みます。/);
   assert.equal(window.getSelection().toString(), '冗長な説明');
@@ -1656,9 +1748,9 @@ test('an AI review runs with the chosen skills and the reader the AI rebuilt fro
   });
   await waitFor(() => document.querySelector('#markdown-content h1'));
 
-  document.querySelector('#review-tab-button').click();
+  await openToolPage(document, 'review');
   assert.equal(document.querySelector('#review-panel').classList.contains('hidden'), false);
-  assert.equal(document.querySelector('#comments-panel').classList.contains('hidden'), true);
+  assert.equal(document.querySelector('#review-view').classList.contains('hidden'), true, '本文の隣ではなく1画面で開く');
 
   const skillList = document.querySelector('#review-skill-list');
   await waitFor(() => skillList.querySelectorAll('input[data-skill-id]').length === 2);
@@ -1929,9 +2021,9 @@ test('an AI body revision is shown next to the current text and only written onc
   });
   await waitFor(() => document.querySelector('#markdown-content h1'));
 
-  document.querySelector('#revise-tab-button').click();
+  await openToolPage(document, 'revise');
   assert.equal(document.querySelector('#revise-panel').classList.contains('hidden'), false);
-  assert.equal(document.querySelector('#comments-panel').classList.contains('hidden'), true);
+  assert.equal(document.querySelector('#review-view').classList.contains('hidden'), true, '本文の隣ではなく1画面で開く');
   // 未解決のコメントが依頼になるので、指示を書かなくても実行できます。
   assert.match(document.querySelector('#revise-context-hint').textContent, /未解決のレビューコメント1件/);
   assert.equal(document.querySelector('#revise-submit-button').disabled, false);
@@ -2062,7 +2154,7 @@ test('a revision proposal made against older text is refused rather than written
   });
   await waitFor(() => document.querySelector('#markdown-content h1'));
 
-  document.querySelector('#revise-tab-button').click();
+  await openToolPage(document, 'revise');
   const instruction = document.querySelector('#revise-input');
   instruction.value = '言い回しを整えてください。';
   instruction.dispatchEvent(new window.Event('input', { bubbles: true }));
@@ -2182,7 +2274,7 @@ test('the manager asks for what is not settled, and holds the review back once',
   });
   await waitFor(() => document.querySelector('#markdown-content h1'));
 
-  document.querySelector('#manager-tab-button').click();
+  await openToolPage(document, 'manager');
   assert.equal(document.querySelector('#manager-panel').classList.contains('hidden'), false);
   assert.equal(document.querySelector('#brief-state').textContent, '0 / 3');
   assert.equal(document.querySelector('#brief-compose-button').disabled, true, '走り書きが空のうちは聞けない');
@@ -2205,7 +2297,7 @@ test('the manager asks for what is not settled, and holds the review back once',
   await waitFor(() => savedRequests.some((request) => request.brief?.purpose), 1600);
 
   // まだ2つ足りないので、レビューのパネルは押す前から何が足りないかを言う。
-  document.querySelector('#review-tab-button').click();
+  await openToolPage(document, 'review');
   await waitFor(() => document.querySelectorAll('#review-skill-list input[data-skill-id]').length === 1);
   const briefHint = document.querySelector('#review-brief-hint');
   assert.equal(briefHint.hidden, false);
@@ -2222,7 +2314,7 @@ test('the manager asks for what is not settled, and holds the review back once',
   await waitFor(() => reviewRequests.length === 1);
 
   // 3つとも決まれば、関門は開いたままになる。
-  document.querySelector('#manager-tab-button').click();
+  await openToolPage(document, 'manager');
   for (const [selector, value] of [
     ['#brief-story', '止めてよい条件 → 止める手順 → 戻ったことの確かめ方。'],
     ['#brief-expectation', '再起動についての問い合わせが来なくなる。']
@@ -2236,8 +2328,7 @@ test('the manager asks for what is not settled, and holds the review back once',
   assert.equal(document.querySelector('#review-run-button').textContent, 'レビューを実行');
 
   // 3点は前提の一部なので、質問と一緒に渡すもののなかにも出る。
-  document.querySelector('#ai-tab-button').click();
-  assert.match(document.querySelector('#placement-context-hint').textContent, /「管理者」タブで決めた3点/);
+  assert.match(document.querySelector('#placement-context-hint').textContent, /「管理者」の画面で決めた3点/);
   assert.equal(document.querySelector('#placement-context-hint').hidden, false);
 });
 
@@ -2263,7 +2354,7 @@ test('a document with nothing written yet cannot be edited until the manager has
   await waitFor(() => document.querySelector('#markdown-content h1'));
 
   // タブは既定でコメントを開くので、決まっていない数をラベルへ出して求めていることを見せる。
-  const tabCount = document.querySelector('#manager-tab-count');
+  const tabCount = document.querySelector('#manager-link-count');
   assert.equal(tabCount.hidden, false);
   assert.equal(tabCount.textContent, '0 / 3');
 
@@ -2277,8 +2368,8 @@ test('a document with nothing written yet cannot be edited until the manager has
   document.querySelector('#edit-mode-button').click();
   await waitFor(() => document.querySelector('#edit-mode-button').getAttribute('aria-pressed') === 'true');
 
-  // 3つとも決めれば、タブの印は消える。
-  document.querySelector('#manager-tab-button').click();
+  // 3つとも決めれば、リンクの印は消える。
+  await openToolPage(document, 'manager');
   for (const [selector, value] of [
     ['#brief-purpose', '当番が一人で再起動できるようになる。'],
     ['#brief-story', '条件 → 手順 → 確認。'],
@@ -2325,13 +2416,7 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
   for (const selector of [
     '#comments-list', '#export-button',
     '#memos-list',
-    '#brief-form', '#brief-compose',
-    '#ai-context', '#ai-target', '#translation-result', '#ai-messages',
-    '#placement-form', '#placement-results',
-    '#review-skill-list', '#review-persona', '#review-results',
-    '#revise-form', '#revise-results',
-    '#recap-form', '#recap-results',
-    '#tasks-run-form', '#tasks-list'
+    '#ai-context', '#ai-target', '#translation-result', '#ai-messages'
   ]) {
     assert.ok(
       document.querySelector(selector)?.closest('.pane-scroll'),
@@ -2342,11 +2427,7 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
   assert.equal(document.querySelector('#ai-chat-form').closest('.pane-scroll'), null);
   assert.equal(document.querySelector('#save-button').closest('.pane-scroll'), null);
 
-  for (const panel of [
-    '#comments-panel', '#memos-panel', '#manager-panel', '#ai-panel',
-    '#placement-panel', '#review-panel', '#revise-panel',
-    '#recap-panel', '#tasks-panel'
-  ]) {
+  for (const panel of ['#comments-panel', '#memos-panel', '#ai-panel']) {
     assert.equal(document.querySelectorAll(`${panel} .pane-scroll`).length, 1, `${panel} のスクロール領域は1つ`);
   }
   // 文書メニューだけは、目次そのもの（.outline-list）がスクロールします。
@@ -2360,7 +2441,7 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
    * パネルが実際にそうなり、押しても結果がパネルの下で切れたままになっていました。
    */
   const panels = [...document.querySelectorAll('#side-pane > section')];
-  assert.equal(panels.length, 10, 'サイドパネルのタブを数え漏らしていない');
+  assert.equal(panels.length, 4, 'サイドパネルのタブを数え漏らしていない');
 
   const withoutComments = styles.replace(/\/\*[\s\S]*?\*\//g, '');
   const [, selectorList, declarations] = /([^{}]*#comments-panel[^{}]*)\{([^}]*)\}/.exec(withoutComments);
@@ -2375,6 +2456,29 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
     );
   }
   assert.match(styles, /\.pane-scroll \{[^}]*overflow-y: auto;/, '.pane-scroll が実際にスクロールする');
+
+  /*
+   * ツール画面は逆です。画面の高さで頭打ちにならないので、パネルに高さを決めさせると
+   * 中身がそこで切れます。サイドパネル用の高さの決め方（overflow: hidden）を引き継がず、
+   * ページごとスクロールできることを見ます。
+   */
+  const toolPanels = [...document.querySelectorAll('.tool-page-body > section')];
+  assert.equal(toolPanels.length, 6, 'ツール画面のパネルを数え漏らしていない');
+  for (const panel of toolPanels) {
+    assert.ok(
+      selectors.every((selector) => !panel.matches(selector)),
+      `#${panel.id} は高さを決めない（決めると、画面いっぱいに開いた中身がそこで切れる）`
+    );
+    assert.equal(panel.closest('#side-pane'), null, `#${panel.id} はサイドパネルの中に残さない`);
+  }
+  const [, toolSelectors, toolDeclarations] = /([^{}]*\.tool-panel[^{}]*)\{([^}]*)\}/.exec(withoutComments);
+  assert.match(toolSelectors, /\.tool-panel/);
+  assert.match(toolDeclarations, /overflow: visible;/, 'ツール画面のパネルは中身を切り落とさない');
+  assert.match(
+    withoutComments,
+    /\.tool-panel \.pane-scroll \{[^}]*overflow: visible;/,
+    'サイドパネル用のスクロール領域は、ツール画面では素通しにする'
+  );
 });
 
 test('the context screen opens the saved premises wide, and lets the reviewer fix a saved chat', async (t) => {
@@ -2502,8 +2606,9 @@ test('the context screen opens the saved premises wide, and lets the reviewer fi
   document.querySelector('#context-open-button').click();
   await waitFor(() => !document.querySelector('#context-view').classList.contains('hidden'));
   document.querySelector('#workspace-persona-edit-button').click();
-  await waitFor(() => !document.querySelector('#review-view').classList.contains('hidden'));
-  assert.equal(document.querySelector('#review-panel').classList.contains('hidden'), false, 'AIレビューのタブを開く');
+  await waitFor(() => !document.querySelector('#tool-view').classList.contains('hidden'));
+  assert.equal(document.querySelector('#review-panel').classList.contains('hidden'), false, 'AIレビューの画面を開く');
+  assert.equal(document.querySelector('#context-view').classList.contains('hidden'), true);
 });
 
 test('文字起こしを開くと、押す前に読む範囲が出て、聞くと要約と次の行動が並ぶ', async (t) => {
@@ -2594,8 +2699,7 @@ test('文字起こしを開くと、押す前に読む範囲が出て、聞く�
   await waitFor(() => windowRequests.length === 1);
 
   // 押す前に、どこからどこまでを読むのかが出ます。初回は前回の位置が無いので落ちた旨も出ます。
-  document.querySelector('#recap-tab-button').click();
-  assert.equal(document.querySelector('#recap-tab-button').classList.contains('hidden'), false);
+  await openToolPage(document, 'recap');
   assert.equal(document.querySelector('#recap-panel').classList.contains('hidden'), false);
   assert.deepEqual(windowRequests[0], { path: 'docs/meeting.md', scope: 'since-last', minutes: '10' });
   assert.match(document.querySelector('#recap-range').textContent, /直近10分の1発言（10:20:00〜10:20:00）/);
@@ -2658,7 +2762,7 @@ test('文字起こしでない文書に、聞き直しのタブは出ない', as
   });
   await waitFor(() => document.querySelector('#markdown-content h1'));
 
-  assert.equal(document.querySelector('#recap-tab-button').classList.contains('hidden'), true);
+  assert.equal(toolLink(document, 'recap').classList.contains('hidden'), true);
   assert.deepEqual(windowRequests, [], '発言の無い文書では範囲も引きに行かない');
 });
 
@@ -2689,8 +2793,7 @@ test('発言が並んでいても文字起こし用のファイルでなけれ�
 
   // 黙って消さずに、聞き直せない理由と直し方を出します。押せる状態のまま残すと、
   // 押してから断られることになります。
-  assert.equal(document.querySelector('#recap-tab-button').classList.contains('hidden'), false);
-  document.querySelector('#recap-tab-button').click();
+  await openToolPage(document, 'recap');
   assert.match(document.querySelector('#recap-range').textContent, /文字起こし用のファイルではないので、聞き直せません/);
   assert.match(document.querySelector('#recap-range').textContent, /meet-captions/);
   assert.match(document.querySelector('#recap-range').textContent, /transcriptFiles/);
@@ -2798,11 +2901,9 @@ test('自動タスクが有効な文書ではタスクのタブが出て、整�
   await waitFor(() => document.querySelector('#markdown-content h1'));
   await waitFor(() => readRequests.length === 1);
 
-  // 有効な文書ではタブが出て、開くと記録の写しが並びます。まだ何も無ければそう言います。
-  const tab = document.querySelector('#tasks-tab-button');
-  assert.equal(tab.classList.contains('hidden'), false);
-  assert.equal(document.querySelector('#tasks-tab-count').hidden, true);
-  tab.click();
+  // 有効な文書ではリンクが出て、開くと記録の写しが並びます。まだ何も無ければそう言います。
+  assert.equal(document.querySelector('#tasks-link-count').hidden, true);
+  await openToolPage(document, 'tasks');
   assert.equal(document.querySelector('#tasks-panel').classList.contains('hidden'), false);
   assert.match(document.querySelector('#tasks-list').textContent, /まだタスクはありません/);
   assert.equal(document.querySelector('#tasks-focus').hidden, true);
@@ -2815,7 +2916,7 @@ test('自動タスクが有効な文書ではタスクのタブが出て、整�
   assert.equal(extractRequests[0][1]['X-Review-Markdown-Token'], 'ui-ai-token');
   assert.equal(document.querySelector('#tasks-focus').hidden, false);
   assert.equal(document.querySelector('#tasks-focus-now').textContent, '前提を調べて書く');
-  assert.equal(document.querySelector('#tasks-tab-count').textContent, '2');
+  assert.equal(document.querySelector('#tasks-link-count').textContent, '2');
   const cards = [...document.querySelectorAll('.task-card')];
   assert.equal(cards[0].dataset.status, 'ready', '確認待ちが先頭に来る');
   assert.equal(cards[0].querySelector('.task-status').textContent, '確認待ち');
@@ -2860,7 +2961,7 @@ test('自動タスクが有効な文書ではタスクのタブが出て、整�
   await waitFor(() => changeRequests.length === 3);
   assert.deepEqual(changeRequests[2][0], { path: 'docs/meeting.md', setStatus: [{ id: 'task-1', status: 'done' }] });
   await waitFor(() => document.querySelector('.task-card[data-task-id="task-1"]').dataset.status === 'done');
-  assert.equal(document.querySelector('#tasks-tab-count').textContent, '1', '残っているものだけを数える');
+  assert.equal(document.querySelector('#tasks-link-count').textContent, '1', '残っているものだけを数える');
 
   // 見守りの入り切りも、手で足すのも同じ窓口です。
   const watch = document.querySelector('#tasks-watch');
@@ -3016,6 +3117,25 @@ function installDomGlobals(window) {
  */
 function sentNote(body, text) {
   return (body.contextNotes || []).some((note) => note.body === text);
+}
+
+/**
+ * タブから外したものは、それぞれの画面をアドレスで開きます（`public/js/toolPages.js`）。
+ * 導線は素の `<a>` なので、押してから画面が入れ替わるのを待ちます。
+ */
+async function openToolPage(document, key) {
+  const link = toolLink(document, key);
+  assert.ok(link, `${key} の画面へのリンクが出ている`);
+  assert.equal(link.classList.contains('hidden'), false, `${key} の画面へのリンクが押せる`);
+  link.click();
+  await waitFor(() => !document.querySelector(`#${key === 'context' ? 'context-view' : 'tool-view'}`)
+    .classList.contains('hidden'));
+  return link;
+}
+
+/** サイドパネルの「別の画面で開く」に出ている、その画面へのリンク。 */
+function toolLink(document, key) {
+  return document.querySelector(`.side-pane-tools [data-tool-link="${key}"]`);
 }
 
 async function waitFor(predicate, timeout = 1000) {

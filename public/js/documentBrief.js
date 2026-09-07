@@ -89,7 +89,7 @@ export function createDocumentBriefController({ refs, state, api, toaster, prepa
 
   /**
    * もう一方の画面で書き換えられた3点を、こちらの欄へ映します。
-   * 3点は「AIレビュー」タブとコンテキスト画面の2か所から書けるので、
+   * 3点は「管理者」とコンテキストの2つの画面から書けるので、
    * 片方で決めた内容が残っていない側から上書きされないように揃えます。
    */
   function sync() {
@@ -196,10 +196,10 @@ export function createDocumentBriefController({ refs, state, api, toaster, prepa
     const settled = filled === FIELDS.length;
     refs.briefState.textContent = settled ? '揃いました' : `${filled} / ${FIELDS.length}`;
     refs.briefState.dataset.state = settled ? 'set' : (filled === 0 ? 'unset' : 'partial');
-    // タブは既定でコメントを開くので、押されるまで管理者は画面に出ません。
-    // 決まっていない数をラベルへ出して、押される前から求めていることを見せます。
-    refs.managerTabCount.hidden = settled;
-    refs.managerTabCount.textContent = settled ? '' : `${filled} / ${FIELDS.length}`;
+    // 管理者は別の画面なので、開くまで3点は目に入りません。決まっていない数を
+    // サイドパネルのリンクへ出して、開かれる前から求めていることを見せます。
+    refs.managerLinkCount.hidden = settled;
+    refs.managerLinkCount.textContent = settled ? '' : `${filled} / ${FIELDS.length}`;
     refs.briefComposeButton.disabled = composing || refs.briefInput.value.trim() === '';
     refs.briefStopButton.classList.toggle('hidden', !composing);
     refs.briefClearButton.disabled = composing || filled === 0;

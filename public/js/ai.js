@@ -55,11 +55,13 @@ export function createAiController({
       const result = await api.listAiConversations(documentPath);
       if (state.currentPath !== documentPath) return;
       state.aiConversations = result.conversations || [];
+      // 取れた記録は先に出します。あとに続くスキル一覧が取れなかったからといって、
+      // 残っている会話まで選べなくなる筋合いはありません。
+      renderConversationOptions();
       const skillResult = await api.listReviewSkills();
       refs.aiSkillSelect.innerHTML = (skillResult.skills || []).map((skill) => (
         `<option value="${escapeHtml(skill.id)}">${escapeHtml(skill.name)}</option>`
       )).join('');
-      renderConversationOptions();
     } catch {
       // Codex is optional until the reviewer opens the AI pane.
     }

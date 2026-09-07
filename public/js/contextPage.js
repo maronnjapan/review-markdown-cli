@@ -16,7 +16,7 @@ const ROLE_LABELS = { user: 'あなた', assistant: 'Codex' };
  * 出しているものは4つ。資料の管理者が決めた3点、読み取りコンテキスト、コンテキストメモ、
  * 読み手ペルソナ。前の3つはここで書き換えられます（同じ操作盤をサイドパネルと2か所へ
  * 出しているだけで、実体は `createApp.js` が作る1組の state です）。ペルソナだけは
- * 表示に留めて、決めるのはレビューを実行する場所と同じ「AIレビュー」タブに残しました。
+ * 表示に留めて、決めるのはレビューを実行する場所と同じ「AIレビュー」の画面に残しました。
  * 読み手はレビューの直前に決めるもので、決める場所を本文から離すと手順が増えるからです。
  *
  * ── AIチャットの記録をここへ置いた理由 ────────────────────
@@ -31,7 +31,6 @@ const ROLE_LABELS = { user: 'あなた', assistant: 'Codex' };
 export function createContextPageController({
   refs, state, api, toaster,
   onKeepNote = () => {},
-  onEditPersona = () => {},
   onConversationsChanged = () => {}
 }) {
   // 開いている会話。null なら、まだどれも選んでいません。
@@ -69,7 +68,7 @@ export function createContextPageController({
     refs.workspacePersonaState.dataset.state = state.persona ? 'set' : 'unset';
     refs.workspacePersonaResult.innerHTML = state.persona
       ? personaHtml(state.persona)
-      : '<p class="muted">まだ読み手は決まっていません。「AIレビュー」タブで、書いた文章をそのまま使うか、AIに立場・前提知識・目的へ組み直させるかを選べます。</p>';
+      : '<p class="muted">まだ読み手は決まっていません。「AIレビュー」の画面で、書いた文章をそのまま使うか、AIに立場・前提知識・目的へ組み直させるかを選べます。</p>';
   }
 
   /* ---------------------------------------------------------------- *
@@ -255,8 +254,6 @@ export function createContextPageController({
   }
 
   function bindEvents() {
-    refs.workspacePersonaEditButton.addEventListener('click', onEditPersona);
-
     refs.workspaceConversationList.addEventListener('click', (event) => {
       const button = event.target.closest('[data-open-conversation]');
       if (!button) return;

@@ -338,7 +338,7 @@ export function createDocumentReviewController({
       briefWarned = true;
       syncRunState();
       toaster.info(`資料の管理者が${fieldNames(missing)}を求めています。`
-        + '「管理者」タブで決めるか、もう一度押すとこのまま実行します。');
+        + '「管理者」の画面で決めるか、もう一度押すとこのまま実行します。');
       return;
     }
     await runAiRequest({
@@ -430,7 +430,7 @@ export function createDocumentReviewController({
   function briefHint(missing) {
     return briefWarned
       ? `${fieldNames(missing)}は決まっていないままです。このまま実行すると、その3点を基準にしない読みになります。`
-      : `資料の管理者が${fieldNames(missing)}を求めています。「管理者」タブで決めてから実行してください。`;
+      : `資料の管理者が${fieldNames(missing)}を求めています。「管理者」の画面で決めてから実行してください。`;
   }
 
   function bindEvents() {

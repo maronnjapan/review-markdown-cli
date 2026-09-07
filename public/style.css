@@ -65,6 +65,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   box-shadow: var(--shadow);
 }
 .hidden { display: none !important; }
+/* display を上書きしているものへ hidden を付けても消えるようにします。 */
+[hidden] { display: none !important; }
 .muted { color: var(--muted); }
 
 .file-list-header {
@@ -467,8 +469,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
  * 伸びたぶんがパネルの外で切り落とされ、中の .pane-scroll も高さが決まらないため
  * スクロールバーが出ません。下に出したものが、どうやっても読めなくなります。
  */
-#comments-panel, #memos-panel, .manager-panel, .ai-panel, .placement-panel, .review-panel,
-.revise-panel, .outline-panel, .recap-panel, .tasks-panel {
+#comments-panel, #memos-panel, .ai-panel, .outline-panel {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -493,6 +494,45 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .review-layout.editing-mode .comments-pane {
   opacity: 0.72;
 }
+/*
+ * タブから外したものへの導線です。押すと画面が入れ替わるだけなので、素の <a> で書けます。
+ * ボタンで差し替えていたころには無かった「別タブで開く」が、そのまま効きます。
+ */
+.side-pane-tools {
+  border-bottom: 1px solid var(--border);
+  flex: none;
+  padding: 0.5rem 0.6rem 0.6rem;
+}
+.side-pane-tools-label {
+  color: var(--muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  margin: 0 0 0.35rem;
+  text-transform: uppercase;
+}
+.tool-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.tool-link {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.2;
+  padding: 0.3rem 0.65rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.tool-link:hover { border-color: var(--primary); color: var(--primary); }
+.tool-link.current {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.tool-link.current .tab-count { background: #fff; }
 .side-section-header {
   align-items: center;
   border-bottom: 1px solid var(--border);
@@ -2077,14 +2117,66 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   .focused-review-target { animation: none; }
 }
 
+/* ---- ツール画面 --------------------------------------------------------
+   本文の隣に置かなくてよいものは、細長い欄へ押し込まずに1画面ずつ開きます。
+   サイドパネルと違って画面の高さで頭打ちにならないので、中身はページごと
+   スクロールします（`.tool-panel` に高さを決めさせません）。 */
+/* 幅いっぱいに引き伸ばすと、1行が長くなりすぎて読む目が戻れません。 */
+.tool-page { display: grid; gap: 1rem; max-width: 1100px; }
+.tool-page-body { display: grid; }
+.tool-panel {
+  display: block;
+  overflow: visible;
+  padding: 1.1rem 1.3rem;
+}
+.tool-panel .pane-scroll {
+  display: block;
+  overflow: visible;
+}
+.tool-panel .ai-header { margin-bottom: 0.2rem; }
+/* 幅のある画面では、右端まで飛ばすと押すものが読んでいる場所から離れます。 */
+.tool-panel .placement-actions { justify-content: flex-start; }
+.tool-panel .tasks-focus { margin-inline: 0; }
+.tool-page-nav { margin-top: 0.2rem; }
+#tool-document-title {
+  font-size: 1rem;
+  margin: 0.1rem 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.back-link {
+  color: var(--primary);
+  font-size: 0.82rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.back-link:hover { text-decoration: underline; }
+.toolbar-link {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 0.78rem;
+  padding: 0.3rem 0.7rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.toolbar-link:hover { border-color: var(--primary); color: var(--primary); }
+
 /* ---- コンテキスト画面 ------------------------------------------------
    サイドパネルは本文の隣に置くものなので幅を本文へ譲ります。前提をまとめて
    読み書きするための、幅を使える面がこちらです。 */
 .context-open-link {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  display: inline-block;
   font-size: 0.72rem;
   margin-top: 0.4rem;
   padding: 0.25rem 0.6rem;
+  text-decoration: none;
 }
+.context-open-link:hover { border-color: var(--primary); color: var(--primary); }
 .context-workspace { display: grid; gap: 1rem; }
 .workspace-header {
   display: grid;
