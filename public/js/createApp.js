@@ -263,6 +263,8 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     panes,
     // A question about a comment the reviewer just typed needs it saved first.
     flushComments: () => commentSaves.flush(),
+    // 届いた記録は、直すための画面（AIチャットの記録）にも並べます。
+    onConversationsLoaded: () => contextPage.renderConversations(),
     // 相談して分かったことは、その場でメモへ流し込めます。残すかどうかと、
     // どこまでを前提として書くかはレビュアーが決めます。
     onKeepContext: (text) => sideContextNotes.keepFromChat(text),
@@ -377,6 +379,12 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
   });
 
   let pendingAnchor = '';
+  /*
+   * AIチャットの、サイドパネルでの置き場所です。広い画面へ運んだあと同じ場所へ戻すために、
+   * 1度も動かしていないうちに覚えます。動かしてから調べると、運んだ先が「元の場所」になります。
+   */
+  const chatPanelHome = refs.aiPanel.parentElement;
+  const chatPanelHomeNext = refs.aiPanel.nextSibling;
   let pendingDeleteId = null;
   // 削除の確認は一覧ごとに持ちます。1つにまとめると、コメントの確認を出したまま
   // メモの削除を押したときに、押していないほうの一覧を描き直すことになります。
@@ -415,6 +423,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
 
     if (!match) {
       pdfViewer.dispose();
+      mountChatPanel(false);
       refs.contextView.classList.add('hidden');
       refs.toolView.classList.add('hidden');
       fileList.revealPath(state.currentPath);
@@ -458,13 +467,51 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     refs.toolView.classList.toggle('hidden', !page || context);
     refs.reviewView.classList.toggle('hidden', Boolean(page));
     markCurrentToolLink(document, tool);
+    mountChatPanel(tool === 'chat');
     if (page) {
       hideSidePane();
       if (context) contextPage.render();
       else showToolPanel(page);
+      // 別の画面で交わした相談も、開いた時点の記録として並べ直します。
+      if (page.key === 'chatLog') contextPage.renderConversations();
       return;
     }
     closeSidePane();
+  }
+
+  /**
+   * AIチャットを、サイドパネルのタブと `#/chat/<path>` の画面のあいだで運びます。
+   *
+   * 広い画面のためにもう1つ操作盤を作ると、話している最中のものが片方へ取り残されます。
+   * 生成の途中だった回答、書きかけの質問、選んでいた対象、開いていた会話。どれも
+   * 「タブで交わしていた続きを広い画面で」の続きそのものなので、作り直さずに、同じ要素を
+   * 置き場所ごと動かします。動かすだけなので、送っている最中に移っても答えは途切れません。
+   *
+   * 戻すときに出し入れを決めるのはサイドパネルのタブです（`panes.show`）。ここで直に
+   * `hidden` を外すと、コメントのタブを選んでいた人にAIの欄が重なって出ます。
+   */
+  function mountChatPanel(onPage) {
+    const host = onPage ? refs.chatPageHost : chatPanelHome;
+    refs.chatPageHost.classList.toggle('hidden', !onPage);
+    // 広い画面では、送信欄を下に残したまま、やり取りだけをスクロールさせます。
+    refs.toolView.classList.toggle('chat-page', onPage);
+    refs.aiPanel.classList.toggle('ai-panel-page', onPage);
+    if (refs.aiPanel.parentElement === host) return;
+    if (onPage) {
+      host.append(refs.aiPanel);
+      refs.aiPanel.classList.remove('hidden');
+      // タブの中身ではなくなるので、名乗り方も変えます。タブ列を離れたものが
+      // 「AIタブの中身」と名乗ると、読み上げは在りもしないタブを探しに行きます。
+      refs.aiPanel.setAttribute('role', 'region');
+      refs.aiPanel.setAttribute('aria-label', 'AIチャット');
+      refs.aiPanel.removeAttribute('aria-labelledby');
+      return;
+    }
+    chatPanelHome.insertBefore(refs.aiPanel, chatPanelHomeNext);
+    refs.aiPanel.setAttribute('role', 'tabpanel');
+    refs.aiPanel.setAttribute('aria-labelledby', 'ai-tab-button');
+    refs.aiPanel.removeAttribute('aria-label');
+    panes.show(state.sidePane);
   }
 
   /** ツール画面の中身。開いた1枚だけを出し、残りは畳んでおきます。 */
@@ -554,6 +601,8 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     commentSaves.cancel();
     resetDocumentState(state, filePath);
     closeSidePane();
+    // 別の文書を開くときは、広い画面へ運んだままのチャットもサイドパネルへ戻します。
+    mountChatPanel(false);
     pendingDeleteId = null;
     pendingMemoDeleteId = null;
 

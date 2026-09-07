@@ -844,6 +844,12 @@ button.danger:hover { background: #9b2116; border-color: #9b2116; color: #fff; }
   padding: 0.9rem 1rem;
 }
 .ai-header h2 { font-size: 1rem; margin: 0.1rem 0 0; }
+.ai-header-meta {
+  display: grid;
+  gap: 0.1rem;
+  justify-items: end;
+}
+.ai-header-meta .context-open-link { margin-top: 0.2rem; }
 .ai-provider-status {
   color: var(--muted);
   font-size: 0.72rem;
@@ -1142,6 +1148,19 @@ button.danger:hover { background: #9b2116; border-color: #9b2116; color: #fff; }
   padding: 0.08rem 0.4rem;
 }
 .ai-loading { color: var(--muted); }
+/*
+ * AIタブの中身は、質問の前に決めるもの（.ai-setup）と、話した中身（.ai-conversation）に
+ * 分けてあります。細長い欄では上下に積み、広い画面では左右に分けます（.ai-panel-page）。
+ * 分けていないと、幅のある画面でも決めるものが縦に積み上がったままで、開いた瞬間に
+ * 見えるのは前提の欄ばかり、肝心のやり取りは下へ押し出されて読めません。
+ */
+.ai-setup { flex: none; }
+.ai-conversation {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  min-height: 0;
+}
 .ai-messages {
   display: grid;
   flex: 1 0 auto;
@@ -2233,6 +2252,79 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   overflow: visible;
 }
 .tool-panel .ai-header { margin-bottom: 0.2rem; }
+
+/* ---- 広い画面のAIチャット --------------------------------------------
+   出しているのはサイドパネルのAIタブと同じ要素です（`createApp.js` の
+   `mountChatPanel` が運びます）。だから見た目の決まりごとはそのまま効き、
+   ここで変えるのは高さの決め方だけです。
+
+   ほかのツール画面はページごとスクロールしますが、チャットだけは逆で、
+   画面の高さを使い切ります。ページごと流すと、答えを読むために下へ送るたび
+   送信欄も一緒に消えて、読み終えてから書くまでに戻る操作が要ります。 */
+.tool-page.chat-page {
+  grid-template-rows: auto minmax(0, 1fr);
+  height: calc(100vh - var(--app-header-height) - 3rem);
+  height: calc(100dvh - var(--app-header-height) - 3rem);
+}
+.tool-page.chat-page .tool-page-body { min-height: 0; }
+.chat-page-host { display: grid; min-height: 0; }
+.ai-panel-page {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  min-height: 0;
+}
+/* サイドパネルへ戻る導線は、戻る先にいるあいだは出しません。 */
+.ai-panel-page #ai-chat-open-page { display: none; }
+/* 狭い画面向けに止めてあるスクロールを、ここでは戻します。この画面は自分で高さを
+   持っているので、はみ出したぶんは中で流さないと読めなくなります。 */
+.ai-panel-page .pane-scroll { overflow-y: auto; }
+.ai-panel-page .ai-message p { font-size: 0.92rem; }
+.ai-panel-page .ai-chat-form { padding: 0.9rem 1.3rem 1rem; }
+.ai-panel-page .ai-chat-form textarea { min-height: 5.4rem; }
+/*
+ * 幅に余裕があるときだけ、決めるものを左へ寄せて、やり取りを右で高さいっぱいに使います。
+ * 縦に積んだままだと、幅だけ広い同じ画面になり、開いた瞬間に見えるのは前提の欄で、
+ * 読みたいやり取りは下へ押し出されたままです。分けられない幅では、積んだまま流します。
+ */
+@media (min-width: 820px) {
+  .ai-panel-page .pane-scroll {
+    display: grid;
+    grid-template-columns: minmax(0, 21rem) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+  .ai-panel-page .ai-header { grid-column: 1 / -1; }
+  .ai-panel-page .ai-setup {
+    border-right: 1px solid var(--border);
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .ai-panel-page .ai-conversation {
+    min-height: 0;
+    overflow: hidden;
+  }
+  /*
+   * 細長い欄では、やり取りはパネルごと（.pane-scroll）流すしかありません。ここには高さが
+   * あるので、やり取りだけを流します。こうすると新しい発言まで自動で送れます（`ai.js` の
+   * renderMessages が scrollTop を動かせるのは、ここが流れる欄のときだけです）。
+   */
+  .ai-panel-page .ai-messages {
+    /* 伸び縮みの基準を0にします。autoのままだと、溜まったやり取りの高さぶんだけ場所を
+       要求して、上に置いた対象や翻訳のほうを押し潰します。 */
+    flex: 1 1 0;
+    min-height: 0;
+    padding: 1.1rem 1.3rem;
+  }
+  /* 長い引用や翻訳が、やり取りの居場所を奪わないようにします。 */
+  .ai-panel-page .ai-target,
+  .ai-panel-page .translation-result {
+    flex: none;
+    max-height: 12rem;
+    overflow-y: auto;
+  }
+}
 /* 幅のある画面では、右端まで飛ばすと押すものが読んでいる場所から離れます。 */
 .tool-panel .placement-actions { justify-content: flex-start; }
 .tool-panel .tasks-focus { margin-inline: 0; }

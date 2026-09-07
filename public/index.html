@@ -96,7 +96,8 @@
               <a class="tool-link" data-tool-link="context" href="#/">コンテキスト</a>
               <a class="tool-link" data-tool-link="persona" href="#/">読み手ペルソナ</a>
               <a class="tool-link" data-tool-link="files" href="#/">参照ファイル</a>
-              <a class="tool-link" data-tool-link="chat" href="#/">AIチャットの記録</a>
+              <a class="tool-link" data-tool-link="chat" href="#/">AIチャット</a>
+              <a class="tool-link" data-tool-link="chatLog" href="#/">チャットの記録</a>
               <a class="tool-link hidden" data-tool-link="manager" href="#/">管理者<span id="manager-link-count" class="tab-count" hidden></span></a>
               <a class="tool-link" data-tool-link="placement" href="#/">指摘の配置</a>
               <a class="tool-link" data-tool-link="review" href="#/">AIレビュー</a>
@@ -169,107 +170,116 @@
                   <p class="eyebrow">Read-only Codex</p>
                   <h2>AIチャット</h2>
                 </div>
-                <span id="ai-provider-status" class="ai-provider-status">準備中</span>
+                <div class="ai-header-meta">
+                  <span id="ai-provider-status" class="ai-provider-status">準備中</span>
+                  <a id="ai-chat-open-page" class="context-open-link" data-tool-link="chat" href="#/">広い画面で続ける</a>
+                </div>
               </div>
-              <details id="ai-context" class="ai-context">
-                <summary>
-                  読み取りコンテキスト
-                  <span id="ai-context-state" class="ai-context-state">未設定</span>
-                </summary>
-                <p class="ai-context-hint">AIがこの文書を読むときの前提です。翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。</p>
-                <div id="ai-context-scope" class="context-scope" role="radiogroup" aria-label="読み取りコンテキストの適用範囲">
-                  <label><input type="radio" name="ai-context-scope" value="document" checked> このファイルだけ</label>
-                  <label><input type="radio" name="ai-context-scope" value="directory"> ディレクトリ全体</label>
-                </div>
-                <p id="ai-context-scope-hint" class="ai-context-hint context-scope-hint"></p>
-                <textarea id="ai-context-input" rows="4" placeholder="例：Node.js入門書の第3章。読者はJavaScriptの基礎を知っている前提。用語は原著の訳語に合わせる。"></textarea>
-                <p id="ai-context-status" class="ai-context-status" aria-live="polite"></p>
-                <a id="ai-context-open-page" class="context-open-link" data-tool-link="context" href="#/">広い画面で編集</a>
-                <div id="ai-context-other" class="ai-context-project" hidden>
-                  <p id="ai-context-other-label" class="ai-context-project-label"></p>
-                  <blockquote id="ai-context-other-text"></blockquote>
-                </div>
-                <div id="ai-context-project" class="ai-context-project" hidden>
-                  <p class="ai-context-project-label">このディレクトリ全体の前提（設定ファイル）</p>
-                  <blockquote id="ai-context-project-text"></blockquote>
-                </div>
-              </details>
-              <details id="context-notes" class="ai-context">
-                <summary>
-                  コンテキストメモ
-                  <span id="context-notes-state" class="ai-context-state">未設定</span>
-                </summary>
-                <p class="ai-context-hint">この文書について分かったことを1件ずつ残します。効く範囲を「このファイルだけ」と「ディレクトリ全体」から選べます。残したメモは前提として、翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。</p>
-                <form id="context-note-form" class="context-note-form">
-                  <div id="context-note-scope" class="context-scope" role="radiogroup" aria-label="コンテキストメモの適用範囲">
-                    <label><input type="radio" name="context-note-scope" value="document" checked> このファイルだけ</label>
-                    <label><input type="radio" name="context-note-scope" value="directory"> ディレクトリ全体</label>
+              <!-- 質問の前に決めるもの。広い画面ではここが左の欄になります。 -->
+              <div class="ai-setup">
+                <details id="ai-context" class="ai-context">
+                  <summary>
+                    読み取りコンテキスト
+                    <span id="ai-context-state" class="ai-context-state">未設定</span>
+                  </summary>
+                  <p class="ai-context-hint">AIがこの文書を読むときの前提です。翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。</p>
+                  <div id="ai-context-scope" class="context-scope" role="radiogroup" aria-label="読み取りコンテキストの適用範囲">
+                    <label><input type="radio" name="ai-context-scope" value="document" checked> このファイルだけ</label>
+                    <label><input type="radio" name="ai-context-scope" value="directory"> ディレクトリ全体</label>
                   </div>
-                  <p id="context-note-scope-hint" class="ai-context-hint context-scope-hint"></p>
-                  <select id="context-note-kind" aria-label="メモの種類" aria-describedby="context-note-kind-hint"></select>
-                  <p id="context-note-kind-hint" class="context-note-kind-hint" aria-live="polite"></p>
-                  <textarea id="context-note-input" rows="3" placeholder="例：この節は前の版から移してきた。並び順は検討済みで、変えない。"></textarea>
-                  <div class="context-note-actions">
-                    <button id="context-note-cancel" type="button" class="hidden">編集をやめる</button>
-                    <button id="context-note-submit" type="submit" disabled>残す</button>
+                  <p id="ai-context-scope-hint" class="ai-context-hint context-scope-hint"></p>
+                  <textarea id="ai-context-input" rows="4" placeholder="例：Node.js入門書の第3章。読者はJavaScriptの基礎を知っている前提。用語は原著の訳語に合わせる。"></textarea>
+                  <p id="ai-context-status" class="ai-context-status" aria-live="polite"></p>
+                  <a id="ai-context-open-page" class="context-open-link" data-tool-link="context" href="#/">広い画面で編集</a>
+                  <div id="ai-context-other" class="ai-context-project" hidden>
+                    <p id="ai-context-other-label" class="ai-context-project-label"></p>
+                    <blockquote id="ai-context-other-text"></blockquote>
                   </div>
-                </form>
-                <p id="context-note-full" class="context-note-full" hidden>メモが上限に達しました。古いものを消すか、まとめてください。</p>
-                <p id="context-notes-status" class="ai-context-status" aria-live="polite"></p>
-                <a id="context-notes-open-page" class="context-open-link" data-tool-link="context" href="#/">広い画面で編集</a>
-                <div id="context-notes-list" class="context-notes-list"></div>
-              </details>
-              <details id="reference-files" class="ai-context">
-                <summary>
-                  参照ファイル
-                  <span id="reference-files-state" class="ai-context-state">未設定</span>
-                </summary>
-                <p class="ai-context-hint">この文書と同じ階層以下にあるファイルを添えると、AIがその中身も読みます。用語集、前の章、元になった仕様書など。翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。</p>
-                <form id="reference-file-form" class="reference-file-form">
-                  <input id="reference-file-filter" type="search" placeholder="パスで絞り込む" aria-label="添えるファイルをパスで絞り込む">
-                  <select id="reference-file-select" aria-label="添えるファイル"></select>
-                  <div class="reference-file-actions">
-                    <button id="reference-file-add" type="submit" disabled>添える</button>
+                  <div id="ai-context-project" class="ai-context-project" hidden>
+                    <p class="ai-context-project-label">このディレクトリ全体の前提（設定ファイル）</p>
+                    <blockquote id="ai-context-project-text"></blockquote>
                   </div>
-                </form>
-                <p id="reference-files-full" class="context-note-full" hidden>参照ファイルが上限に達しました。読ませないものを外してください。</p>
-                <p id="reference-files-status" class="ai-context-status" aria-live="polite"></p>
-                <a id="reference-files-open-page" class="context-open-link" data-tool-link="files" href="#/">広い画面で編集</a>
-                <div id="reference-files-list" class="reference-files-list"></div>
-              </details>
-              <a id="ai-conversations-open-page" class="context-open-link" data-tool-link="chat" href="#/">記録を広い画面で読む・直す</a>
-              <div class="ai-conversation-controls">
-                <select id="ai-conversation-select" aria-label="保存された会話">
-                  <option value="">新しい会話</option>
-                </select>
-                <button id="ai-new-conversation" type="button">新規</button>
-                <button id="ai-delete-conversation" type="button" disabled>削除</button>
+                </details>
+                <details id="context-notes" class="ai-context">
+                  <summary>
+                    コンテキストメモ
+                    <span id="context-notes-state" class="ai-context-state">未設定</span>
+                  </summary>
+                  <p class="ai-context-hint">この文書について分かったことを1件ずつ残します。効く範囲を「このファイルだけ」と「ディレクトリ全体」から選べます。残したメモは前提として、翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。</p>
+                  <form id="context-note-form" class="context-note-form">
+                    <div id="context-note-scope" class="context-scope" role="radiogroup" aria-label="コンテキストメモの適用範囲">
+                      <label><input type="radio" name="context-note-scope" value="document" checked> このファイルだけ</label>
+                      <label><input type="radio" name="context-note-scope" value="directory"> ディレクトリ全体</label>
+                    </div>
+                    <p id="context-note-scope-hint" class="ai-context-hint context-scope-hint"></p>
+                    <select id="context-note-kind" aria-label="メモの種類" aria-describedby="context-note-kind-hint"></select>
+                    <p id="context-note-kind-hint" class="context-note-kind-hint" aria-live="polite"></p>
+                    <textarea id="context-note-input" rows="3" placeholder="例：この節は前の版から移してきた。並び順は検討済みで、変えない。"></textarea>
+                    <div class="context-note-actions">
+                      <button id="context-note-cancel" type="button" class="hidden">編集をやめる</button>
+                      <button id="context-note-submit" type="submit" disabled>残す</button>
+                    </div>
+                  </form>
+                  <p id="context-note-full" class="context-note-full" hidden>メモが上限に達しました。古いものを消すか、まとめてください。</p>
+                  <p id="context-notes-status" class="ai-context-status" aria-live="polite"></p>
+                  <a id="context-notes-open-page" class="context-open-link" data-tool-link="context" href="#/">広い画面で編集</a>
+                  <div id="context-notes-list" class="context-notes-list"></div>
+                </details>
+                <details id="reference-files" class="ai-context">
+                  <summary>
+                    参照ファイル
+                    <span id="reference-files-state" class="ai-context-state">未設定</span>
+                  </summary>
+                  <p class="ai-context-hint">この文書と同じ階層以下にあるファイルを添えると、AIがその中身も読みます。用語集、前の章、元になった仕様書など。翻訳・AIチャット・指摘の配置・AIレビューすべてに渡します。</p>
+                  <form id="reference-file-form" class="reference-file-form">
+                    <input id="reference-file-filter" type="search" placeholder="パスで絞り込む" aria-label="添えるファイルをパスで絞り込む">
+                    <select id="reference-file-select" aria-label="添えるファイル"></select>
+                    <div class="reference-file-actions">
+                      <button id="reference-file-add" type="submit" disabled>添える</button>
+                    </div>
+                  </form>
+                  <p id="reference-files-full" class="context-note-full" hidden>参照ファイルが上限に達しました。読ませないものを外してください。</p>
+                  <p id="reference-files-status" class="ai-context-status" aria-live="polite"></p>
+                  <a id="reference-files-open-page" class="context-open-link" data-tool-link="files" href="#/">広い画面で編集</a>
+                  <div id="reference-files-list" class="reference-files-list"></div>
+                </details>
+                <a id="ai-conversations-open-page" class="context-open-link" data-tool-link="chatLog" href="#/">記録を読む・直す</a>
+                <div class="ai-conversation-controls">
+                  <select id="ai-conversation-select" aria-label="保存された会話">
+                    <option value="">新しい会話</option>
+                  </select>
+                  <button id="ai-new-conversation" type="button">新規</button>
+                  <button id="ai-delete-conversation" type="button" disabled>削除</button>
+                </div>
+                <details class="ai-context" open>
+                  <summary>AIに渡すコンテキスト <span class="ai-context-state">すべて選択</span></summary>
+                  <p class="ai-context-hint">会話ごとに必要な前提だけを選べます。新しい会話ではすべて選択されています。</p>
+                  <div id="ai-context-options" class="ai-context-options">
+                    <label><input type="checkbox" value="comments" checked> レビューコメント</label>
+                    <label><input type="checkbox" value="reading" checked> 読み取りコンテキスト</label>
+                    <label><input type="checkbox" value="brief" checked> 目的・ストーリー・期待値</label>
+                    <label><input type="checkbox" value="notes" checked> コンテキストメモ</label>
+                    <label><input type="checkbox" value="persona" checked> 読み手ペルソナ</label>
+                    <label><input type="checkbox" value="files" checked> 参照ファイル</label>
+                  </div>
+                </details>
+                <label class="settings-field ai-chat-skills">
+                  <span class="settings-field-label">使うスキル（任意・複数選択）</span>
+                  <select id="ai-skill-select" multiple size="3" aria-label="AIチャットで使うスキル"></select>
+                </label>
               </div>
-              <details class="ai-context" open>
-                <summary>AIに渡すコンテキスト <span class="ai-context-state">すべて選択</span></summary>
-                <p class="ai-context-hint">会話ごとに必要な前提だけを選べます。新しい会話ではすべて選択されています。</p>
-                <div id="ai-context-options" class="ai-context-options">
-                  <label><input type="checkbox" value="comments" checked> レビューコメント</label>
-                  <label><input type="checkbox" value="reading" checked> 読み取りコンテキスト</label>
-                  <label><input type="checkbox" value="brief" checked> 目的・ストーリー・期待値</label>
-                  <label><input type="checkbox" value="notes" checked> コンテキストメモ</label>
-                  <label><input type="checkbox" value="persona" checked> 読み手ペルソナ</label>
-                  <label><input type="checkbox" value="files" checked> 参照ファイル</label>
+              <!-- 何について話しているかと、話した中身。広い画面ではここが右の欄になります。 -->
+              <div class="ai-conversation">
+                <section id="ai-target" class="ai-target hidden">
+                  <span id="ai-target-type" class="target-badge"></span>
+                  <p id="ai-target-path" class="ai-target-path"></p>
+                  <blockquote id="ai-target-text"></blockquote>
+                  <p id="ai-target-comments" class="ai-target-comments" hidden></p>
+                </section>
+                <section id="translation-result" class="translation-result hidden"></section>
+                <div id="ai-messages" class="ai-messages">
+                  <p class="muted">文章を選択して「AIに質問」、または文書全体について相談できます。</p>
                 </div>
-              </details>
-              <label class="settings-field ai-chat-skills">
-                <span class="settings-field-label">使うスキル（任意・複数選択）</span>
-                <select id="ai-skill-select" multiple size="3" aria-label="AIチャットで使うスキル"></select>
-              </label>
-              <section id="ai-target" class="ai-target hidden">
-                <span id="ai-target-type" class="target-badge"></span>
-                <p id="ai-target-path" class="ai-target-path"></p>
-                <blockquote id="ai-target-text"></blockquote>
-                <p id="ai-target-comments" class="ai-target-comments" hidden></p>
-              </section>
-              <section id="translation-result" class="translation-result hidden"></section>
-              <div id="ai-messages" class="ai-messages">
-                <p class="muted">文章を選択して「AIに質問」、または文書全体について相談できます。</p>
               </div>
             </div>
             <form id="ai-chat-form" class="ai-chat-form">
@@ -297,7 +307,8 @@
             <a class="tool-link" data-tool-link="context" href="#/">コンテキスト</a>
             <a class="tool-link" data-tool-link="persona" href="#/">読み手ペルソナ</a>
             <a class="tool-link" data-tool-link="files" href="#/">参照ファイル</a>
-            <a class="tool-link" data-tool-link="chat" href="#/">AIチャットの記録</a>
+            <a class="tool-link" data-tool-link="chat" href="#/">AIチャット</a>
+            <a class="tool-link" data-tool-link="chatLog" href="#/">チャットの記録</a>
             <a class="tool-link hidden" data-tool-link="manager" href="#/">管理者</a>
             <a class="tool-link" data-tool-link="placement" href="#/">指摘の配置</a>
             <a class="tool-link" data-tool-link="review" href="#/">AIレビュー</a>
@@ -307,6 +318,9 @@
           </nav>
         </header>
         <div class="tool-page-body">
+          <!-- AIチャットの置き場所です。中身（#ai-panel）はサイドパネルから運んできます。
+               作り直さないので、書きかけの質問も生成中の回答もそのまま続きになります。 -->
+          <div id="chat-page-host" class="chat-page-host hidden"></div>
           <section id="persona-page-panel" class="persona-page-panel tool-panel card hidden" aria-live="polite">
             <div class="pane-scroll">
               <div class="ai-header">
@@ -650,7 +664,8 @@
             <a class="tool-link" data-tool-link="context" href="#/">コンテキスト</a>
             <a class="tool-link" data-tool-link="persona" href="#/">読み手ペルソナ</a>
             <a class="tool-link" data-tool-link="files" href="#/">参照ファイル</a>
-            <a class="tool-link" data-tool-link="chat" href="#/">AIチャットの記録</a>
+            <a class="tool-link" data-tool-link="chat" href="#/">AIチャット</a>
+            <a class="tool-link" data-tool-link="chatLog" href="#/">チャットの記録</a>
             <a class="tool-link hidden" data-tool-link="manager" href="#/">管理者</a>
             <a class="tool-link" data-tool-link="placement" href="#/">指摘の配置</a>
             <a class="tool-link" data-tool-link="review" href="#/">AIレビュー</a>

@@ -189,6 +189,7 @@ test('本文の隣に置かないものは、別タブでも開けるリンク�
       ['A', 'persona', '#/persona/docs%2Fnote.md'],
       ['A', 'files', '#/files/docs%2Fnote.md'],
       ['A', 'chat', '#/chat/docs%2Fnote.md'],
+      ['A', 'chatLog', '#/chat-log/docs%2Fnote.md'],
       ['A', 'manager', '#/manager/docs%2Fnote.md'],
       ['A', 'placement', '#/placement/docs%2Fnote.md'],
       ['A', 'review', '#/ai-review/docs%2Fnote.md'],
@@ -2627,6 +2628,32 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
     );
     assert.equal(panel.closest('#side-pane'), null, `#${panel.id} はサイドパネルの中に残さない`);
   }
+  /*
+   * AIチャットだけは、広い画面でも同じ操作盤を運んで出します（`createApp.js` の
+   * `mountChatPanel`）。だからmarkupの時点では置き場所は空で、操作盤はタブの中にあります。
+   */
+  assert.equal(document.querySelector('#chat-page-host').children.length, 0, 'チャットの置き場所は空で始まる');
+  assert.ok(document.querySelector('#ai-panel').closest('#side-pane'), '操作盤はタブの中にある');
+  /*
+   * 運んだ先でも、送信欄は下に残したままやり取りだけを流します。そのために画面の高さを
+   * 使い切ります。ページごと流すと、答えを読み下すたび送信欄も一緒に消えます。
+   */
+  assert.match(
+    withoutComments,
+    /\.tool-page\.chat-page \{[^}]*height: calc\(100dvh/,
+    'AIチャットの画面は、ページごとではなく画面の高さで組む'
+  );
+  assert.match(
+    withoutComments,
+    /\.ai-panel-page \.ai-messages \{[^}]*flex: 1 1 0;/,
+    '広い画面では、やり取りの欄そのものが流れる'
+  );
+  assert.match(
+    withoutComments,
+    /\.ai-panel-page \.pane-scroll \{[^}]*grid-template-columns:/,
+    '広い画面では、決めるものとやり取りを左右に分ける'
+  );
+
   const [, toolSelectors, toolDeclarations] = /([^{}]*\.tool-panel[^{}]*)\{([^}]*)\}/.exec(withoutComments);
   assert.match(toolSelectors, /\.tool-panel/);
   assert.match(toolDeclarations, /overflow: visible;/, 'ツール画面のパネルは中身を切り落とさない');
@@ -2745,7 +2772,7 @@ test('the premise screens open one at a time, and let the reviewer decide a read
   assert.equal(document.querySelector('#persona-input').value, '当番の運用担当。この製品は初めて。');
 
   // 保存した相談は、専用の画面で読み直して直せます。
-  await openToolPage(document, 'chat');
+  await openToolPage(document, 'chatLog');
   assert.equal(document.querySelector('#workspace-conversation-state').textContent, '1件');
   document.querySelector('[data-open-conversation]').click();
   assert.equal(document.querySelectorAll('#workspace-conversation-detail .workspace-message').length, 2);
@@ -2785,6 +2812,152 @@ test('the premise screens open one at a time, and let the reviewer decide a read
   await waitFor(() => !document.querySelector('#reference-files-panel').classList.contains('hidden'));
   assert.equal(document.querySelector('#tool-page-label').textContent, '参照ファイル');
   assert.equal(document.querySelector('#review-view').classList.contains('hidden'), true);
+});
+
+test('記録の画面をアドレスから直に開いても、保存済みの会話が並ぶ', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const conversation = {
+    id: 'conversation-direct',
+    documentPath: 'guide.md',
+    title: '前回の相談',
+    target: { type: 'document' },
+    messages: [
+      { id: 'user-1', role: 'user', content: '当番は読めますか？', createdAt: '2026-09-01T00:00:00.000Z' },
+      { id: 'assistant-1', role: 'assistant', content: '前提が足りません。', createdAt: '2026-09-01T00:00:00.000Z' }
+    ]
+  };
+  const { document } = await startApp(t, 'http://localhost/#/chat-log/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'guide.md', comments: [] },
+      reviewFile: '.review/guide.md.review.json'
+    }),
+    '/api/ai/status': () => ({
+      token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model', effort: 'low'
+    }),
+    '/api/ai/conversations': () => ({ conversations: [conversation] })
+  });
+
+  /*
+   * 記録は文書を開いたあとに届きます。届いた時点でこの画面へも知らせないと、保存した
+   * 会話があるのに「0件」と出たままになります。何も保存していないのと見分けが付きません。
+   */
+  await waitFor(() => document.querySelector('#workspace-conversation-state').textContent === '1件');
+  assert.equal(document.querySelectorAll('#workspace-conversation-list [data-open-conversation]').length, 1);
+  document.querySelector('[data-open-conversation]').click();
+  assert.equal(document.querySelectorAll('#workspace-conversation-detail .workspace-message').length, 2);
+});
+
+test('AIチャットは、タブで交わした続きを広い画面でそのまま続けられる', async (t) => {
+  const markdown = '# Guide\n\nRun the program.\n';
+  const asked = [];
+  const created = [];
+  const conversation = {
+    id: 'conversation-wide-screen',
+    documentPath: 'guide.md',
+    title: 'Run the program.',
+    target: { type: 'paragraph', selectedText: 'Run the program.' },
+    messages: []
+  };
+  const { document } = await startApp(t, 'http://localhost/#/review/guide.md', {
+    '/api/file': async () => ({
+      path: 'guide.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'guide.md', comments: [] },
+      reviewFile: '.review/guide.md.review.json'
+    }),
+    '/api/review': () => ({
+      review: { targetFile: 'guide.md', comments: [] },
+      reviewFile: '.review/guide.md.review.json'
+    }),
+    '/api/ai/status': () => ({
+      token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model', effort: 'low'
+    }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/conversation': (_input, options) => {
+      created.push(JSON.parse(options.body));
+      return { conversation };
+    },
+    '/api/ai/message': (_input, options) => {
+      const { message } = JSON.parse(options.body);
+      asked.push(message);
+      conversation.messages = [
+        ...conversation.messages,
+        { id: `user-${asked.length}`, role: 'user', content: message },
+        { id: `assistant-${asked.length}`, role: 'assistant', content: `${message}への答えです。` }
+      ];
+      return ndjsonResponse([
+        { type: 'started' },
+        { type: 'result', conversation, message: conversation.messages.at(-1) }
+      ]);
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-ai-button'));
+
+  // まずは本文の隣のタブで1往復します。質問は本文のその場所から始まるので、入口はここです。
+  document.querySelector('#markdown-content p .inline-ai-button').click();
+  document.querySelector('#ai-chat-input').value = 'この段落の前提は？';
+  document.querySelector('#ai-chat-form').requestSubmit();
+  await waitFor(() => document.querySelectorAll('#ai-panel .ai-message').length === 2);
+  assert.ok(document.querySelector('#ai-panel').closest('#side-pane'), '始まりはサイドパネルの中');
+
+  // 広い画面への入口もリンクです。押す前から行き先が入っているので、別タブでも開けます。
+  const openLink = document.querySelector('#ai-chat-open-page');
+  assert.equal(openLink.getAttribute('href'), '#/chat/guide.md');
+  openLink.click();
+  await waitFor(() => !document.querySelector('#tool-view').classList.contains('hidden'));
+
+  /*
+   * 広い画面へ出るのは、作り直した操作盤ではなく、いま話していた操作盤そのものです。
+   * 作り直すと、交わしたやり取りも書きかけの質問も片方へ取り残されます。
+   */
+  const panel = document.querySelector('#ai-panel');
+  assert.ok(panel.closest('#chat-page-host'), '広い画面の置き場所へ運ばれる');
+  assert.equal(panel.closest('#side-pane'), null, 'サイドパネルには二重に残さない');
+  assert.equal(panel.classList.contains('hidden'), false);
+  // タブ列を離れたので、「AIタブの中身」とは名乗りません。探しに行けるタブがありません。
+  assert.equal(panel.getAttribute('role'), 'region');
+  assert.equal(panel.getAttribute('aria-label'), 'AIチャット');
+  assert.equal(panel.hasAttribute('aria-labelledby'), false);
+  assert.equal(document.querySelector('#tool-page-label').textContent, 'AIチャット');
+  assert.equal(
+    document.querySelectorAll('#ai-panel .ai-message').length, 2,
+    'タブで交わしたやり取りが、そのまま広い画面に出る'
+  );
+  // 記録の画面は別です。あちらは続けるためではなく、間違って残った発言を直すための画面です。
+  assert.equal(document.querySelector('#conversations-panel').classList.contains('hidden'), true);
+  assert.equal(
+    document.querySelector('#ai-conversations-open-page').getAttribute('href'),
+    '#/chat-log/guide.md'
+  );
+
+  // 続きも同じ会話です。新しい会話を作り直しません。
+  document.querySelector('#ai-chat-input').value = '例も足すべき？';
+  document.querySelector('#ai-chat-form').requestSubmit();
+  await waitFor(() => document.querySelectorAll('#ai-panel .ai-message').length === 4);
+  assert.deepEqual(asked, ['この段落の前提は？', '例も足すべき？']);
+  assert.equal(created.length, 1, '広い画面へ移っても、会話は始めからやり直さない');
+
+  // ほかの画面へ移るときも、置き場所へ戻します。置き去りにすると、戻ったタブが空になります。
+  document.querySelector('.tool-page-nav [data-tool-link="files"]').click();
+  await waitFor(() => !document.querySelector('#reference-files-panel').classList.contains('hidden'));
+  assert.ok(document.querySelector('#ai-panel').closest('#side-pane'), 'ほかの画面へ移ったら戻す');
+  assert.equal(document.querySelector('#chat-page-host').children.length, 0);
+
+  // 本文へ戻すと、AIタブの中身に戻ります。選んでいたタブもAIのままです。
+  document.querySelector('.tool-page-nav [data-tool-link="chat"]').click();
+  await waitFor(() => document.querySelector('#ai-panel').closest('#chat-page-host'));
+  document.querySelector('#tool-back-link').click();
+  await waitFor(() => !document.querySelector('#review-view').classList.contains('hidden'));
+  assert.ok(document.querySelector('#ai-panel').closest('#side-pane'), 'タブの中へ戻す');
+  assert.equal(document.querySelector('#ai-panel').getAttribute('role'), 'tabpanel');
+  assert.equal(document.querySelector('#ai-panel').getAttribute('aria-labelledby'), 'ai-tab-button');
+  assert.equal(document.querySelector('#ai-panel').classList.contains('hidden'), false);
+  assert.equal(document.querySelector('#comments-panel').classList.contains('hidden'), true);
+  assert.equal(document.querySelectorAll('#ai-panel .ai-message').length, 4, '往復しても記録は残る');
 });
 
 test('文字起こしを開くと、押す前に読む範囲が出て、聞くと要約と次の行動が並ぶ', async (t) => {

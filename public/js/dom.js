@@ -199,6 +199,8 @@ const SELECTORS = {
   tasksList: '#tasks-list',
 
   toolView: '#tool-view',
+  // 広い画面のAIチャットの置き場所。中身はサイドパネルから運んでくるので、markupでは空です。
+  chatPageHost: '#chat-page-host',
   toolPageLabel: '#tool-page-label',
   toolPageLead: '#tool-page-lead',
   toolDocumentTitle: '#tool-document-title',

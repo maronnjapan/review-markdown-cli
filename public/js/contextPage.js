@@ -6,10 +6,11 @@ const MAX_CONVERSATION_TITLE_CHARS = 48;
 const ROLE_LABELS = { user: 'あなた', assistant: 'Codex' };
 
 /**
- * 保存したAIチャットの記録（`#/chat/<path>`）と、コンテキストの画面の見出しです。
+ * 保存したAIチャットの記録（`#/chat-log/<path>`）と、コンテキストの画面の見出しです。
  *
  * どの画面を出すかと、行き来のリンクは `toolPages.js` と `createApp.js` が持ちます。
- * ここが持つのは、記録を読み直して直す操作だけです。
+ * ここが持つのは、記録を読み直して直す操作だけです。相談を続ける場所は別で、AIタブと
+ * `#/chat/<path>` にあります。続けるのと直すのとでは、読み方も押すものも違うからです。
  *
  * ── 相談の記録を、独立した1枚にしてある理由 ────────────────
  * 相談の記録も前提です。Codexのスレッドが切れていれば、次に同じ会話を続けるときの
@@ -66,7 +67,7 @@ export function createContextPageController({
     refs.workspaceConversationState.dataset.state = conversations.length ? 'set' : 'unset';
     refs.workspaceConversationList.innerHTML = conversations.length
       ? conversations.map(conversationItemHtml).join('')
-      : '<p class="muted">まだ相談の記録はありません。「AI」タブで質問すると、ここに残ります。</p>';
+      : '<p class="muted">まだ相談の記録はありません。「AI」タブか「AIチャット」の画面で質問すると、ここに残ります。</p>';
     refs.workspaceConversationDetail.innerHTML = detailHtml(openConversation());
   }
 

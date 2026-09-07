@@ -16,7 +16,11 @@ export function createAiController({
   flushComments = async () => true,
   // 相談して分かったことをコンテキストメモの下書きへ渡します。
   onKeepContext = () => {},
-  onPaneRequested = () => {}
+  onPaneRequested = () => {},
+  // 記録は別の画面（`contextPage.js`）でも並べます。届いたのがこちらなので、
+  // 届いた時点であちらへも知らせます。知らせないと、文書を開いた直後に記録の画面を
+  // 開いた人には、保存済みの会話が「0件」と出たままになります。
+  onConversationsLoaded = () => {}
 }) {
   let preparePromise = null;
 
@@ -58,6 +62,7 @@ export function createAiController({
       // 取れた記録は先に出します。あとに続くスキル一覧が取れなかったからといって、
       // 残っている会話まで選べなくなる筋合いはありません。
       renderConversationOptions();
+      onConversationsLoaded();
       const skillResult = await api.listReviewSkills();
       refs.aiSkillSelect.innerHTML = (skillResult.skills || []).map((skill) => (
         `<option value="${escapeHtml(skill.id)}">${escapeHtml(skill.name)}</option>`
