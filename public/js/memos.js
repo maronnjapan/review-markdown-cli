@@ -10,8 +10,15 @@ import { createId, escapeHtml, formatTimestamp } from './util.js';
  * 読んでいて浮かんだこと（あとで確かめる、この語は前の章と揃っていない気がする）を
  * その場に置けて、置いた瞬間に誰かの仕事にならない、というのがこの機能の全部です。
  *
- * 残す先の決め方（対象）はコメントとまったく同じで、追加ダイアログも同じものを使います
- * （`comments.js` の `KINDS`）。違うのは、保存先の項目と、この一覧と、本文での色だけです。
+ * 残す先を本文の場所にするときは、コメントとまったく同じ道を通ります（`comments.js` の
+ * `KINDS`）。違うのは、保存先の項目と、この一覧と、本文での色だけです。
+ *
+ * ── その場所を選ばずに、ただ書けること ────────────────────
+ * 覚え書きは、どこかを指すより先に出てきます。「あとで用語を確かめる」に対象は要りません。
+ * 対象を選ばないと書けないと、書くたびに「どこに付けるか」を決めさせることになり、
+ * それは自分宛ての覚え書きに要らない手間です。だから「メモ」のタブには、押す前から
+ * 書ける欄（`createMemoComposer`）を置いてあります。ここから残したメモは文書全体を指し、
+ * 本文の場所に付けたいときだけ、段落や選んだ文字から残します。
  *
  * 同じ「メモ」でも、AIに前提として読ませたいことはコンテキストメモ（`contextNotes.js`）
  * のほうです。分かれているのは「AIに読ませるために書く」か「自分のために書く」かという、
@@ -40,13 +47,55 @@ export function copyMemoTarget(memo) {
 }
 
 /**
+ * 「メモ」のタブに置く、その場で書ける欄です。
+ *
+ * 残す先は文書全体です。本文の場所を指すメモは段落や選んだ文字から残せるので、ここでは
+ * 対象を選ばせません。選ばせると、対象の要らない覚え書きにまで対象を決めさせることになります。
+ *
+ * 編集モードでは書けません。本文を書き換えているあいだは、既にあるメモも触れない
+ * （`renderMemoList` の `readOnly`）ので、同じ線で止めます。
+ */
+export function createMemoComposer({ refs, state, onSubmit }) {
+  refs.memoInput.addEventListener('input', syncSubmit);
+  refs.memoInput.addEventListener('keydown', (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      event.preventDefault();
+      refs.memoForm.requestSubmit();
+    }
+  });
+  refs.memoForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const body = refs.memoInput.value.trim();
+    if (!body || state.mode === 'edit') return;
+    refs.memoInput.value = '';
+    syncSubmit();
+    onSubmit(body);
+  });
+
+  /** 文書を開いたとき。書きかけは前の文書のものなので捨てます。 */
+  function reset() {
+    refs.memoInput.value = '';
+    syncSubmit();
+  }
+
+  /** 押せるのは、書いてあって、編集モードでないときだけです。 */
+  function syncSubmit() {
+    const readOnly = state.mode === 'edit';
+    refs.memoInput.disabled = readOnly;
+    refs.memoSubmit.disabled = readOnly || refs.memoInput.value.trim() === '';
+  }
+
+  return { reset, sync: syncSubmit };
+}
+
+/**
  * メモの一覧を描きます。`handlers` には一覧での位置を渡すので、呼ぶ側がDOMから
  * 数え直さずに済みます（コメント一覧と同じ約束です）。
  */
 export function renderMemoList(container, { memos, mode, pendingDeleteId, handlers }) {
   const readOnly = mode === 'edit';
   container.innerHTML = memos.length === 0
-    ? '<p class="muted">まだメモはありません。読みながら浮かんだことを、その場所に残せます。</p>'
+    ? '<p class="muted">まだメモはありません。上の欄に書くか、本文の段落や選んだ文字から残せます。</p>'
     : memos.map((memo, index) => memoCardHtml(memo, index, readOnly, pendingDeleteId)).join('');
 
   container.querySelectorAll('textarea[data-memo-index]').forEach((textarea) => {

@@ -19,9 +19,15 @@ import { isTextDocumentPath } from './links.js';
  * 起こし、任せられたものを実行します。
  *
  * ── 何を見守るか ───────────────────────────────────────
- * 2種類あります。画面で「この文書を見守る」を付けた文書（記録の `watch`）と、この起動中に
- * 字幕が届いた文書（`noteActivity`）です。後者を自動で入れるのは、会議中に「見守る」を
- * 押しに行く手間を無くすためで、字幕が止まってから一定時間で外します。
+ * 文字起こしに使うファイル（`transcriptFiles.js`）だけです。そのうえで2種類あります。
+ * 画面で「この文書を見守る」を付けた文書（記録の `watch`）と、この起動中に字幕が届いた
+ * 文書（`noteActivity`）です。後者を自動で入れるのは、会議中に「見守る」を押しに行く
+ * 手間を無くすためで、字幕が止まってから一定時間で外します。
+ *
+ * 文字起こしに絞るのは、見守りが「押していないのにAIへ送る」唯一の道だからです。会議の
+ * あいだ数秒ごとに伸びるファイルには要りますが、書きかけの資料まで見守れると、開いたまま
+ * 席を立った文書がAIを呼び続けます。ほかの文書のタスクは、画面から押されたときだけ
+ * 起こします（`runNow`）。
  *
  * ── いつAIへ送るか ─────────────────────────────────────
  * 変わっていなければ送りません。追記だけで増え方が小さいときも待ちます
@@ -46,7 +52,7 @@ const ACTIVITY_TTL_MS = 6 * 60 * 60 * 1000;
  * @param {object} options.aiService `extractTasks` と `performTask` を持つもの。
  * @param {object} options.settings `autoTasks` を返すもの（`settings.js` の `createSettings`）。
  * @param {object} [options.transcripts] 文字起こしに使える範囲（`transcriptFiles.js`）。
- *   文字起こしとして読むかどうかだけに使います。見守る対象を絞るのには使いません。
+ *   見守る対象をこの範囲へ絞るのと、文字起こしとして読むかどうかの両方に使います。
  * @param {Function} [options.log] ターミナルへの1行。裏で何をしたかは、画面を見ていない人にも見せます。
  * @param {Function} [options.now] 現在時刻（ミリ秒）。テストで差し替えます。
  * @param {Function} [options.setTimer] / [options.clearTimer] タイマー。テストで差し替えます。
@@ -113,7 +119,11 @@ export function createAutoTaskRunner({
       if (now() - at > ACTIVITY_TTL_MS) activity.delete(file);
       else files.add(file);
     }
-    return [...files].filter(isTextDocumentPath).sort((a, b) => a.localeCompare(b));
+    // 文字起こしの範囲を、記録に残っている `watch` より後で当てます。範囲を狭めた設定で
+    // 立ち上げ直したときも、前に付けたままの見守りがそのまま走り続けないようにするためです。
+    return [...files]
+      .filter((file) => isTextDocumentPath(file) && transcripts.matches(file))
+      .sort((a, b) => a.localeCompare(b));
   }
 
   /**
@@ -262,7 +272,9 @@ export function createAutoTaskRunner({
       // 見分けられません。
       owner,
       captioned: activity.has(relativeFile),
-      watching: enabled && (activity.has(relativeFile) || record?.watch === true),
+      // 見守っていると言えるのは、文字起こしとして読み直す文書だけです（`watchedFiles`）。
+      watching: enabled && transcripts.matches(relativeFile)
+        && (activity.has(relativeFile) || record?.watch === true),
       running: running.has(relativeFile),
       lastTickAt: lastTickAt ? new Date(lastTickAt).toISOString() : null,
       nextTickAt: enabled && nextTickAt ? new Date(nextTickAt).toISOString() : null

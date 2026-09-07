@@ -704,6 +704,47 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   margin: 0.8rem 1rem 0;
 }
 #memo-status { margin: 0.4rem 1rem 0.8rem; }
+/*
+ * メモの記入欄。押す前から書けることが要るので、一覧より先に置いています。
+ * 対象を選ばずに残せるぶん、どこへ残るのかは欄の見出しと注記で言います。
+ */
+.memo-form {
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.6rem 0 0;
+  padding: 0 1rem 0.8rem;
+}
+.memo-form-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.memo-form textarea {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font: inherit;
+  padding: 0.5rem 0.6rem;
+  resize: vertical;
+  width: 100%;
+}
+.memo-form .context-note-actions {
+  align-items: center;
+  justify-content: space-between;
+}
+.memo-form .context-note-actions button { white-space: nowrap; }
+.memo-form-hint {
+  color: var(--muted);
+  font-size: 0.72rem;
+  margin: 0;
+  min-width: 0;
+}
+#memo-submit, #tasks-add-submit {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+#memo-submit:disabled, #tasks-add-submit:disabled { opacity: 0.55; }
 .comment-confirm {
   background: #fdecea;
   border-radius: 10px;
@@ -1846,10 +1887,35 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
  * 「今すべきこと」を一覧より上に置いています。会議中に開くパネルなので、一覧を
  * 読み下す前に、いま手を付けるものが1つ見えることを優先しました。
  */
+/*
+ * タスクを自分で書く欄。AIに起こさせるより先に置いています。TODOはまず自分が書くもので、
+ * AIに起こさせるのはその足しだからです。
+ */
+.tasks-add-form {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.6rem 1rem 0.2rem;
+}
+.tasks-add-form textarea {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font: inherit;
+  padding: 0.5rem 0.6rem;
+  resize: vertical;
+  width: 100%;
+}
+.tasks-add-form .context-note-actions { align-items: center; justify-content: flex-start; }
+.tasks-add-form select {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font: inherit;
+  padding: 0.3rem 0.45rem;
+}
 .tasks-watch {
-  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
   padding: 0.6rem 1rem 0.5rem;
 }
+#tasks-status { margin: 0 1rem 0.6rem; }
 .tasks-watch .settings-check { font-size: 0.85rem; }
 .tasks-watch .ai-context-hint { margin-top: 0.3rem; }
 .tasks-panel .placement-form { padding-bottom: 0.5rem; }

@@ -67,8 +67,9 @@ manager と translation と autoTasks は既定では無効です。
 使う機能だけ true にすると、次回以降の起動でも有効になります。
 translation と autoTasks は、ブラウザ右上の「設定」からも入り切りできます（その場で効き、ここへ保存します）。
 
-autoTasks は、文字起こしや書きかけの資料から「やること」をAIに起こさせ、任せられるものを裏で
-済ませておく自動タスクです。autoTasksInterval は文書を読み直す間隔（秒）、autoTasksActions は
+autoTasks はタスクの見守りです。会議中の文字起こし（transcriptFiles に当たるファイル）を一定間隔で
+読み直し、増えた分からタスクを起こします。文書ごとの「やること」を書くこと自体は、この設定に
+関わらず「タスク」の画面でできます。autoTasksInterval は読み直す間隔（秒）、autoTasksActions は
 任せること（organize / focus / research / sample / inquiry。書いたものだけが走ります）、
 autoTasksInstructions は特にしてほしいことの文章です。どれも「設定」から変えられます。
 

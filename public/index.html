@@ -149,7 +149,15 @@
               </div>
             </div>
             <div class="pane-scroll">
-              <p class="memo-lede">読みながら浮かんだことを、その場所に残す自分用の覚え書きです。コメントと違って対応の状態を持たず、AIへも渡さず、レビューMarkdownにも書き出しません。</p>
+              <p class="memo-lede">読みながら浮かんだことを残す自分用の覚え書きです。コメントと違って対応の状態を持たず、AIへも渡さず、レビューMarkdownにも書き出しません。</p>
+              <form id="memo-form" class="memo-form">
+                <label class="memo-form-label" for="memo-input">この文書へのメモ</label>
+                <textarea id="memo-input" rows="3" placeholder="例：この節、第4章と重複していないか あとで確かめる"></textarea>
+                <div class="context-note-actions">
+                  <p class="memo-form-hint">本文のその場所に付けたいときは、段落や選んだ文字から残します。</p>
+                  <button id="memo-submit" type="submit" disabled>残す</button>
+                </div>
+              </form>
               <p id="memo-status" class="save-status" aria-live="polite"></p>
               <div id="memos-list" class="comments-list"></div>
             </div>
@@ -561,30 +569,39 @@
             <div class="pane-scroll">
               <div class="ai-header">
                 <div>
-                  <p class="eyebrow">Auto tasks</p>
-                  <h2>自動タスク</h2>
+                  <p class="eyebrow">Tasks</p>
+                  <h2>タスク</h2>
                 </div>
                 <span id="tasks-state" class="ai-context-state">0件</span>
               </div>
-              <p class="placement-hint">文字起こしや書きかけの資料から、まだやること（対応・判断・調査・サンプル実装・問い合わせ対応）をAIが起こします。調査・サンプル実装・問い合わせ対応は、任せてあればAIが裏で書き、「確認待ち」として並びます。読んで採るかどうかを決めるのはあなたです。「やると決める」を押したタスクは期限とメモを持て、AIの整理で見送られません。</p>
+              <p class="placement-hint">種類は5つ（対応・判断・調査・サンプル実装・問い合わせ対応）です。調査・サンプル実装・問い合わせ対応は、任せてあればAIが書き、「確認待ち」として並びます。読んで採るかどうかを決めるのはあなたです。「やると決める」を押したタスクは期限とメモを持て、AIの整理で見送られません。</p>
               <p id="tasks-runner-hint" class="placement-hint" hidden></p>
 
-              <section class="tasks-watch">
+              <form id="tasks-add-form" class="tasks-add-form">
+                <label class="memo-form-label" for="tasks-add-input">タスクを自分で書く</label>
+                <textarea id="tasks-add-input" rows="2" placeholder="例：再起動の停止条件を運用チームに確認する"></textarea>
+                <div class="context-note-actions">
+                  <select id="tasks-add-kind" aria-label="タスクの種類"></select>
+                  <button id="tasks-add-submit" type="submit" disabled>足す</button>
+                </div>
+              </form>
+
+              <form id="tasks-run-form" class="placement-form">
+                <div class="placement-actions">
+                  <button id="tasks-stop-button" class="hidden" type="button">停止</button>
+                  <button id="tasks-run-button" type="submit">AIに起こさせる</button>
+                </div>
+                <p id="tasks-run-hint" class="ai-context-hint">いまの本文を読み直してタスクを起こし、任せてある種類はそのまま実行します。押したときだけ走ります。</p>
+              </form>
+
+              <section id="tasks-watch-section" class="tasks-watch hidden">
                 <label class="settings-check">
                   <input id="tasks-watch" type="checkbox">
                   <span>この文書を見守る</span>
                 </label>
                 <p id="tasks-watch-hint" class="ai-context-hint">一定間隔でこの文書を読み直し、増えた分からタスクを起こします。字幕が届いている文書は、付けなくても会議のあいだ見守ります。</p>
-                <p id="tasks-status" class="ai-context-status" aria-live="polite"></p>
               </section>
-
-              <form id="tasks-run-form" class="placement-form">
-                <div class="placement-actions">
-                  <button id="tasks-stop-button" class="hidden" type="button">停止</button>
-                  <button id="tasks-run-button" type="submit">タスクを整理する</button>
-                </div>
-                <p id="tasks-run-hint" class="ai-context-hint">いまの本文を読み直してタスクを起こし、任せてある種類はそのまま実行します。見守りを待たずに走らせたいときに押します。</p>
-              </form>
+              <p id="tasks-status" class="ai-context-status" aria-live="polite"></p>
 
               <section id="tasks-focus" class="tasks-focus" hidden>
                 <h3>今すべきこと</h3>
@@ -592,17 +609,6 @@
                 <p id="tasks-focus-reason" class="tasks-focus-reason"></p>
                 <p id="tasks-focus-updated" class="tasks-focus-updated"></p>
               </section>
-
-              <details id="tasks-add" class="ai-context">
-                <summary>タスクを自分で足す</summary>
-                <form id="tasks-add-form" class="context-note-form">
-                  <select id="tasks-add-kind" aria-label="タスクの種類"></select>
-                  <textarea id="tasks-add-input" rows="2" placeholder="例：再起動の停止条件を運用チームに確認する"></textarea>
-                  <div class="context-note-actions">
-                    <button id="tasks-add-submit" type="submit" disabled>足す</button>
-                  </div>
-                </form>
-              </details>
 
               <div class="tasks-filter" role="group" aria-label="タスクの絞り込み">
                 <button type="button" data-tasks-filter="all" aria-pressed="true">すべて</button>
@@ -612,7 +618,7 @@
               </div>
               <p id="tasks-plan-summary" class="tasks-plan-summary" hidden></p>
               <div id="tasks-list" class="tasks-list"></div>
-              <p class="ai-context-hint tasks-settings-hint">何を任せるか（整理・今すべきこと・調査・サンプル実装・問い合わせ対応）と見守りの間隔、特にしてほしいことは、画面右上の「設定」で変えられます。費用を抑えたいときは、そこで自動タスクを切ってください。</p>
+              <p class="ai-context-hint tasks-settings-hint">何を任せるか（整理・今すべきこと・調査・サンプル実装・問い合わせ対応）と見守りの間隔、特にしてほしいことは、画面右上の「設定」で変えられます。裏で読み直させたくないときは、そこで見守りを切ってください。この一覧と「AIに起こさせる」は、切っても使えます。</p>
             </div>
           </section>
         </div>
@@ -774,12 +780,12 @@
         </section>
 
         <section class="settings-section">
-          <h3 class="settings-section-title">自動タスク</h3>
+          <h3 class="settings-section-title">タスクの見守り</h3>
           <label class="settings-check">
             <input id="settings-auto-tasks" type="checkbox">
-            <span>自動タスクを有効にする</span>
+            <span>見守りを有効にする</span>
           </label>
-          <p class="ai-context-hint">文字起こしや書きかけの資料からAIがやることを起こし、任せた自動化を裏で走らせます。無効にすると「タスク」の画面へのリンクが消え、見守りも止まり、AIへは何も送りません。</p>
+          <p class="ai-context-hint">会議中の文字起こしを一定間隔で読み直し、増えた分からAIがタスクを起こします。無効にすると見守りが止まり、押していないのにAIへ送ることはなくなります。「タスク」の画面と「AIに起こさせる」は、無効でも使えます。</p>
           <div class="settings-fields">
             <label class="settings-field">
               <span class="settings-field-label">見守りの間隔</span>
@@ -796,7 +802,7 @@
           <fieldset id="settings-auto-tasks-actions" class="settings-actions">
             <legend class="settings-field-label">任せること</legend>
           </fieldset>
-          <p class="ai-context-hint">外したものは走りません。タスクを起こすこと自体は、有効なあいだ必ず走ります。</p>
+          <p class="ai-context-hint">外したものは走りません。見守りと「AIに起こさせる」の両方に効きます。タスクを起こすこと自体は、読み直すたびに必ず走ります。</p>
           <label class="settings-field">
             <span class="settings-field-label">特にしてほしいこと</span>
             <textarea id="settings-auto-tasks-instructions" rows="3" placeholder="例：顧客からの質問は必ず問い合わせ対応として起こす。サンプル実装はTypeScriptで。"></textarea>

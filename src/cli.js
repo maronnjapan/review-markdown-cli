@@ -18,10 +18,10 @@ Options:
       --enable-translation
                         翻訳機能を有効にする（既定: 無効）
       --enable-auto-tasks
-                        自動タスク（文字起こし・資料からタスクを起こし、裏で実行する）を有効にする（既定: 無効）
+                        タスクの見守り（文字起こしを読み直してタスクを起こす）を有効にする（既定: 無効）
       --no-manager      設定ファイルで有効な管理者を無効にする
       --no-translation  設定ファイルで有効な翻訳を無効にする
-      --no-auto-tasks   設定ファイルで有効な自動タスクを無効にする
+      --no-auto-tasks   設定ファイルで有効な見守りを無効にする
       --config <file>   使用する設定ファイルを指定する
       --no-config       設定ファイルを読み込まない
       --no-open         ブラウザの自動起動をスキップする
@@ -48,7 +48,7 @@ Config:
     review-markdown config set aiContext '入門者向けの技術書。読者はJavaScriptの基礎を知っている。'
     review-markdown config set aiReviewModel gpt-5.6-codex   # レビューに使うモデルを固定
     review-markdown config set aiProvider claude --global    # Codex以外のAIで走らせる
-    review-markdown config set autoTasks true        # 自動タスクを次回以降も有効にする
+    review-markdown config set autoTasks true        # タスクの見守りを次回以降も有効にする
     review-markdown config list                      # 適用中の設定を表示
 
   詳しくは review-markdown config --help を参照してください。
@@ -70,14 +70,16 @@ AI provider:
   読みません。ユーザー全体の設定（--global）か --config で指定したファイルにだけ書けます。
   詳しくは review-markdown config --help を参照してください。
 
-Auto tasks:
-  自動タスクは、文字起こしや書きかけの資料から「やること」をAIに起こさせ、任せられるもの
-  （調査・サンプル実装・問い合わせ対応）を裏で済ませておく機能です。有効にした文書を一定間隔で
-  読み直し、増えた分からタスクを起こします。何を任せるか・間隔・特にしてほしいこと・
-  対象の人は、ブラウザ右上の「設定」か、設定ファイルの autoTasksActions /
-  autoTasksInterval / autoTasksInstructions / autoTasksOwner で決めます。
-  autoTasksOwner に名前を書くと、その人がやることだけをタスクに起こします。
-  AIへ送る回数が増えるので、既定では無効です。
+Tasks:
+  文書ごとの「やること」は、この設定に関わらず「タスク」の画面で書けます。AIに本文から
+  起こさせるのも、その画面の「AIに起こさせる」を押したときだけ走ります。
+  autoTasks で有効になるのは見守りだけです。会議中の文字起こしを一定間隔で読み直し、
+  増えた分からタスクを起こし、任せられるもの（調査・サンプル実装・問い合わせ対応）を
+  裏で済ませておきます。見守れるのは transcriptFiles に当たるファイルだけです。
+  何を任せるか・間隔・特にしてほしいこと・対象の人は、ブラウザ右上の「設定」か、
+  設定ファイルの autoTasksActions / autoTasksInterval / autoTasksInstructions /
+  autoTasksOwner で決めます。autoTasksOwner に名前を書くと、その人がやることだけを
+  タスクに起こします。押していないのにAIへ送る唯一の道なので、既定では無効です。
 
 AI context:
   aiContext は、翻訳・AIチャット・指摘の配置で AI がこの原稿を読むときの前提です。

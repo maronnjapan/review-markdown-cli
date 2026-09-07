@@ -26,7 +26,7 @@ export { listMarkdownFiles } from './markdownFiles.js';
  * @param {boolean} [options.manager] 資料の管理者を有効にする。既定は無効。
  * @param {boolean} [options.translation] 翻訳機能を有効にする。既定は無効。既定値であって、
  *   画面の設定から入り切りできます（`src/settings.js`）。
- * @param {boolean} [options.autoTasks] 自動タスクを有効にする。既定は無効。翻訳と同じく既定値で、
+ * @param {boolean} [options.autoTasks] タスクの見守りを有効にする。既定は無効。翻訳と同じく既定値で、
  *   画面の設定から入り切りできます。`autoTasksInterval` / `autoTasksActions` /
  *   `autoTasksInstructions` / `autoTasksOwner` も同じく設定ファイルの値が起点です。
  * @param {string[]} [options.transcriptFiles] 文字起こしに使えるファイルのパターン。

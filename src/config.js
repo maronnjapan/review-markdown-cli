@@ -83,27 +83,27 @@ const CONFIG_KEY_SPECS = {
   autoTasks: {
     kind: 'scalar',
     parse: (value, source) => parseBoolean(value, source),
-    help: '自動タスク（文字起こし・資料からタスクを起こし、裏で実行する）を有効にするかどうか（既定: false）'
+    help: 'タスクの見守り（文字起こしを読み直してタスクを起こす）を有効にするかどうか（既定: false）'
   },
   autoTasksInterval: {
     kind: 'scalar',
     parse: (value, source) => normalizeAutoTaskInterval(value, source),
-    help: `自動タスクが文書を読み直す間隔（秒。既定: ${DEFAULT_AUTO_TASK_INTERVAL_SECONDS}）`
+    help: `見守りが文字起こしを読み直す間隔（秒。既定: ${DEFAULT_AUTO_TASK_INTERVAL_SECONDS}）`
   },
   autoTasksActions: {
     kind: 'list',
     parse: (value, source) => normalizeAutoTaskActions(value, source),
-    help: `自動タスクに任せること（一覧。${AUTO_TASK_ACTION_IDS.join(' / ')}。既定: すべて）`
+    help: `タスクを起こすときにAIへ任せること（一覧。${AUTO_TASK_ACTION_IDS.join(' / ')}。既定: すべて）`
   },
   autoTasksInstructions: {
     kind: 'text',
     parse: (value, source) => normalizeAutoTaskInstructions(value, source),
-    help: '自動タスクに特にしてほしいこと（文章）'
+    help: 'タスクを起こすとき、特にしてほしいこと（文章）'
   },
   autoTasksOwner: {
     kind: 'text',
     parse: (value, source) => normalizeAutoTaskOwner(value, source),
-    help: '自動タスクの対象の人（名前。書くと、その人がやることだけを起こします）'
+    help: 'タスクの対象の人（名前。書くと、その人がやることだけを起こします）'
   },
   aiEmptyTarget: {
     kind: 'scalar',

@@ -61,20 +61,22 @@ const STATUS_MESSAGES = {
 const MINUTE_MS = 60_000;
 
 /**
- * 自動タスクのパネル。
+ * タスクのパネル。
  *
- * 文字起こしや書きかけの資料から、AIが「やること」を起こします。任せてある種類
- * （調査・サンプル実装・問い合わせ対応）はAIが裏で実行し、「確認待ち」として並びます。
- * 読んで採るかどうかを決めるのはレビュアーで、このパネルはそのための場所です。
+ * この文書についての「まだやること」を並べます。自分で書けますし、押せばAIが本文から
+ * 起こします。任せてある種類（調査・サンプル実装・問い合わせ対応）はAIが実行し、
+ * 「確認待ち」として並びます。読んで採るかどうかを決めるのはレビュアーです。
  *
  * ── 一覧はサーバーのもの ─────────────────────────────────
- * ここが持つのは写しです。裏の見守りが足したタスクは、この画面が知らないうちに増えるので、
+ * ここが持つのは写しです。見守っている文書では、この画面が知らないうちにタスクが増えるので、
  * 一覧まるごとを送り返す保存はしません。変えたいこと（見守り・状態・手で足す・消す）だけを
  * 送り、返ってきた一覧で写しを置き換えます。見守りが動いているあいだは定期的に取り直します。
  *
- * ── 出す条件 ───────────────────────────────────────────
- * 自動タスクが有効で、本文を読み直せる文書（MarkdownかテキストでPDFでない）のときだけ
- * リンクを出します。無効なときは、裏の見守りも止まっているので、リンクごと消えます。
+ * ── 出す条件と、勝手に走らせない線 ─────────────────────────
+ * 本文を読み直せる文書（MarkdownかテキストでPDFでない）なら、いつでも出します。書くだけの
+ * TODOに、裏でAIを走らせる設定を要求する理由がないからです。AIへ送るのは押したときだけで、
+ * 押していないのに読み直すのは、会議のあいだ伸び続ける文字起こしだけです（見守り）。
+ * だから見守りの欄は、文字起こしに使えるファイルでしか出しません。
  */
 export function createAutoTasksController({
   refs, state, api, toaster, prepareAi,
@@ -96,7 +98,14 @@ export function createAutoTasksController({
   let openReferenceIds = new Set();
   let knowledgeDrafts = new Map();
   let refreshTimer = null;
+  /**
+   * 取りに行った回の通し番号（古い応答を捨てるため）と、いま取りに行っている最中かどうか。
+   * 2つに分けているのは、通し番号は増える一方なので「取りに行った経験があるか」しか
+   * 表せないからです。1つで兼ねると、2つ目の文書を開いたときに「まだ取りに行っている」と
+   * 読まれて、一覧が空のままになります。
+   */
   let loadRequest = 0;
+  let loading = false;
 
   renderKindOptions();
   bindEvents();
@@ -104,6 +113,7 @@ export function createAutoTasksController({
   /** 文書を開いたときの初期化。写しは前の文書のものなので捨て、開き終わってから取ります。 */
   function load() {
     pendingDeleteId = null;
+    loading = false;
     openResultIds = new Set();
     openPlanIds = new Set();
     planDrafts = new Map();
@@ -121,14 +131,23 @@ export function createAutoTasksController({
    */
   function sync() {
     render();
-    if (available() && state.tasks === null && !loadRequest) refresh();
+    if (available() && state.tasks === null && !loading) refresh();
     else if (!available()) stopRefreshing();
   }
 
   function available() {
-    return state.features.autoTasks === true
-      && Boolean(state.currentPath)
-      && ['markdown', 'text'].includes(state.documentType);
+    return Boolean(state.currentPath) && ['markdown', 'text'].includes(state.documentType);
+  }
+
+  /**
+   * 見守りを付けられる文書か。文字起こしに使えるファイルだけです。
+   *
+   * 見守りは「押していないのにAIへ送る」唯一の道です。会議のあいだ数秒ごとに伸びる
+   * 文字起こしには要りますが、書きかけの資料にまで付けられると、開いたまま席を立った
+   * 文書がAIを呼び続けます。ほかの文書は「AIに起こさせる」を押したときだけ読みます。
+   */
+  function watchable() {
+    return available() && state.features.autoTasks === true && state.transcript === true;
   }
 
   /* ---------------------------------------------------------------- *
@@ -142,6 +161,7 @@ export function createAutoTasksController({
     }
     const documentPath = state.currentPath;
     const request = (loadRequest += 1);
+    loading = true;
     try {
       const payload = await api.readTasks(documentPath);
       // 取っている間に別の文書へ移ったか、もっと新しい取り直しが始まっていたら捨てます。
@@ -150,6 +170,10 @@ export function createAutoTasksController({
     } catch (error) {
       if (state.currentPath !== documentPath || request !== loadRequest) return;
       if (!quiet) setStatus('error', `タスクを読み込めませんでした: ${error.message}`);
+    } finally {
+      // 捨てた回でも下ろします。ただし、もっと新しい回が始まっていればその回のものなので、
+      // ここでは触りません。
+      if (request === loadRequest) loading = false;
     }
     render();
     scheduleRefresh();
@@ -181,7 +205,7 @@ export function createAutoTasksController({
    * AIに頼む
    * ---------------------------------------------------------------- */
 
-  /** 「タスクを整理する」。いまの本文を読み直してタスクを起こし、任せた種類は実行します。 */
+  /** 「AIに起こさせる」。いまの本文を読み直してタスクを起こし、任せた種類は実行します。 */
   async function runNow() {
     await runAiRequest({
       state,
@@ -201,17 +225,17 @@ export function createAutoTasksController({
       }),
       onResult(result) {
         adopt(result);
-        setStatus('saved', `整理しました（${timeLabel(new Date().toISOString())}）。`);
-        toaster.success('タスクを整理しました。');
+        setStatus('saved', `読み直しました（${timeLabel(new Date().toISOString())}）。`);
+        toaster.success('本文からタスクを起こしました。');
       },
       onUnavailable(error) {
-        setStatus('error', `整理できませんでした: ${error}`);
+        setStatus('error', `起こせませんでした: ${error}`);
       },
       onAbort() {
         setStatus('idle', '中止しました。');
       },
       onError(error) {
-        setStatus('error', `整理できませんでした: ${error.message}`);
+        setStatus('error', `起こせませんでした: ${error.message}`);
       },
       onSettled() {
         state.tasksStatus = 'idle';
@@ -288,7 +312,7 @@ export function createAutoTasksController({
   function toggleWatch(checked) {
     return change({ watch: checked }, checked
       ? '見守りを付けました。増えた分から、次の見守りでタスクを起こします。'
-      : '見守りを外しました。「タスクを整理する」を押したときだけ読みます。');
+      : '見守りを外しました。「AIに起こさせる」を押したときだけ読みます。');
   }
 
   function setTaskStatus(id, status) {
@@ -464,9 +488,13 @@ export function createAutoTasksController({
     refs.tasksState.textContent = record ? (tasks.length ? `${tasks.length}件` : '0件') : '読み込み中…';
     refs.tasksState.dataset.state = live ? 'set' : 'unset';
 
+    // 見守りの欄は、文字起こしに使えるファイルにだけ出します。ほかの文書では、
+    // AIが読むのは押したときだけなので、付けられない印を並べても読む手間が増えるだけです。
+    refs.tasksWatchSection.classList.toggle('hidden', !watchable());
     refs.tasksWatch.checked = record?.watch === true;
     refs.tasksWatch.disabled = !record || busy;
     refs.tasksWatchHint.textContent = watchHint(record, state.tasksRunner);
+    refs.tasksRunHint.textContent = runHint();
     renderRunnerHint(record, state.tasksRunner);
 
     refs.tasksRunButton.disabled = busy || !record;
@@ -517,9 +545,20 @@ export function createAutoTasksController({
       : '';
   }
 
+  /**
+   * 「AIに起こさせる」の説明。押したときだけ走ることを、見守りのある文書でも先に書きます。
+   * 裏で読み直されるのか、押したときだけなのかは、費用にも記録にも効くからです。
+   */
+  function runHint() {
+    const base = 'いまの本文を読み直してタスクを起こし、任せてある種類はそのまま実行します。';
+    return watchable()
+      ? `${base}見守りを待たずに走らせたいときに押します。`
+      : `${base}この文書をAIが読むのは、押したこのときだけです。`;
+  }
+
   function watchHint(record, runner) {
     if (!runner) return '';
-    if (!runner.enabled) return '自動タスクは無効です。設定で有効にすると見守ります。';
+    if (!runner.enabled) return '見守りは無効です。設定で有効にすると、会議のあいだ読み直します。';
     const interval = `${runner.intervalSeconds}秒ごとに読み直し、増えた分からタスクを起こします。`;
     if (runner.captioned) return `字幕が届いているので、会議のあいだはこの文書を見守ります。${interval}`;
     if (record?.watch) return interval;
@@ -554,9 +593,11 @@ export function createAutoTasksController({
 
   function emptyHtml(record) {
     if (!record.analysis) {
-      return '<p class="muted">まだタスクはありません。「タスクを整理する」を押すか、見守りを付けると、本文からやることを起こします。</p>';
+      return '<p class="muted">まだタスクはありません。上の欄に自分で書けます。「AIに起こさせる」を押すと、本文からやることを起こします。</p>';
     }
-    return '<p class="muted">この文書から起こすタスクはありませんでした。本文が増えたら、次の見守りで読み直します。</p>';
+    return watchable()
+      ? '<p class="muted">この文書から起こすタスクはありませんでした。本文が増えたら、次の見守りで読み直します。</p>'
+      : '<p class="muted">この文書から起こすタスクはありませんでした。本文を書き足したら、もう一度押してください。</p>';
   }
 
   function taskHtml(task, busy) {

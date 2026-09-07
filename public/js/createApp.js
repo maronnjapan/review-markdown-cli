@@ -28,7 +28,7 @@ import { createFileListView } from './fileListView.js';
 import { createPersonaController } from './persona.js';
 import { createLinkNavigator, isPlainClick, onPlainClick } from './links.js';
 import { createLiveCaptionsController } from './liveCaptions.js';
-import { copyMemoTarget, newMemo, renderMemoList } from './memos.js';
+import { copyMemoTarget, createMemoComposer, newMemo, renderMemoList } from './memos.js';
 import { createSettingsController } from './settings.js';
 import { createSidePanes } from './sidePanes.js';
 import {
@@ -330,7 +330,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     // 読むので、他のAI機能と同じく先に画面の内容を保存します。
     flushComments: () => commentSaves.flush()
   });
-  // 自動タスク。有効なときだけリンクが出て、一覧はサーバーの記録の写しです。
+  // タスク。本文を読み直せる文書ならリンクが出て、一覧はサーバーの記録の写しです。
   const autoTasks = createAutoTasksController({
     refs,
     state,
@@ -341,6 +341,12 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     flushComments: () => commentSaves.flush(),
     // タスクが出せる文書かどうかは裏でも変わるので、そのつどリンクを出し入れします。
     onVisibilityChanged: () => syncToolLinks()
+  });
+  // 「メモ」のタブから、対象を選ばずにその場で残せる欄です。残す先は文書全体になります。
+  const memoComposer = createMemoComposer({
+    refs,
+    state,
+    onSubmit: (body) => addMemo({ type: 'document' }, body)
   });
   const pdfViewer = pdfViewerFactory({
     document,
@@ -576,6 +582,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     recap.load();
     autoTasks.load();
     renderComments();
+    memoComposer.reset();
     renderMemos();
 
     try {
@@ -666,7 +673,8 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     // 理由を画面に書きます。黙って消すと、機能ごと無いものとして読まれるからです。
     syncToolLinks();
     recap.refresh();
-    // 自動タスクのリンクも、機能の有無と文書の種類（PDFでは出さない）で出し入れします。
+    // タスクのリンクは文書の種類（PDFでは出さない）で、見守りの欄は文字起こしかどうかで
+    // 出し入れします。
     autoTasks.sync();
   }
 
@@ -703,7 +711,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
   function applyFeatureChange(features) {
     if (!features) return;
     adoptFeatures(features);
-    // 自動タスクは、設定で入れた直後からリンクが出て、切った直後にリンクが消えます。
+    // 見守りは、設定で入れた直後から欄が出て、切った直後に消えます。
     autoTasks.sync();
     if (!state.currentPath || state.mode === 'edit') return;
     if (state.documentType === 'pdf') pdfViewer.renderHighlights(state.comments, state.memos);
@@ -1132,6 +1140,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
    * 要らなくなったら消す、というだけにしてあります。
    */
   function renderMemos() {
+    memoComposer.sync();
     renderMemoList(refs.memosList, {
       memos: state.memos,
       mode: state.mode,

@@ -510,7 +510,7 @@ test('タスクに添えた参考知識と参照ファイルは、そのタス�
  * 実行係
  * ---------------------------------------------------------------- */
 
-test('見守りは変わった文書だけを読み、任せた種類を上限まで実行し、変わっていなければAIへ送らない', async (t) => {
+test('見守るのは文字起こしだけ。変わった文書だけを読み、任せた種類を上限まで実行する', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'auto-tasks-runner-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   await fs.writeFile(path.join(root, 'meeting.md'), TRANSCRIPT, 'utf8');
@@ -560,12 +560,16 @@ test('見守りは変わった文書だけを読み、任せた種類を上限�
   runner.noteActivity('meeting.md');
 
   const first = await runner.tick();
-  assert.deepEqual(first.ran, ['meeting.md', 'plan.md']);
+  // 見守りは「押していないのにAIへ送る」唯一の道なので、文字起こしに使うファイルだけを読みます。
+  // plan.md は記録に見守りが付いていても読みません（押されたときだけ読みます）。
+  assert.deepEqual(first.ran, ['meeting.md']);
   assert.deepEqual(
     calls.filter(([kind]) => kind === 'extract').map(([, file, captioned, , owner, transcriptFile]) => [file, captioned, owner, transcriptFile]),
-    [['meeting.md', true, '田中', true], ['plan.md', false, '田中', false]],
+    [['meeting.md', true, '田中', true]],
     '対象の人と、文字起こしとして読むかどうかは、見守りのたびに設定から渡す'
   );
+  assert.deepEqual(await readTasks(root, 'plan.md').then((record) => record.tasks), [], '文字起こしでない文書は、見守りが付いていても読まない');
+  assert.equal(runner.status('plan.md', await readTasks(root, 'plan.md')).watching, false);
   const performed = calls.filter(([kind]) => kind === 'perform');
   assert.equal(performed.filter(([, file]) => file === 'meeting.md').length, MAX_TASK_RUNS_PER_TICK, '1回の見守りで実行するのは上限まで');
   assert.deepEqual(performed.filter(([, file]) => file === 'meeting.md').map(([, , title]) => title), ['meeting.md 調査1', 'meeting.md 調査2', 'meeting.md 調査3'], '優先度の高い順');
@@ -635,7 +639,7 @@ test('画面の「整理する」は変わっていなくても読み直し、1�
  * ルート
  * ---------------------------------------------------------------- */
 
-test('自動タスクのルートは有効にするまで断り、有効なら記録と見守りの状態を返し、整理は流れてくる', async (t) => {
+test('タスクのルートは設定に関わらず使え、見守りだけが有効にするまで断られる', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'auto-tasks-routes-'));
   await fs.writeFile(path.join(root, 'meeting.md'), TRANSCRIPT, 'utf8');
   const aiService = {
@@ -657,8 +661,23 @@ test('自動タスクのルートは有効にするまで断り、有効なら�
   const transcriptFiles = ['meeting.md'];
   const disabled = await startServer(t, root, { aiService, aiToken: 'tasks-token', liveCaptionsToken: 'captions-token', transcriptFiles });
   const headers = { 'Content-Type': 'application/json', 'X-Review-Markdown-Token': 'tasks-token' };
-  assert.equal((await fetch(`${disabled}/api/tasks?path=meeting.md`, { headers })).status, 404, '無効のうちは断る');
-  assert.equal((await fetch(`${disabled}/api/ai/tasks/extract`, { method: 'POST', headers, body: JSON.stringify({ path: 'meeting.md' }) })).status, 404);
+  // 設定が切るのは見守りだけです。一覧を読むことも、手で足すことも、押してAIに起こさせることもできます。
+  const offRecord = await fetch(`${disabled}/api/tasks?path=meeting.md`, { headers }).then((response) => response.json());
+  assert.deepEqual(offRecord.tasks.tasks, []);
+  assert.equal(offRecord.runner.enabled, false);
+  const added = await fetch(`${disabled}/api/tasks`, {
+    method: 'POST', headers, body: JSON.stringify({ path: 'meeting.md', add: [{ title: '議事録を配る', kind: 'action' }] })
+  }).then((response) => response.json());
+  assert.equal(added.tasks.tasks[0].title, '議事録を配る');
+  const offExtract = await fetch(`${disabled}/api/ai/tasks/extract`, { method: 'POST', headers, body: JSON.stringify({ path: 'meeting.md' }) });
+  assert.equal(offExtract.status, 200, '押したときの読み直しは、見守りを切っていても走る');
+  // 記録へ書き終わるのは流し終えたときなので、消す前に最後まで読みます。
+  assert.match(await offExtract.text(), /"type":"result"/);
+  const refusedWatch = await fetch(`${disabled}/api/tasks`, {
+    method: 'POST', headers, body: JSON.stringify({ path: 'meeting.md', watch: true })
+  });
+  assert.equal(refusedWatch.status, 404, '見守りだけは、有効にするまで断る');
+  await fs.rm(path.join(root, '.review'), { recursive: true, force: true });
 
   const baseUrl = await startServer(t, root, {
     aiService, aiToken: 'tasks-token', liveCaptionsToken: 'captions-token', transcriptFiles,
@@ -706,6 +725,12 @@ test('自動タスクのルートは有効にするまで断り、有効なら�
 
   const bad = await fetch(`${baseUrl}/api/tasks`, { method: 'POST', headers, body: JSON.stringify({ path: 'meeting.md', watch: 'yes' }) });
   assert.equal(bad.status, 400);
+
+  // 見守れるのは文字起こしに使うファイルだけです。画面で出していない操作は、直接叩いても通しません。
+  await fs.writeFile(path.join(root, 'plan.md'), '# 計画\n\n来週までに設計書を仕上げる。\n', 'utf8');
+  const outOfScope = await fetch(`${baseUrl}/api/tasks`, { method: 'POST', headers, body: JSON.stringify({ path: 'plan.md', watch: true }) });
+  assert.equal(outOfScope.status, 400);
+  assert.match((await outOfScope.json()).error, /文字起こしに使うファイルだけ/);
 
   // 出力するレビューMarkdownにも、今すべきことと残っているタスクが載ります。
   const exported = await fetch(`${baseUrl}/api/export?path=meeting.md`).then((response) => response.text());

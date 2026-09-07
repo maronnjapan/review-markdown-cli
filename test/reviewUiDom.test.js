@@ -259,7 +259,8 @@ test('the manager and translation controls stay hidden until the server enables 
   await waitFor(() => document.querySelector('#markdown-content p .inline-ai-button'));
 
   assert.equal(toolLink(document, 'manager').classList.contains('hidden'), true);
-  assert.equal(toolLink(document, 'tasks').classList.contains('hidden'), true, '自動タスクも有効にするまで出ない');
+  // タスクは設定に関わらず書けるので、見守りを切っていてもリンクは出ます。
+  assert.equal(toolLink(document, 'tasks').classList.contains('hidden'), false, 'タスクは設定に関わらず開ける');
   assert.equal(document.querySelector('#document-translate-button').classList.contains('hidden'), true);
   assert.equal(document.querySelector('#side-document-translate-button').classList.contains('hidden'), true);
   assert.equal(document.querySelector('#selection-translate-button').classList.contains('hidden'), true);
@@ -1652,6 +1653,57 @@ test('メモはコメントとは別に残り、状態も持たず、レビュ�
 });
 
 
+test('メモは対象を選ばずに、サイドパネルの欄からそのまま残せる', async (t) => {
+  const markdown = '# 設計メモ\n\n## 背景\n\nこの段落はレビュー対象です。\n';
+  const saved = [];
+  const { document, window } = await startApp(t, 'http://localhost/#/review/docs%2Fnote.md', {
+    '/api/file': async () => ({
+      path: 'docs/note.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'docs/note.md', comments: [], memos: [] },
+      reviewFile: '.review/docs/note.md.review.json'
+    }),
+    '/api/review': (_input, options) => {
+      const body = JSON.parse(options.body);
+      saved.push(body);
+      return {
+        review: { targetFile: body.path, comments: body.comments || [], memos: body.memos || [] },
+        reviewFile: '.review/docs/note.md.review.json'
+      };
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content p .inline-comment-button'));
+
+  /*
+   * 覚え書きは、どこかを指すより先に出てきます。対象を選ばないと書けないと、書くたびに
+   * 「どこに付けるか」を決めさせることになるので、押す前から書ける欄を置いてあります。
+   */
+  document.querySelector('#memos-tab-button').click();
+  const input = document.querySelector('#memo-input');
+  assert.equal(document.querySelector('#memo-submit').disabled, true, '空のままでは押せない');
+  input.value = 'あとで用語の揺れを確かめる';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(document.querySelector('#memo-submit').disabled, false);
+  document.querySelector('#memo-form').requestSubmit();
+
+  assert.equal(input.value, '', '残したら欄は空に戻す');
+  assert.equal(document.querySelector('#memo-count').textContent, '1');
+  assert.equal(document.querySelector('#comment-count').textContent, '0');
+  const card = document.querySelector('#memos-list .memo-card');
+  assert.equal(card.querySelector('textarea').value, 'あとで用語の揺れを確かめる');
+  assert.equal(card.querySelector('.target-badge').textContent, '文書全体');
+
+  const sentMemo = (body) => (body.memos || []).some((memo) => memo.body === 'あとで用語の揺れを確かめる');
+  await waitFor(() => saved.some(sentMemo), 1600);
+  assert.equal(saved.find(sentMemo).memos[0].type, 'document');
+
+  // 本文を書き換えているあいだは、既にあるメモと同じく書けません。
+  document.querySelector('#edit-mode-button').click();
+  await waitFor(() => document.querySelector('#memo-input').disabled === true);
+  assert.equal(document.querySelector('#memo-submit').disabled, true);
+});
+
 test('AI comment placement anchors a pasted note and only saves it once the reviewer adds it', async (t) => {
   const markdown = [
     '# 設計メモ',
@@ -2519,7 +2571,7 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
   // パネルが伸びる部分は、外へはみ出さずここでスクロールします。
   for (const selector of [
     '#comments-list', '#export-button',
-    '#memos-list',
+    '#memo-form', '#memos-list',
     '#ai-context', '#ai-target', '#translation-result', '#ai-messages'
   ]) {
     assert.ok(
@@ -3150,6 +3202,152 @@ test('自動タスクが有効な文書ではタスクのタブが出て、整�
   assert.deepEqual(changeRequests[7][0], { path: 'docs/meeting.md', plan: [{ id: 'task-2', commitment: 'undecided' }] });
   await waitFor(() => document.querySelector('#tasks-plan-summary').hidden === true);
   assert.match(document.querySelector('#tasks-list').textContent, /やると決めたタスクはまだありません/, '絞り込みは押したまま、空だと言う');
+});
+
+test('タスクは見守りを切っていても書けて、AIが読むのは押したときだけ', async (t) => {
+  const markdown = '# 手順書\n\n再起動の手順をまとめる。\n';
+  const changeRequests = [];
+  const extractRequests = [];
+  let record = { targetFile: 'docs/plan.md', watch: false, analysis: null, focus: null, tasks: [], lastError: null };
+  // 見守りは無効です。それでもタスクの画面は開けて、書けて、押せば起こせます。
+  const runner = { enabled: false, intervalSeconds: 120, actions: ['organize', 'research'], owner: '', captioned: false, watching: false, running: false, lastTickAt: null, nextTickAt: null };
+  const payload = () => ({ tasks: record, tasksFile: '.review/docs/plan.md.tasks.json', runner });
+
+  const { document } = await startApp(t, 'http://localhost/#/review/docs%2Fplan.md', {
+    '/api/file': async () => ({
+      path: 'docs/plan.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'docs/plan.md', comments: [] },
+      features: { manager: false, translation: false, autoTasks: false },
+      reviewFile: '.review/docs/plan.md.review.json'
+    }),
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model' }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/tasks': (_input, options) => {
+      if (options.method !== 'POST') return payload();
+      const body = JSON.parse(options.body);
+      changeRequests.push(body);
+      for (const added of body.add || []) {
+        record = { ...record, tasks: [...record.tasks, { id: `task-${record.tasks.length + 1}`, ...added, status: 'open', source: 'reviewer', priority: 'next', quote: '', owner: '' }] };
+      }
+      return payload();
+    },
+    '/api/ai/tasks/extract': (_input, options) => {
+      extractRequests.push(JSON.parse(options.body));
+      record = {
+        ...record,
+        analysis: { revision: 'r1', length: markdown.length, sourceKind: 'document', analyzedAt: '2026-09-07T01:00:00.000Z', summary: '' },
+        tasks: [...record.tasks, { id: 'task-ai', title: '停止条件を決める', detail: '', kind: 'decision', priority: 'now', status: 'open', source: 'ai', quote: '再起動の手順をまとめる。', owner: '', createdAt: '2026-09-07T01:00:00.000Z' }]
+      };
+      return ndjsonResponse([{ type: 'started' }, { type: 'phase', phase: 'extracting' }, { type: 'result', ...payload() }]);
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content h1'));
+
+  await openToolPage(document, 'tasks');
+  assert.equal(document.querySelector('#tasks-panel').classList.contains('hidden'), false);
+  /*
+   * 見守りは「押していないのにAIへ送る」唯一の道なので、会議中の文字起こしにだけ出します。
+   * ここに出すと、書きかけの資料を開いたまま席を立った人がAIを呼び続けることになります。
+   */
+  assert.equal(document.querySelector('#tasks-watch-section').classList.contains('hidden'), true);
+  assert.match(document.querySelector('#tasks-run-hint').textContent, /押したこのときだけ/);
+  assert.match(document.querySelector('#tasks-list').textContent, /上の欄に自分で書けます/);
+
+  // 文字起こしと関わりなく、自分で書けます。
+  const addInput = document.querySelector('#tasks-add-input');
+  addInput.value = '運用チームに停止条件を聞く';
+  addInput.dispatchEvent(new document.defaultView.Event('input', { bubbles: true }));
+  document.querySelector('#tasks-add-kind').value = 'action';
+  document.querySelector('#tasks-add-form').requestSubmit();
+  await waitFor(() => changeRequests.length === 1);
+  assert.deepEqual(changeRequests[0], { path: 'docs/plan.md', add: [{ title: '運用チームに停止条件を聞く', kind: 'action' }] });
+  await waitFor(() => document.querySelectorAll('.task-card').length === 1);
+  assert.equal(extractRequests.length, 0, 'ここまででAIへは送っていない');
+
+  // AIに起こさせるのも、押したときだけです。
+  document.querySelector('#tasks-run-form').requestSubmit();
+  await waitFor(() => document.querySelectorAll('.task-card').length === 2);
+  assert.deepEqual(extractRequests, [{ path: 'docs/plan.md' }]);
+  assert.match(document.querySelector('.task-card[data-task-id="task-ai"]').textContent, /停止条件を決める/);
+});
+
+test('2つ目の文書を開いても、その文書のタスクを取り直す', async (t) => {
+  const markdown = '# 手順書\n\n再起動の手順をまとめる。\n';
+  const readPaths = [];
+  const recordOf = (targetFile, tasks) => ({
+    tasks: { targetFile, watch: false, analysis: null, focus: null, tasks, lastError: null },
+    tasksFile: `.review/${targetFile}.tasks.json`,
+    runner: { enabled: false, intervalSeconds: 120, actions: [], owner: '', captioned: false, watching: false, running: false, lastTickAt: null, nextTickAt: null }
+  });
+  const { document, window } = await startApp(t, 'http://localhost/#/review/docs%2Fone.md', {
+    '/api/file': async (input) => {
+      const path = new URL(String(input), 'http://localhost').searchParams.get('path');
+      return {
+        path,
+        markdown,
+        ...await renderViews(markdown),
+        review: { targetFile: path, comments: [] },
+        features: { manager: false, translation: false, autoTasks: false },
+        reviewFile: `.review/${path}.review.json`
+      };
+    },
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model' }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/tasks': (input) => {
+      const path = new URL(String(input), 'http://localhost').searchParams.get('path');
+      readPaths.push(path);
+      return recordOf(path, path === 'docs/two.md'
+        ? [{ id: 'task-2', title: '2つ目のタスク', detail: '', kind: 'action', priority: 'next', status: 'open', source: 'reviewer', quote: '', owner: '', createdAt: '2026-09-07T01:00:00.000Z' }]
+        : []);
+    }
+  });
+  await waitFor(() => document.querySelector('#markdown-content h1'));
+  await waitFor(() => readPaths.includes('docs/one.md'));
+
+  /*
+   * 取りに行った回の通し番号を「取りに行っている最中か」の代わりに使うと、2つ目の文書で
+   * 取り直しが始まりません。一覧は空のまま、見守りのチェックも押せないままになります。
+   */
+  window.location.hash = '#/review/docs%2Ftwo.md';
+  await waitFor(() => readPaths.includes('docs/two.md'), 2000);
+  await openToolPage(document, 'tasks');
+  await waitFor(() => document.querySelector('.task-card'));
+  assert.match(document.querySelector('.task-card .task-title').textContent, /2つ目のタスク/);
+  assert.equal(document.querySelector('#tasks-run-button').disabled, false, '記録が届けば押せる');
+});
+
+
+test('見守りの欄が出るのは、有効にしてある文字起こしのファイルだけ', async (t) => {
+  const markdown = '# 定例会議\n\n**田中** `[10:00:00]`\n再起動手順の確認です。\n';
+  const runner = { enabled: true, intervalSeconds: 120, actions: ['organize'], owner: '', captioned: true, watching: true, running: false, lastTickAt: null, nextTickAt: null };
+  const { document } = await startApp(t, 'http://localhost/#/review/docs%2Fmeeting.md', {
+    '/api/file': async () => ({
+      path: 'docs/meeting.md',
+      markdown,
+      ...await renderViews(markdown),
+      review: { targetFile: 'docs/meeting.md', comments: [] },
+      features: { manager: false, translation: false, autoTasks: true },
+      transcript: true,
+      transcriptFiles: ['**/meet-captions/**'],
+      reviewFile: '.review/docs/meeting.md.review.json'
+    }),
+    '/api/ai/status': () => ({ token: 'ui-ai-token', available: true, provider: 'codex', model: 'fast-test-model' }),
+    '/api/ai/conversations': () => ({ conversations: [] }),
+    '/api/ai/recap-window': () => ({ window: { scope: 'since-last', appliedScope: 'minutes', fallback: 'no-mark', minutes: 10, entries: [], leadIn: [], dropped: 0, total: 1, chars: 10, from: '', to: '', reason: '' } }),
+    '/api/tasks': () => ({
+      tasks: { targetFile: 'docs/meeting.md', watch: false, analysis: null, focus: null, tasks: [], lastError: null },
+      tasksFile: '.review/docs/meeting.md.tasks.json',
+      runner
+    })
+  });
+  await waitFor(() => document.querySelector('#markdown-content h1'));
+
+  await openToolPage(document, 'tasks');
+  assert.equal(document.querySelector('#tasks-watch-section').classList.contains('hidden'), false);
+  assert.match(document.querySelector('#tasks-watch-hint').textContent, /会議のあいだはこの文書を見守ります/);
+  assert.match(document.querySelector('#tasks-run-hint').textContent, /見守りを待たずに/);
 });
 
 async function renderViews(markdown) {
