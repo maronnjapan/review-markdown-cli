@@ -5,6 +5,7 @@ import { normalizeAiContext } from './aiContext.js';
 import { createAiService } from './aiService.js';
 import { createAutoTaskRunner } from './autoTaskRunner.js';
 import { sendError } from './http.js';
+import { resolveAutomationAppTarget } from './integrations/automationApp.js';
 import { createPathFilter } from './pathFilter.js';
 import { createRequestHandler } from './routes.js';
 import { createSettings, settingsFromOptions } from './settings.js';
@@ -42,6 +43,10 @@ export { listMarkdownFiles } from './markdownFiles.js';
  * @param {string} [options.aiToken] AIエンドポイントのトークン。既定は起動ごとの乱数。
  * @param {object} [options.autoTaskRunner] 自動タスクの実行係そのもの。渡すと組み立てません。
  * @param {Function} [options.log] 実行係がターミナルへ出す1行の渡し先。既定は console.log。
+ * @param {string} [options.automationAppUrl] 連携先Automation AppのURL。無ければ連携機能は使えません。
+ * @param {string} [options.automationAppToken] 同上へ渡すアクセストークン。環境変数
+ *   `AUTOMATION_APP_ACCESS_TOKEN` が設定されていればそちらを使います。
+ * @param {object} [options.automationAppTarget] 連携先の接続情報そのもの。渡すと上の2つは見ません。
  */
 export function createServer(targetDir = '.', options = {}) {
   const rootDir = path.resolve(targetDir);
@@ -73,8 +78,12 @@ export function createServer(targetDir = '.', options = {}) {
     transcripts,
     log: options.log || ((line) => console.log(line))
   });
+  // 連携先の接続情報。URLが設定されていなければ `null` で、機能が有効でもルートが
+  // 「未設定です」と答えます（`routes.js` の `pushTaskToAutomationApp`）。
+  const automationAppTarget = options.automationAppTarget || resolveAutomationAppTarget(options);
   const handleRequest = createRequestHandler({
-    rootDir, filter, aiService, aiToken, liveCaptionsToken, projectAiContext, settings, autoTasks, transcripts
+    rootDir, filter, aiService, aiToken, liveCaptionsToken, projectAiContext, settings, autoTasks, transcripts,
+    automationAppTarget
   });
 
   const app = {
@@ -90,7 +99,7 @@ export function createServer(targetDir = '.', options = {}) {
       return server.listen(port, '127.0.0.1', callback);
     }
   };
-  return { app, rootDir, filter, aiService, settings, liveCaptionsToken, autoTasks, transcripts };
+  return { app, rootDir, filter, aiService, settings, liveCaptionsToken, autoTasks, transcripts, automationAppTarget };
 }
 
 /**

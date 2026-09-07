@@ -37,7 +37,10 @@ import {
 export const UI_SETTING_KEYS = [
   'translation',
   'autoTasks', 'autoTasksInterval', 'autoTasksActions', 'autoTasksInstructions', 'autoTasksOwner',
-  'aiEmptyTarget', 'aiModel', 'aiEffort', 'aiReviewModel', 'aiReviewEffort'
+  'aiEmptyTarget', 'aiModel', 'aiEffort', 'aiReviewModel', 'aiReviewEffort',
+  // 連携先（URLとトークン）は入れません。aiProvider と同じく、端末の持ち主が設定ファイルか
+  // 起動オプションで決めることで、`.review-markdown.json` からの入り切りだけをここへ置きます。
+  'automationApp'
 ];
 
 /**
@@ -73,7 +76,12 @@ export function createSettings({ values = {}, manager = false, file = null } = {
 
     /** 有効になっている機能。ルートは要求のたびにこれを読むので、変えた直後から効きます。 */
     get features() {
-      return Object.freeze({ manager, translation: current.translation === true, autoTasks: current.autoTasks === true });
+      return Object.freeze({
+        manager,
+        translation: current.translation === true,
+        autoTasks: current.autoTasks === true,
+        automationApp: current.automationApp === true
+      });
     },
 
     /**
@@ -211,12 +219,14 @@ export function normalizeSettings(patch, current = {}) {
  * 既定で走る）」と「既定と同じ名前を書いた」を画面でも取り違えないようにします。
  */
 export function settingsFromOptions({
-  translation, autoTasks, autoTasksInterval, autoTasksActions, autoTasksInstructions, autoTasksOwner, aiModels = {}
+  translation, autoTasks, autoTasksInterval, autoTasksActions, autoTasksInstructions, autoTasksOwner,
+  automationApp, aiModels = {}
 } = {}) {
   const { assistant = {}, review = {} } = aiModels;
   return {
     translation: translation === true,
     autoTasks: autoTasks === true,
+    automationApp: automationApp === true,
     ...(autoTasksInterval !== undefined ? { autoTasksInterval } : {}),
     ...(autoTasksActions !== undefined ? { autoTasksActions } : {}),
     ...(autoTasksInstructions ? { autoTasksInstructions } : {}),

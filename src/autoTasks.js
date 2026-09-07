@@ -184,8 +184,17 @@ function readTask(value, targetFile = '') {
     ...(reference ? { reference } : {}),
     ...(text(value.error, 600) ? { error: text(value.error, 600) } : {}),
     ...(timestamp(value.createdAt) ? { createdAt: timestamp(value.createdAt) } : {}),
-    ...(timestamp(value.updatedAt) ? { updatedAt: timestamp(value.updatedAt) } : {})
+    ...(timestamp(value.updatedAt) ? { updatedAt: timestamp(value.updatedAt) } : {}),
+    ...(readAutomationAppSync(value.automationApp) ? { automationApp: readAutomationAppSync(value.automationApp) } : {})
   };
+}
+
+/** 連携先（Automation App）へ登録した記録。登録した先のIDが無ければ、無かったことにします。 */
+function readAutomationAppSync(value) {
+  if (!value || typeof value !== 'object') return null;
+  const workDefinitionId = text(value.workDefinitionId, ID_CHARS);
+  if (!workDefinitionId) return null;
+  return { workDefinitionId, url: text(value.url, 2000), pushedAt: timestamp(value.pushedAt) };
 }
 
 /**
@@ -852,6 +861,18 @@ export function applyTaskFailure(record, taskId, message, now = new Date()) {
     tasks: record.tasks.map((task) => (
       task.id === taskId ? { ...task, status: 'open', error: text(message, 600), updatedAt: at } : task
     ))
+  };
+}
+
+/**
+ * Automation Appへ登録できたことを記録します。登録先のidを持たせるのは、そのタスクが
+ * どのToDoになったかを画面から辿れるようにするためです。登録し直すたびに置き換わります。
+ */
+export function applyAutomationAppSync(record, taskId, sync, now = new Date()) {
+  const at = now.toISOString();
+  return {
+    ...record,
+    tasks: record.tasks.map((task) => (task.id === taskId ? { ...task, automationApp: sync, updatedAt: at } : task))
   };
 }
 
