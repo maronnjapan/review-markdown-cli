@@ -317,41 +317,6 @@ test('どのAIで走らせるかは、端末の持ち主だけが決められる
   ]);
 });
 
-test('Automation Appの連携先も、端末の持ち主だけが決められる', async () => {
-  // レビュー対象のリポジトリが自前のURL・トークンを同梱していると、原稿を開いただけで
-  // 別のAutomation App（や、そこへ渡すはずのトークンを盗む先）へ登録できてしまいます。
-  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'review-config-home-'));
-  const globalFile = path.join(home, 'review-markdown', 'config.json');
-  await fs.mkdir(path.dirname(globalFile), { recursive: true });
-  await fs.writeFile(globalFile, JSON.stringify({
-    automationAppUrl: 'https://automation-app.example.com', automationAppToken: 'user-token'
-  }), 'utf8');
-
-  const root = await seedProject({
-    automationApp: true, automationAppUrl: 'https://evil.example.com', automationAppToken: 'stolen-token'
-  });
-  const { config, warnings } = await loadConfig({
-    targetDir: root, env: { XDG_CONFIG_HOME: home, HOME: home }, platform: 'linux'
-  });
-
-  assert.equal(config.automationAppUrl, 'https://automation-app.example.com', 'ユーザー全体の設定は効く');
-  assert.equal(config.automationAppToken, 'user-token');
-  // 機能の入り切り自体（`automationApp`）はscope指定が無いので、プロジェクト設定からも効きます。
-  assert.equal(config.automationApp, true);
-  assert.deepEqual(warnings.map((warning) => warning.replace(/^.*json: /, '')), [
-    'automationAppUrl はプロジェクト設定では無視します（ユーザー全体の設定に `review-markdown config set automationAppUrl … --global` で書いてください）',
-    'automationAppToken はプロジェクト設定では無視します（ユーザー全体の設定に `review-markdown config set automationAppToken … --global` で書いてください）'
-  ]);
-});
-
-test('automationAppUrl は http / https のURLだけを通す', () => {
-  assert.equal(
-    normalizeConfigValue('automationAppUrl', 'https://automation-app.example.com/'),
-    'https://automation-app.example.com'
-  );
-  assert.throws(() => normalizeConfigValue('automationAppUrl', 'not-a-url'), /URLとして読めません/);
-  assert.throws(() => normalizeConfigValue('automationAppUrl', 'ftp://automation-app.example.com'), /http:\/\/ か https:\/\//);
-});
 
 test('プロジェクト設定に壊れた値が置かれていても、起動は止まらない', async () => {
   // 読まないと決めたキーは中身も見ません。見てしまうと、レビュー対象のリポジトリが
@@ -374,22 +339,6 @@ test('--config で名指ししたファイルからは、走らせるAIも受け
   assert.deepEqual(warnings, []);
 });
 
-test('applyConfigToOptions はAutomation Appの連携先もコマンドラインの起動オプションへ渡す', async () => {
-  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'review-config-home-'));
-  const globalFile = path.join(home, 'review-markdown', 'config.json');
-  await fs.mkdir(path.dirname(globalFile), { recursive: true });
-  await fs.writeFile(globalFile, JSON.stringify({
-    automationAppUrl: 'https://automation-app.example.com', automationAppToken: 'tok'
-  }), 'utf8');
-
-  const root = await seedProject({ automationApp: true });
-  const { config } = await loadConfig({ targetDir: root, env: { XDG_CONFIG_HOME: home, HOME: home }, platform: 'linux' });
-  const options = applyConfigToOptions(parseArgs([root]), config);
-
-  assert.equal(options.automationApp, true);
-  assert.equal(options.automationAppUrl, 'https://automation-app.example.com');
-  assert.equal(options.automationAppToken, 'tok');
-});
 
 test('知らないAIの名前は、使えるものを並べて断る', async () => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'review-config-home-'));

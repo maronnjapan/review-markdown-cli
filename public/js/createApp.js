@@ -587,8 +587,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     state.features = {
       manager: features?.manager === true,
       translation: features?.translation === true,
-      autoTasks: features?.autoTasks === true,
-      automationApp: features?.automationApp === true
+      autoTasks: features?.autoTasks === true
     };
     refs.managerTabButton.classList.toggle('hidden', !state.features.manager);
     // 管理者が無効なときの3点は、保存側も断ります。書ける欄を出しておくと、
