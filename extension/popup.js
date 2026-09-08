@@ -314,22 +314,31 @@ function bindSyncSettingsForm() {
 }
 
 /**
- * 字幕(CC)の自動オン。
+ * 字幕をどう扱うかの切り替え。どちらも既定はオンで、切った人だけが切ったままになります。
  *
- * 押し忘れると、その会議は1行も記録されません。押す作業を無くすのが既定で、
- * ここは「自分で押したい人」のための切り替えです。
+ * - `autoCaptions` …… 会議に入ったら字幕(CC)を自動でオンにする。押し忘れると、その会議は
+ *   1行も記録されません。押す作業を無くすのが既定で、ここは「自分で押したい人」のための
+ *   切り替えです
+ * - `hideCaptions` …… 記録のためにオンにした字幕を、画面には出さない。出ていると共有画面の
+ *   下側が隠れます。読むために出した字幕ではないので、出さないのが既定です
  */
-async function loadAutoCaptions() {
+const CAPTION_TOGGLES = ['autoCaptions', 'hideCaptions'];
+
+async function loadCaptionToggles() {
   const { [SETTINGS_KEY]: settings = {} } = await storageGet(SETTINGS_KEY);
-  document.getElementById('autoCaptions').checked = settings.autoCaptions !== false;
+  for (const key of CAPTION_TOGGLES) {
+    document.getElementById(key).checked = settings[key] !== false;
+  }
 }
 
-function bindAutoCaptions() {
-  document.getElementById('autoCaptions').addEventListener('change', async (event) => {
-    // 記録の一時停止など、同じ場所にある設定を消さないように読んでから書き戻します。
-    const { [SETTINGS_KEY]: settings = {} } = await storageGet(SETTINGS_KEY);
-    await storageSet({ [SETTINGS_KEY]: { ...settings, autoCaptions: event.target.checked } });
-  });
+function bindCaptionToggles() {
+  for (const key of CAPTION_TOGGLES) {
+    document.getElementById(key).addEventListener('change', async (event) => {
+      // 記録の一時停止など、同じ場所にある設定を消さないように読んでから書き戻します。
+      const { [SETTINGS_KEY]: settings = {} } = await storageGet(SETTINGS_KEY);
+      await storageSet({ [SETTINGS_KEY]: { ...settings, [key]: event.target.checked } });
+    });
+  }
 }
 
 function sendMessage(message) {
@@ -365,7 +374,7 @@ async function autoPair() {
 
 loadStatus();
 loadMemoList();
-loadAutoCaptions();
-bindAutoCaptions();
+loadCaptionToggles();
+bindCaptionToggles();
 loadSyncSettings().then(autoPair);
 bindSyncSettingsForm();

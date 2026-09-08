@@ -165,6 +165,23 @@ test('字幕の自動オンは既定で入っていて、切っても記録の�
   assert.equal(stored[SETTINGS_KEY].recording, false, '同じ場所にある記録の設定を消さない');
 });
 
+/**
+ * 字幕は記録のために出しているので、画面に出さないのが既定です。読みながら会議に出たい
+ * 人だけが、ここで戻します。
+ */
+test('字幕を画面に出さないのは既定で入っていて、切っても隣の設定は消えない', async () => {
+  const { document, stored } = await openPopup({ [SETTINGS_KEY]: { autoCaptions: false } });
+
+  const hideCaptions = document.getElementById('hideCaptions');
+  assert.equal(hideCaptions.checked, true, '共有画面が隠れないのが既定');
+
+  hideCaptions.checked = false;
+  hideCaptions.dispatchEvent(new document.defaultView.Event('change'));
+  await waitFor(() => stored[SETTINGS_KEY].hideCaptions === false);
+
+  assert.equal(stored[SETTINGS_KEY].autoCaptions, false, '同じ場所にある字幕の設定を消さない');
+});
+
 /* ---------------------------------------------------------------- *
  * 差し替え口
  * ---------------------------------------------------------------- */
