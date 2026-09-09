@@ -100,6 +100,28 @@ export class AiStore {
     });
   }
 
+  /**
+   * 保存した会話と、聞き直しの栞を、名前を変えた文書へ付いていかせます。
+   *
+   * どちらも文書のパスで引くので（`listConversations` と `getRecapMark`）、本文の名前
+   * だけを変えると、話した記録も、どこまで聞いたかも、画面から辿れなくなります。
+   * 端末側に残っているのに二度と出てこないので、消えたのと変わりません。
+   */
+  async renameDocument(fromPath, toPath) {
+    if (!fromPath || !toPath || fromPath === toPath) return;
+    for (const conversation of await this.listConversations(fromPath)) {
+      await this.saveConversation({ ...conversation, documentPath: toPath });
+    }
+    await this.enqueueWrite(async () => {
+      const marks = await this.readRecapMarks();
+      const mark = marks.entries[fromPath];
+      if (!mark) return;
+      delete marks.entries[fromPath];
+      marks.entries[toPath] = mark;
+      await writeJsonAtomic(this.recapMarkFile, marks);
+    });
+  }
+
   async getTranslation(key) {
     const cache = await this.readTranslationCache();
     return cache.entries[key]?.value || null;

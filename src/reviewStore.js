@@ -137,20 +137,34 @@ export async function findExistingReviewPath(rootDir, relativeFile) {
   return (await findExistingReviewLocation(rootDir, relativeFile)).filePath;
 }
 
-async function findExistingReviewLocation(rootDir, relativeFile) {
+/**
+ * そのファイルのレビューファイルが実際に置かれている場所です。
+ *
+ * `baseDir` は `.review` を持っているディレクトリで、`targetFile` はそこから見た
+ * 対象のパスです。対象ディレクトリの一段上に `.review` があるとき（リポジトリ全体で
+ * 1つの `.review` を使い、その中の `docs/` だけをレビューしているとき）は、
+ * `baseDir` が対象ディレクトリの外を指します。名前の変更でレビューデータを一緒に
+ * 動かす側（`documentFiles.js`）は、この2つが要ります。
+ *
+ * @returns {Promise<{ filePath: string, baseDir: string, targetFile: string }>}
+ */
+export async function findExistingReviewLocation(rootDir, relativeFile) {
   const primaryPath = reviewPathFor(rootDir, relativeFile);
   const absoluteTargetFile = path.resolve(rootDir, relativeFile);
-  let currentDir = path.resolve(rootDir);
+  const primaryDir = path.resolve(rootDir);
+  let currentDir = primaryDir;
 
   while (true) {
     const currentRelativeFile = path.relative(currentDir, absoluteTargetFile).split(path.sep).join('/');
     if (!currentRelativeFile.startsWith('..') && !path.isAbsolute(currentRelativeFile)) {
       const candidatePath = reviewPathFor(currentDir, currentRelativeFile);
-      if (await fileExists(candidatePath)) return { filePath: candidatePath, targetFile: currentRelativeFile };
+      if (await fileExists(candidatePath)) {
+        return { filePath: candidatePath, baseDir: currentDir, targetFile: currentRelativeFile };
+      }
     }
 
     const parentDir = path.dirname(currentDir);
-    if (parentDir === currentDir) return { filePath: primaryPath, targetFile: relativeFile };
+    if (parentDir === currentDir) return { filePath: primaryPath, baseDir: primaryDir, targetFile: relativeFile };
     currentDir = parentDir;
   }
 }

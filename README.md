@@ -70,6 +70,7 @@ review-markdown .
 ## 主な機能
 
 - 対象ディレクトリ配下の Markdown と PDF の一覧表示（ディレクトリは既定で折りたたみ）
+- ファイル一覧からのファイルの新規作成・名前の変更（別ディレクトリへの移動）・削除（コメントやタスクも一緒に動き、一緒に消えます）
 - `--include` / `--exclude` と設定ファイルによるレビュー対象の絞り込み（ワイルドカード対応）
 - `review-markdown config` による設定ファイルの読み書き
 - 画面から翻訳機能の入り切りと、用途ごとのモデル・推論強度を変えられる設定ダイアログ
@@ -203,6 +204,7 @@ Markdown 以外の「本文の修正」、無効にしている「管理者」�
 
 PDFはPDF.jsで描画し、元ファイルを変更せずにレビューします。
 PDFのコメントもMarkdownと同じく、`.review/<target>.review.json` と `.review/<target>.review.md` に保存します。
+読み取り専用なのは中身です。一覧からの名前の変更と削除は、PDFでもMarkdownと同じようにできます（「[ファイルを作る・名前を変える・消す](#ファイルを作る名前を変える消す)」）。
 
 PDFでは次の操作を利用できます。
 
@@ -1538,6 +1540,29 @@ export const MAX_FINDINGS = 20;
 - 開いたディレクトリはタブを閉じるまで記憶します。ファイルをレビューして一覧へ戻ると、そのファイルまでのディレクトリが開いた状態になります。
 - `--include` / `--exclude` を指定している場合は、一覧のヘッダーに適用中のパターンを表示します。
 
+### ファイルを作る・名前を変える・消す
+
+原稿の置き場所を直すためだけに端末へ戻らなくて済むよう、ファイルの出し入れもこの一覧でできます。
+どの操作も一覧を出したまま、その行の中で終わります。
+
+| 操作 | 押す場所 | すること |
+| --- | --- | --- |
+| 新規作成 | 見出しの「新規作成」 | 対象ディレクトリからのパスで、新しいMarkdownファイルを作ります |
+| 名前の変更 | 各行の「名前」 | パスをそのまま書き換えます。ディレクトリを変えれば、そこへ移します |
+| 削除 | 各行の「削除」 | 確認の「削除する」を押すまで消えません |
+
+- 扱えるのは一覧に出るファイル（MarkdownとPDF）だけです。パスを送るだけで、画面から見えないソースや画像まで消せる窓口にはしていません。
+- `--include` / `--exclude` で対象から外れるパスは断ります。作った直後や名前を変えた直後に、一覧から消えたように見えるからです。
+- MarkdownとPDFの間で拡張子は変えられません。名前が変わっても中身は変わらないので、開いた先で壊れたPDFを見せることになるからです。
+- 新規作成では、拡張子を省くと `.md` を付け、途中のディレクトリは作ります。中身は `# <ファイル名>` の見出し1行です。見出しは本文と数えないので、資料の管理者の関門（「揃うまで、一度止まる」）はそのまま働きます。
+- 削除は、コメントの削除と同じ2段階です。押し間違いで原稿が消えないようにしています。取り消しはできません。
+
+そのファイルに紐づいて保存されているものも、置いていきません。
+
+- コメント・メモ・読み取りコンテキスト・出力・タスク（`.review/<対象>.review.json`、`.review/<対象>.review.md`、`.review/<対象>.tasks.json`）は、名前の変更で一緒に動き、削除で一緒に消えます。本文だけを動かすと、書いたコメントは前の名前に付いたまま画面から辿れなくなり、消しても `.review` の中に残り続けます。どちらも画面からは掃除できません。
+- 動かしたあとは、中に書かれている対象名も新しい名前へ書き換えます。
+- 保存したAIチャットと、文字起こしをどこまで聞いたかも、名前の変更に付いていきます。ただし削除では消しません。プロジェクトの外（端末側）にあるもので、要らない会話は「AIチャットの記録」の画面から1件ずつ消せます。
+
 ## レビュー対象の絞り込み
 
 `--include` と `--exclude` で、レビュー対象のファイルをパターンで指定できます。どちらも複数回の指定とカンマ区切りに対応します。
@@ -1985,6 +2010,7 @@ src/transcriptFiles.js   文字起こしに使えるファイルの範囲（字�
 src/server.js            HTTPサーバーの組み立て
 src/routes.js            APIエンドポイントの定義
 src/markdownFiles.js     対象ディレクトリのMarkdownファイル探索
+src/documentFiles.js     画面から作る・名前を変える・消すファイル操作（.review のレビューデータの移動と削除を含む）
 src/http.js              リクエスト／レスポンスの共通処理
 src/staticFiles.js       画面ファイルの配信
 src/assets.js            Markdownから参照される画像などの配信
@@ -2067,8 +2093,8 @@ contextPage.js      保存したAIチャットの記録の読み直し・修正
 settings.js         設定ダイアログ（翻訳とタスクの見守りの入り切り・対象の人と、用途ごとのモデル・推論強度）
 sidePanes.js        サイドパネルのタブ切り替え（文書・コメント・メモ・AI）
 toolPages.js        本文の隣に置かないものを開く別画面の一覧と、リンクの向け先の書き換え
-fileListView.js     ファイル一覧の表示と開閉状態の記憶
-fileTree.js         ファイル一覧のツリー構築
+fileListView.js     ファイル一覧の表示と開閉状態の記憶、ファイルの新規作成・名前の変更・削除
+fileTree.js         ファイル一覧のツリー構築（1行分の描画を含む）
 comments.js         コメント追加ダイアログ（残し方の選択を含む）とコメント一覧の描画
 memos.js            自分のためのメモの一覧の描画と、対象の引き継ぎ
 commentPlacement.js 指摘コメントの配置依頼
@@ -2096,7 +2122,7 @@ PDF固有の処理は `src/pdf/`、`public/js/pdf/`、`public/pdf/pdf.css` に�
 PDF対応を撤去する場合は、次の単位で削除できます。
 
 1. `src/pdf/`、`public/js/pdf/`、`public/pdf/pdf.css`、`test/pdfSupport.test.js` を削除する。
-2. `src/routes.js`、`src/links.js`、`src/reviewStore.js`、`src/memos.js`、`src/referenceFiles.js` からPDFモジュールのimportとPDF用分岐を削除する（`referenceFiles.js` は `isPdfPath` と `readPdfText` を使っています）。
+2. `src/routes.js`、`src/links.js`、`src/reviewStore.js`、`src/memos.js`、`src/referenceFiles.js`、`src/documentFiles.js` からPDFモジュールのimportとPDF用分岐を削除する（`referenceFiles.js` は `isPdfPath` と `readPdfText` を使っています）。
 3. `public/js/createApp.js`、`public/js/comments.js`、`public/js/ai.js`、`public/js/state.js`、`public/js/dom.js` からPDF用分岐を削除する。
 4. `public/index.html` から `/pdf/pdf.css` とPDF用notice要素を削除する。
 5. `bin/markdown-review.js`、`public/js/fileListView.js`、`public/js/fileTree.js`、`public/style.css`、`test/links.test.js` の表示とPDFリンク対応を戻す。

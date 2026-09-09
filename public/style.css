@@ -140,6 +140,44 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   letter-spacing: -0.03em;
 }
 .tree-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ファイルの行は、開くリンクと、そのファイルを操作するボタンの2つでできています。 */
+.tree-file-row { align-items: center; display: flex; gap: 0.25rem; }
+.tree-file-row > .tree-row { flex: 1; min-width: 0; }
+.tree-file-actions { display: flex; flex: none; gap: 0.25rem; }
+.tree-file-action {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  font-size: 0.74rem;
+  padding: 0.15rem 0.45rem;
+}
+/* 押せることは、その行を触っているときにはっきりさせます。並んでいるだけのときに
+   本文と同じ強さで出ていると、読むための一覧が操作盤に見えます。 */
+.tree-file-row:hover .tree-file-action,
+.tree-file-action:focus-visible { border-color: var(--border); color: var(--text); }
+.tree-file-delete:hover, .tree-file-delete:focus-visible { border-color: #f0c2bd; color: #b42318; }
+.tree-file-form, .tree-file-confirm {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.2rem 0.5rem 0.2rem calc(0.5rem + var(--depth, 0) * 1rem);
+}
+.tree-file-form input { flex: 1; font-size: 0.85rem; min-width: 12rem; padding: 0.25rem 0.5rem; }
+.tree-file-form button, .tree-file-confirm button { font-size: 0.78rem; padding: 0.25rem 0.6rem; }
+.tree-file-confirm-text { color: #b42318; font-size: 0.82rem; }
+.file-new-form {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.8rem 1.4rem;
+}
+.file-new-label { font-size: 0.85rem; }
+.file-new-form input { flex: 1; font-size: 0.9rem; min-width: 14rem; padding: 0.3rem 0.55rem; }
+.file-form-hint { color: var(--muted); flex-basis: 100%; font-size: 0.76rem; margin: 0; }
 .tree-count {
   background: #eef1f7;
   border-radius: 999px;

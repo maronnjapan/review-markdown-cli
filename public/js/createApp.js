@@ -156,7 +156,7 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
   const toaster = createToaster(refs.toastRegion);
   const content = refs.markdownContent;
 
-  const fileList = createFileListView({ refs, state, api });
+  const fileList = createFileListView({ refs, state, api, toaster });
   const dialog = createCommentDialog(refs, {
     // 同じ対象へ、コメントとして依頼を残すか、自分のためのメモを残すかはダイアログで選びます。
     onSubmit: (target, text, kind) => (kind === 'memo' ? addMemo(target, text) : addComment(target, text))

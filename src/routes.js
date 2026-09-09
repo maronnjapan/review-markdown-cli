@@ -10,6 +10,7 @@ import {
 } from './autoTasks.js';
 import { DIRECTORY_CONTEXT_PATH, readDirectoryPremise, writeDirectoryPremise } from './directoryContext.js';
 import { documentRevision } from './documentEdits.js';
+import { createDocument, deleteDocument, renameDocument } from './documentFiles.js';
 import { applyBlockEdits } from './editorMarkdown.js';
 import { extensionDir } from './extensionCommand.js';
 import { httpError, readJsonBody, sendBuffer, sendJson, startNdjson } from './http.js';
@@ -47,6 +48,10 @@ const ROUTES = [
   { methods: ['GET'], pathname: '/api/files', handle: listFiles },
   { methods: ['GET'], pathname: '/api/file', handle: openFile },
   { methods: ['POST'], pathname: '/api/file', handle: saveFile },
+  // ファイルそのものの出し入れ。中身の保存（`POST /api/file`）とは分けます。
+  { methods: ['POST'], pathname: '/api/file/create', handle: createReviewFile },
+  { methods: ['POST'], pathname: '/api/file/rename', handle: renameReviewFile },
+  { methods: ['POST'], pathname: '/api/file/delete', handle: deleteReviewFile },
   { methods: ['GET', 'HEAD'], pathname: '/api/pdf', handle: openPdf },
   { methods: ['GET', 'HEAD'], pathname: '/api/asset', handle: openAsset },
   { methods: ['GET', 'HEAD'], pathname: '/vendor/pdfjs/pdf.mjs', handle: openPdfJsAsset },
@@ -772,17 +777,62 @@ function applyLiveCaptionsCors(request, response) {
   response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
 }
 
-async function listFiles({ rootDir, filter, features, response }) {
+async function listFiles(context) {
+  return sendJson(context.response, await filesPayload(context));
+}
+
+async function filesPayload({ rootDir, filter, features }) {
   const [markdownFiles, pdfFiles] = await Promise.all([
     listMarkdownFiles(rootDir, filter),
     listPdfFiles(rootDir, filter)
   ]);
-  return sendJson(response, {
+  return {
     rootDir,
     files: [...markdownFiles, ...pdfFiles].sort((a, b) => a.localeCompare(b)),
     filters: { include: filter.include, exclude: filter.exclude },
     features
-  });
+  };
+}
+
+/**
+ * ファイルを作る・名前を変える・消す3つです。
+ *
+ * どれも変えたあとの一覧を返します。画面は一覧を出したまま操作するので、返さないと
+ * 変わった直後の一覧をもう一度取りに来ることになり、その間だけ古い一覧が残ります。
+ */
+async function createReviewFile(context) {
+  const body = await readJsonBody(context.request);
+  const created = await createDocument(context.rootDir, context.filter, body.path);
+  return sendJson(context.response, { ...created, ...await filesPayload(context) });
+}
+
+async function renameReviewFile(context) {
+  const body = await readJsonBody(context.request);
+  const renamed = await renameDocument(context.rootDir, context.filter, body.path, body.to);
+  await moveAiRecords(context.aiService, renamed.from, renamed.path);
+  return sendJson(context.response, { ...renamed, ...await filesPayload(context) });
+}
+
+async function deleteReviewFile(context) {
+  const body = await readJsonBody(context.request);
+  const deleted = await deleteDocument(context.rootDir, context.filter, body.path);
+  return sendJson(context.response, { ...deleted, ...await filesPayload(context) });
+}
+
+/**
+ * 端末側に残る会話と栞を、名前を変えた文書へ付いていかせます。AIを立ち上げていなくても
+ * 記録は読めるので、頼むのに条件は要りません。
+ *
+ * ここで失敗しても断らないのは、名前の変更がもう済んでいるからです。断ると、変わったのに
+ * 失敗したように見え、画面の一覧も古いまま残ります。付いていかなかった記録は前の名前に
+ * 残るだけで、本文もレビューデータも移っています。
+ */
+async function moveAiRecords(aiService, fromPath, toPath) {
+  try {
+    await aiService.renameDocument?.(fromPath, toPath);
+  } catch {
+    // 端末側の保存先へ書けなかったときです。レビューそのものは動いています。
+  }
 }
 
 async function openFile({ rootDir, filter, projectAiContext, features, transcripts, url, response }) {

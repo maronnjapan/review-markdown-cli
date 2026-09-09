@@ -41,6 +41,90 @@ test('the file list opens with every directory collapsed and can expand them all
   assert.deepEqual(stored, ['docs']);
 });
 
+test('the file list creates, renames and deletes files without leaving the list', async (t) => {
+  let files = ['README.md', 'docs/plan.md'];
+  const sent = [];
+  const listPayload = () => ({ rootDir: '/tmp/book', files, filters: { include: [], exclude: [] } });
+  const record = (name) => async (input, options) => {
+    const body = JSON.parse(options.body);
+    sent.push({ name, body });
+    if (name === 'create') files = [...files, body.path];
+    if (name === 'rename') files = files.map((file) => (file === body.path ? body.to : file));
+    if (name === 'delete') files = files.filter((file) => file !== body.path);
+    return {
+      path: name === 'rename' ? body.to : body.path,
+      ...(name === 'rename' ? { from: body.path } : {}),
+      ...(name === 'delete' ? { data: ['.review/docs/計画.md.review.json'] } : {}),
+      ...listPayload()
+    };
+  };
+  const { document, window } = await startApp(t, 'http://localhost/#/', {
+    '/api/files': () => listPayload(),
+    '/api/file/create': record('create'),
+    '/api/file/rename': record('rename'),
+    '/api/file/delete': record('delete')
+  });
+  await waitFor(() => document.querySelector('.file-tree .tree-file-row'));
+
+  // 新規作成: 一覧の見出しから開いた欄で、対象ディレクトリからのパスを書きます。
+  document.querySelector('[data-file-action="new"]').click();
+  const createForm = document.querySelector('[data-file-form="create"]');
+  assert.equal(createForm.classList.contains('hidden'), false);
+  createForm.querySelector('input[name="path"]').value = 'docs/新しいメモ.md';
+  createForm.querySelector('button[type="submit"]').click();
+  await waitFor(() => filePaths(document).includes('docs/新しいメモ.md'));
+  assert.deepEqual(sent.at(-1), { name: 'create', body: { path: 'docs/新しいメモ.md' } });
+  // 作ったファイルまでのディレクトリは開いておきます。閉じたフォルダの中に隠れると、
+  // 作ったのに見つからないからです。
+  assert.equal(document.querySelector('details.tree-dir[data-dir-path="docs"]').open, true);
+  assert.match(document.querySelector('#toast-region').textContent, /docs\/新しいメモ\.md を作りました/);
+
+  // 名前の変更: 欄にはパスがそのまま入るので、書き換えれば別のディレクトリへ移せます。
+  fileRow(document, 'docs/plan.md').querySelector('[data-file-action="rename"]').click();
+  const renameInput = document.querySelector('[data-file-form="rename"] input[name="path"]');
+  assert.equal(renameInput.value, 'docs/plan.md');
+  renameInput.value = 'docs/計画.md';
+  document.querySelector('[data-file-form="rename"] button[type="submit"]').click();
+  await waitFor(() => filePaths(document).includes('docs/計画.md'));
+  assert.deepEqual(sent.at(-1), { name: 'rename', body: { path: 'docs/plan.md', to: 'docs/計画.md' } });
+  assert.equal(filePaths(document).includes('docs/plan.md'), false);
+
+  // 削除: 押した時点では消えず、確認してから消えます（コメントの削除と同じ2段階です）。
+  fileRow(document, 'docs/計画.md').querySelector('[data-file-action="delete"]').click();
+  assert.match(fileRow(document, 'docs/計画.md').textContent, /取り消せません/);
+  assert.deepEqual(sent.at(-1).name, 'rename');
+
+  fileRow(document, 'docs/計画.md').querySelector('[data-file-action="delete-confirm"]').click();
+  await waitFor(() => !filePaths(document).includes('docs/計画.md'));
+  assert.deepEqual(sent.at(-1), { name: 'delete', body: { path: 'docs/計画.md' } });
+  assert.match(document.querySelector('#toast-region').textContent, /レビューデータ1件を削除しました/);
+  // ディレクトリを先に出す並びのままです（`fileTree.js`）。
+  assert.deepEqual(filePaths(document), ['docs/新しいメモ.md', 'README.md']);
+  assert.ok(window);
+});
+
+test('a refused rename keeps what was typed and says why', async (t) => {
+  const files = ['docs/plan.md'];
+  const { document } = await startApp(t, 'http://localhost/#/', {
+    '/api/files': () => ({ rootDir: '/tmp/book', files, filters: { include: [], exclude: ['drafts/**'] } }),
+    '/api/file/rename': () => new Response(
+      JSON.stringify({ error: 'このパスは include / exclude の設定によりレビュー対象から外れています: drafts/plan.md' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    )
+  });
+  await waitFor(() => document.querySelector('.file-tree .tree-file-row'));
+
+  fileRow(document, 'docs/plan.md').querySelector('[data-file-action="rename"]').click();
+  const input = document.querySelector('[data-file-form="rename"] input[name="path"]');
+  input.value = 'drafts/plan.md';
+  document.querySelector('[data-file-form="rename"] button[type="submit"]').click();
+  await waitFor(() => document.querySelector('#toast-region').textContent.includes('include / exclude'));
+
+  // 断られたら書いたものはそのまま残します。打ち直させないためです。
+  assert.equal(document.querySelector('[data-file-form="rename"] input[name="path"]').value, 'drafts/plan.md');
+  assert.deepEqual(filePaths(document), ['docs/plan.md']);
+});
+
 test('the comment dialog names its target, and a link outside the root reports an error', async (t) => {
   const markdown = [
     '# 設計メモ',
@@ -3672,6 +3756,17 @@ async function openToolPage(document, key) {
 /** サイドパネルの「別の画面で開く」に出ている、その画面へのリンク。 */
 function toolLink(document, key) {
   return document.querySelector(`.side-pane-tools [data-tool-link="${key}"]`);
+}
+
+/** 一覧に出ているファイルのパス。行そのものが持っています（`fileTree.js`）。 */
+function filePaths(document) {
+  return [...document.querySelectorAll('.file-tree .tree-file-row')].map((row) => row.dataset.filePath);
+}
+
+function fileRow(document, filePath) {
+  const row = document.querySelector(`.tree-file-row[data-file-path="${filePath}"]`);
+  assert.ok(row, `${filePath} の行が一覧に出ている`);
+  return row;
 }
 
 async function waitFor(predicate, timeout = 1000) {

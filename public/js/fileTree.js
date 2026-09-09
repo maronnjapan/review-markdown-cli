@@ -71,14 +71,44 @@ function renderNode(node, depth, prefix, openDirs) {
   }
 
   for (const file of files) {
-    const pdf = /\.pdf$/i.test(file.name);
-    html += `
-      <a class="tree-row tree-file${pdf ? ' tree-file-pdf' : ''}" style="--depth:${depth}" href="#/review/${encodeURIComponent(file.path)}">
-        <span class="tree-icon tree-icon-file${pdf ? ' tree-icon-pdf' : ''}" aria-hidden="true"></span>
-        <span class="tree-label">${escapeHtml(file.name)}</span>
-      </a>`;
+    html += fileRowHtml(file, depth);
   }
   return html;
+}
+
+/**
+ * 1ファイルの行。開くリンクと、そのファイルを操作するボタンを並べます。
+ *
+ * ボタンはリンクの外に出します。`<a>` の中にボタンは置けないうえ、置けたとしても
+ * 「名前を変えるつもりで文書を開く」が起きるからです。行ごと入れ替えて名前を変える欄や
+ * 削除の確認に差し替えるので、入れ物（`.tree-file-row`）にファイルのパスを持たせます。
+ */
+function fileRowHtml(file, depth) {
+  return `
+      <div class="tree-file-row" style="--depth:${depth}" data-file-path="${escapeHtml(file.path)}">
+        ${fileRowContentsHtml(file.path)}
+      </div>`;
+}
+
+/**
+ * 行の中身。名前を変える欄や削除の確認へ差し替えたあと、元へ戻すのにも使うので
+ * （`fileListView.js`）、行そのものとは分けてあります。
+ */
+export function fileRowContentsHtml(filePath) {
+  const name = String(filePath || '').split('/').at(-1);
+  const pdf = /\.pdf$/i.test(name);
+  const escaped = escapeHtml(filePath);
+  return `
+        <a class="tree-row tree-file${pdf ? ' tree-file-pdf' : ''}" href="#/review/${encodeURIComponent(filePath)}">
+          <span class="tree-icon tree-icon-file${pdf ? ' tree-icon-pdf' : ''}" aria-hidden="true"></span>
+          <span class="tree-label">${escapeHtml(name)}</span>
+        </a>
+        <span class="tree-file-actions">
+          <button type="button" class="tree-file-action" data-file-action="rename"
+            aria-label="${escaped} の名前を変える">名前</button>
+          <button type="button" class="tree-file-action tree-file-delete" data-file-action="delete"
+            aria-label="${escaped} を削除する">削除</button>
+        </span>`;
 }
 
 function countFiles(node) {

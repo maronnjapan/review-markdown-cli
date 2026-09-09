@@ -709,6 +709,14 @@ export class AiService {
     return this.store.listConversations(documentPath);
   }
 
+  /**
+   * 名前を変えた文書に、端末側の記録を付いていかせます。
+   * 呼ぶのはファイルの名前を変えたときだけです（`documentFiles.js`）。
+   */
+  async renameDocument(fromPath, toPath) {
+    return this.store.renameDocument(fromPath, toPath);
+  }
+
   async createConversation({ documentPath, target, context, skillIds }) {
     const normalizedTarget = await this.snapshotTarget(documentPath, target);
     const now = new Date().toISOString();

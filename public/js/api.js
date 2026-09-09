@@ -17,6 +17,16 @@ export const api = {
 
   saveFile: (payload) => postJson('/api/file', payload),
 
+  /**
+   * ファイルそのものの出し入れ。どれも変えたあとの一覧（`listFiles` と同じ形）を返すので、
+   * 画面は続けて一覧を取り直しません。
+   */
+  createFile: (payload) => postJson('/api/file/create', payload),
+
+  renameFile: (payload) => postJson('/api/file/rename', payload),
+
+  deleteFile: (payload) => postJson('/api/file/delete', payload),
+
   saveComments: (payload) => postJson('/api/review', payload),
 
   /** ディレクトリ全体に効く前提。行き先が文書のレビューファイルではないので、窓口も別です。 */
