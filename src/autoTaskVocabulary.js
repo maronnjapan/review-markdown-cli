@@ -57,11 +57,63 @@ export const TASK_COMMITMENTS = Object.freeze(['undecided', 'committed']);
 export const TASK_COMMITMENT_LABELS = Object.freeze({ undecided: '未定', committed: 'やる' });
 export const DEFAULT_TASK_COMMITMENT = 'undecided';
 
-/** 優先度。並び順そのものです。 */
-export const TASK_PRIORITIES = Object.freeze(['now', 'next', 'later']);
-export const TASK_PRIORITY_ORDER = Object.freeze({ now: 0, next: 1, later: 2 });
-export const TASK_PRIORITY_LABELS = Object.freeze({ now: 'いま', next: '次に', later: 'あとで' });
-export const DEFAULT_TASK_PRIORITY = 'next';
+/**
+ * 優先度。並び順そのものです。
+ *
+ * 値は agent-xaa-platform の ToDo と同じ3つにしてあります（`high` / `normal` / `low`）。
+ * 決めたタスクはあちらの ToDo として登録されるので、違う言葉で持つと、渡すときに必ず
+ * どちらかの読み替え表が要ります。表は片方だけ足された値を黙って既定値へ落とすので、
+ * 揃えられるなら揃えておくほうが失うものがありません。
+ *
+ * 並び順の意味は変えていません。「いま手を付ける」が `high`、「次に」が `normal`、
+ * 「あとで」が `low` です。何をどれにするかは `prompts/tasks.js` が言葉で決めています。
+ */
+export const TASK_PRIORITIES = Object.freeze(['high', 'normal', 'low']);
+export const TASK_PRIORITY_ORDER = Object.freeze({ high: 0, normal: 1, low: 2 });
+export const TASK_PRIORITY_LABELS = Object.freeze({ high: '高', normal: 'ふつう', low: '低' });
+export const DEFAULT_TASK_PRIORITY = 'normal';
+
+/**
+ * 揃える前の優先度。この機能より前に書かれた記録に入っています。
+ *
+ * 読むときだけ当てます（`readTaskPriority`）。書くときに受け取ると、古い値を送り続ける
+ * 画面やスクリプトがそのまま動いてしまい、記録に2つの言葉が混ざり続けるからです。
+ */
+export const LEGACY_TASK_PRIORITIES = Object.freeze({ now: 'high', next: 'normal', later: 'low' });
+
+/**
+ * 保存済みの優先度を読みます。読めなければ null です。
+ *
+ * 既定値へ落とすのは呼ぶ側の仕事にしてあります。ここで落とすと、送られた値が読めなかった
+ * ことを、断りたい側（`normalizeTaskInput`）が知れなくなります。
+ */
+export function readTaskPriority(value) {
+  if (isTaskPriority(value)) return value;
+  return LEGACY_TASK_PRIORITIES[value] || null;
+}
+
+/**
+ * タスクに書ける3つの並び。渡す先（agent-xaa-platform の ToDo）の `done_criteria` /
+ * `steps` / `notes` と、名前も意味も同じ3つです。
+ *
+ *   完了条件 : 何が満たされたら終わりか。これが無いと、任せた相手は終わりを決められません
+ *   手順     : どう進めるか。決め打ちにしたいところだけ書きます
+ *   補足     : 進めるあいだ頭に置いてほしいこと
+ *
+ * 書くのはレビュアーです。ただし完了条件だけは、AIが起こしたタスクにも入ります。引用した
+ * 一文から「終わり」を書けることがあり、そこを空で渡すと、受け取った側が自分で決めるか、
+ * 決められずに止まるかのどちらかになるからです。手順と補足は、文書が言っていないことを
+ * 書くことになるので入れません。
+ */
+export const TASK_LINES = Object.freeze([
+  Object.freeze({ id: 'doneCriteria', label: '完了条件', fromAi: true }),
+  Object.freeze({ id: 'steps', label: '手順', fromAi: false }),
+  Object.freeze({ id: 'notes', label: '補足', fromAi: false })
+]);
+export const TASK_LINE_FIELDS = Object.freeze(TASK_LINES.map(({ id }) => id));
+export const TASK_LINE_LABELS = Object.freeze(Object.fromEntries(TASK_LINES.map(({ id, label }) => [id, label])));
+/** AIの答えから受け取る並び。ここに無いものは、答えに入っていても捨てます。 */
+export const AI_TASK_LINE_FIELDS = Object.freeze(TASK_LINES.filter(({ fromAi }) => fromAi).map(({ id }) => id));
 
 /**
  * AIに任せられる自動化。設定の `autoTasksActions` に書ける値で、書いたものだけが裏で走ります。

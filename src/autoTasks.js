@@ -8,6 +8,8 @@ import {
   MAX_TASK_DETAIL_CHARS,
   MAX_TASK_FOLLOW_UPS,
   MAX_TASK_KNOWLEDGE_CHARS,
+  MAX_TASK_LIST_ITEMS,
+  MAX_TASK_LIST_ITEM_CHARS,
   MAX_TASK_OWNER_CHARS,
   MAX_TASK_PLAN_NOTE_CHARS,
   MAX_TASK_QUESTIONS,
@@ -20,6 +22,7 @@ import {
   TASK_SOURCE_TAIL_CHARS
 } from './aiLimits.js';
 import {
+  AI_TASK_LINE_FIELDS,
   AUTO_TASK_ACTION_IDS,
   AUTO_TASK_KIND_IDS,
   DEFAULT_AUTO_TASK_ACTIONS,
@@ -30,16 +33,19 @@ import {
   MAX_AUTO_TASK_INTERVAL_SECONDS,
   MIN_AUTO_TASK_INTERVAL_SECONDS,
   REVIEWER_TASK_STATUSES,
+  TASK_LINE_FIELDS,
+  TASK_LINE_LABELS,
   TASK_PRIORITY_ORDER,
   isAutoTaskAction,
   isTaskCommitment,
   isTaskKind,
   isTaskPriority,
-  isTaskStatus
+  isTaskStatus,
+  readTaskPriority
 } from './autoTaskVocabulary.js';
 import { parseCaptionEntries } from './captionRecap.js';
 import { normalizeReferenceFiles, readReferenceFilePaths } from './referenceFiles.js';
-import { REVIEW_DIR } from './reviewStore.js';
+import { REVIEW_DIR, findExistingDataLocation, findReviewBaseDir } from './reviewStore.js';
 
 /**
  * 自動タスクは、文字起こしや書きかけの資料から「やること」をAIに起こさせ、任せられる
@@ -88,13 +94,33 @@ const DUE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 /** 文字起こしと見なす発言の数。1〜2件では、太字と時刻を偶然含む資料と見分けられません。 */
 const CAPTION_ENTRIES_FOR_TRANSCRIPT = 3;
 
-export function tasksPathFor(rootDir, relativeFile) {
-  return path.join(rootDir, REVIEW_DIR, `${relativeFile}${TASKS_FILE_SUFFIX}`);
+/**
+ * そのファイルのタスクが実際に置かれている場所です。
+ *
+ * 探し方も、まだ無いときの行き先も、コメントと同じ `.review` です
+ * （`reviewStore.js` の `findExistingDataLocation`）。どの階層を対象に起動しても
+ * 同じファイルを読み書きするので、`docs/` を対象に起こしたタスクが、リポジトリ直下から
+ * 開き直すと消えて見える、ということが起きません。
+ *
+ * @returns {Promise<{ filePath: string, baseDir: string, targetFile: string }>}
+ */
+export async function findExistingTasksLocation(rootDir, relativeFile) {
+  return findExistingDataLocation(rootDir, relativeFile, TASKS_FILE_SUFFIX);
 }
 
-/** 画面とREADMEに出す保存先（対象ディレクトリからの相対パス）。 */
-export function relativeTasksPath(relativeFile) {
-  return `${REVIEW_DIR}/${relativeFile}${TASKS_FILE_SUFFIX}`;
+export async function tasksPathFor(rootDir, relativeFile) {
+  return (await findExistingTasksLocation(rootDir, relativeFile)).filePath;
+}
+
+/**
+ * 画面とREADMEに出す保存先（対象ディレクトリからの相対パス）。
+ *
+ * 対象ディレクトリの上の `.review` にあるときは `../.review/...` になります。
+ * どこにあるかを隠して書くと、探しに行った人が見つけられません。
+ */
+export async function relativeTasksPath(rootDir, relativeFile) {
+  const filePath = await tasksPathFor(rootDir, relativeFile);
+  return path.relative(path.resolve(rootDir), filePath).split(path.sep).join('/');
 }
 
 /* ---------------------------------------------------------------- *
@@ -109,7 +135,10 @@ export function emptyTasksRecord(targetFile) {
 export async function readTasks(rootDir, relativeFile) {
   const targetFile = relativeFile.split(path.sep).join('/');
   try {
-    const raw = await fs.readFile(tasksPathFor(rootDir, targetFile), 'utf8');
+    // 記録の中の対象名は、対象ディレクトリから見たパスのままにします。画面から届く
+    // パスも、タスクに添えた参照ファイルの「同階層以下」も、その起点で測るからです。
+    // ファイルの中へ書く対象名だけが、置き場所から見たパスです（`updateTasks`）。
+    const raw = await fs.readFile(await tasksPathFor(rootDir, targetFile), 'utf8');
     return readTasksRecord(JSON.parse(raw), targetFile);
   } catch (error) {
     if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
@@ -171,12 +200,13 @@ function readTask(value, targetFile = '') {
     title,
     detail: text(value.detail, MAX_TASK_DETAIL_CHARS),
     kind: isTaskKind(value.kind) ? value.kind : DEFAULT_TASK_KIND,
-    priority: isTaskPriority(value.priority) ? value.priority : DEFAULT_TASK_PRIORITY,
+    priority: readTaskPriority(value.priority) || DEFAULT_TASK_PRIORITY,
     // 実行中のまま保存されたタスクは、途中で落ちたものです。未着手へ戻して読みます。
     status: isTaskStatus(value.status) && value.status !== 'running' ? value.status : DEFAULT_TASK_STATUS,
     source: value.source === 'reviewer' ? 'reviewer' : 'ai',
     quote: text(value.quote, MAX_TASK_QUOTE_CHARS),
     owner: text(value.owner, MAX_TASK_OWNER_CHARS),
+    ...taskLinesOf(value),
     ...(text(value.statusReason, MAX_REASON_CHARS) ? { statusReason: text(value.statusReason, MAX_REASON_CHARS) } : {}),
     ...(typeof value.parentId === 'string' && value.parentId ? { parentId: value.parentId.slice(0, ID_CHARS) } : {}),
     ...(plan ? { plan } : {}),
@@ -249,13 +279,15 @@ const writeQueues = new Map();
  * （同じものを返しても構いません）。書いた記録を返します。
  */
 export async function updateTasks(rootDir, relativeFile, mutate) {
-  const filePath = tasksPathFor(rootDir, relativeFile);
+  const { filePath, targetFile: savedTargetFile } = await findExistingTasksLocation(rootDir, relativeFile);
   const previous = writeQueues.get(filePath) || Promise.resolve();
   const run = previous.catch(() => {}).then(async () => {
     const current = await readTasks(rootDir, relativeFile);
     const next = (await mutate(current)) || current;
     const payload = {
-      targetFile: next.targetFile || current.targetFile,
+      // ファイルの中の対象名は、その置き場所から見たパスです。読む側が場所から名前を
+      // 決められるよう、レビューファイル（`writeReview`）と揃えてあります。
+      targetFile: savedTargetFile,
       updatedAt: new Date().toISOString(),
       watch: next.watch === true,
       ...(next.analysis ? { analysis: next.analysis } : {}),
@@ -265,7 +297,7 @@ export async function updateTasks(rootDir, relativeFile, mutate) {
     };
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
-    return readTasksRecord(payload, payload.targetFile);
+    return readTasksRecord(payload, current.targetFile);
   });
   writeQueues.set(filePath, run);
   try {
@@ -278,11 +310,16 @@ export async function updateTasks(rootDir, relativeFile, mutate) {
 /**
  * 見守りを付けた文書の一覧。`.review` 配下の `*.tasks.json` を辿ります。
  * 実行係（`autoTaskRunner.js`）が、毎回の見守りで読み直す対象を集めるのに使います。
+ *
+ * 辿るのは、いま読み書きに使っている `.review` です（対象ディレクトリの上にあることが
+ * あります）。そこには対象ディレクトリの外の文書の記録も並ぶので、外のものは落とします。
+ * 返すのは対象ディレクトリから見たパスで、読み直す側がそのまま本文を開けます。
  */
 export async function listWatchedFiles(rootDir) {
-  const reviewDir = path.join(rootDir, REVIEW_DIR);
+  const baseDir = await findReviewBaseDir(rootDir);
+  const primaryDir = path.resolve(rootDir);
   const watched = [];
-  await walk(reviewDir, '');
+  await walk(path.join(baseDir, REVIEW_DIR), '');
   return watched.sort((a, b) => a.localeCompare(b));
 
   async function walk(currentDir, relativeDir) {
@@ -298,11 +335,18 @@ export async function listWatchedFiles(rootDir) {
       if (entry.isDirectory()) {
         await walk(path.join(currentDir, entry.name), relativePath);
       } else if (entry.isFile() && entry.name.endsWith(TASKS_FILE_SUFFIX)) {
-        const targetFile = relativePath.slice(0, -TASKS_FILE_SUFFIX.length);
+        const targetFile = inTargetDirectory(relativePath.slice(0, -TASKS_FILE_SUFFIX.length));
+        if (!targetFile) continue;
         const record = await readTasks(rootDir, targetFile);
         if (record.watch) watched.push(targetFile);
       }
     }
+  }
+
+  /** 置き場所から見たパスを、対象ディレクトリから見たパスへ。外のものは null です。 */
+  function inTargetDirectory(targetFile) {
+    const relative = path.relative(primaryDir, path.resolve(baseDir, targetFile)).split(path.sep).join('/');
+    return relative && !relative.startsWith('../') && relative !== '..' ? relative : null;
   }
 }
 
@@ -382,11 +426,17 @@ export function normalizeTaskInput(value, source = 'タスク', documentPath = '
     throw new Error(`${source}の優先度が読めません: ${value.priority}`);
   }
   const reference = normalizeTaskReference(value, documentPath, source);
+  const lines = {};
+  for (const field of TASK_LINE_FIELDS) {
+    const items = normalizeTaskLines(value[field], field, source);
+    if (items.length) lines[field] = items;
+  }
   return {
     title,
     detail,
     kind: value.kind || DEFAULT_TASK_KIND,
     priority: value.priority || DEFAULT_TASK_PRIORITY,
+    ...lines,
     ...(reference.knowledge || reference.files.length ? { reference } : {})
   };
 }
@@ -447,6 +497,10 @@ export function normalizePlanInput(value, source = '段取り') {
     const owner = value.owner.trim();
     if (owner.length > MAX_TASK_OWNER_CHARS) throw new Error(`${source}の担当が長すぎます（${MAX_TASK_OWNER_CHARS}文字まで）`);
     plan.owner = owner;
+  }
+  for (const field of TASK_LINE_FIELDS) {
+    if (value[field] === undefined) continue;
+    plan[field] = normalizeTaskLines(value[field], field, source);
   }
   return plan;
 }
@@ -521,6 +575,13 @@ function withPlan(task, patch, at) {
   else delete next.plan;
   if (patch.priority !== undefined) next.priority = patch.priority;
   if (patch.owner !== undefined) next.owner = patch.owner;
+  for (const field of TASK_LINE_FIELDS) {
+    if (patch[field] === undefined) continue;
+    // 空にしたら欄ごと消します。理由は参考（`setReference`）と同じで、空の枠を残すと
+    // 記録にも渡す先の ToDo にも「書いてある（中身は空）」として現れるからです。
+    if (patch[field].length) next[field] = patch[field];
+    else delete next[field];
+  }
   if (committing && next.status === 'dismissed') next.status = DEFAULT_TASK_STATUS;
   return next;
 }
@@ -781,9 +842,13 @@ export function readExtractionAnswer(answer) {
         title: text(entry?.title, MAX_TASK_TITLE_CHARS),
         detail: text(entry?.detail, MAX_TASK_DETAIL_CHARS),
         kind: isTaskKind(entry?.kind) ? entry.kind : DEFAULT_TASK_KIND,
-        priority: isTaskPriority(entry?.priority) ? entry.priority : DEFAULT_TASK_PRIORITY,
+        priority: readTaskPriority(entry?.priority) || DEFAULT_TASK_PRIORITY,
         quote: text(entry?.quote, MAX_TASK_QUOTE_CHARS),
-        owner: text(entry?.owner, MAX_TASK_OWNER_CHARS)
+        owner: text(entry?.owner, MAX_TASK_OWNER_CHARS),
+        // AIから受け取る並びは完了条件だけです（`autoTaskVocabulary.js` の `TASK_LINES`）。
+        ...Object.fromEntries(AI_TASK_LINE_FIELDS
+          .map((field) => [field, stringList(entry?.[field], MAX_TASK_LIST_ITEMS, MAX_TASK_LIST_ITEM_CHARS)])
+          .filter(([, items]) => items.length))
       }))
       .filter((entry) => entry.title),
     updates: (Array.isArray(answer?.updates) ? answer.updates : [])
@@ -832,7 +897,7 @@ export function applyTaskResult(record, taskId, result, now = new Date()) {
       title,
       detail: `「${parent.title}」の実行から出た次のタスクです。`,
       kind: DEFAULT_TASK_KIND,
-      priority: 'later',
+      priority: 'low',
       status: DEFAULT_TASK_STATUS,
       source: 'ai',
       quote: '',
@@ -944,6 +1009,45 @@ function text(value, max) {
 function stringList(value, maxItems, maxChars) {
   if (!Array.isArray(value)) return [];
   return value.map((entry) => text(entry, maxChars)).filter(Boolean).slice(0, maxItems);
+}
+
+/**
+ * 保存済みの3つの並びを読みます。空のものは欄ごと落とします。
+ *
+ * 空の配列を書き残すと、記録にも渡す先の ToDo にも「書いてある（中身は空）」として
+ * 現れます。参考（`readTaskReference`）を空なら落としているのと同じ理由です。
+ */
+function taskLinesOf(value) {
+  const lines = {};
+  for (const field of TASK_LINE_FIELDS) {
+    const items = stringList(value?.[field], MAX_TASK_LIST_ITEMS, MAX_TASK_LIST_ITEM_CHARS);
+    if (items.length) lines[field] = items;
+  }
+  return lines;
+}
+
+/**
+ * レビュアーが送ってきた並びを受け取ります。配列でも、1行1件の文章でも受け取ります。
+ *
+ * 人は欄に行を書き、プログラムは配列を送るのに、どちらも同じ並びのつもりです。
+ * この受け取り方も上限も、渡す先（agent-xaa-platform の ToDo）と同じにしてあります。
+ * 空行は落とし、件数と長さは切り詰めずに断ります。切り詰めると、書いたはずの完了条件が
+ * 1つ足りないまま、agentへ渡ります。
+ */
+function normalizeTaskLines(value, field, source) {
+  if (value === undefined || value === null || value === '') return [];
+  const items = Array.isArray(value)
+    ? value.map((entry) => (typeof entry === 'string' ? entry : String(entry ?? '')))
+    : typeof value === 'string' ? value.split('\n') : null;
+  if (!items) throw new Error(`${source}の${TASK_LINE_LABELS[field]}は配列か、1行1件の文章で指定してください`);
+  const kept = items.map((entry) => entry.trim()).filter(Boolean);
+  if (kept.length > MAX_TASK_LIST_ITEMS) {
+    throw new Error(`${source}の${TASK_LINE_LABELS[field]}が多すぎます（${MAX_TASK_LIST_ITEMS}件まで）`);
+  }
+  if (kept.some((entry) => entry.length > MAX_TASK_LIST_ITEM_CHARS)) {
+    throw new Error(`${source}の${TASK_LINE_LABELS[field]}の1行が長すぎます（${MAX_TASK_LIST_ITEM_CHARS}文字まで）`);
+  }
+  return kept;
 }
 
 function timestamp(value) {

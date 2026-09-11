@@ -9,6 +9,10 @@ const MAX_REFERENCE_FILES = 8;
 /** サーバー側の上限と同じです（src/aiLimits.js の MAX_TASK_PLAN_NOTE_CHARS）。 */
 const MAX_TASK_PLAN_NOTE_CHARS = 1_000;
 
+/** 3つの並びの上限。サーバー側（src/aiLimits.js）と、渡す先の ToDo と同じ値です。 */
+const MAX_TASK_LIST_ITEMS = 50;
+const MAX_TASK_LIST_ITEM_CHARS = 500;
+
 /**
  * タスクの種類・状態・優先度・採否と、任せられる自動化。`src/autoTaskVocabulary.js` と
  * 同じ並び・同じidです。ビルドを持たない構成では `src/` を `public/` から import できないので、
@@ -24,10 +28,16 @@ const KINDS = [
 const KIND_LABELS = Object.fromEntries(KINDS.map(({ id, label }) => [id, label]));
 const STATUS_LABELS = { open: '未着手', running: '実行中', ready: '確認待ち', done: '完了', dismissed: '見送り' };
 const STATUS_ORDER = { ready: 0, open: 1, running: 2, done: 3, dismissed: 4 };
-const PRIORITY_IDS = ['now', 'next', 'later'];
-const PRIORITY_LABELS = { now: 'いま', next: '次に', later: 'あとで' };
-const PRIORITY_ORDER = { now: 0, next: 1, later: 2 };
+const PRIORITY_IDS = ['high', 'normal', 'low'];
+const PRIORITY_LABELS = { high: '高', normal: 'ふつう', low: '低' };
+const PRIORITY_ORDER = { high: 0, normal: 1, low: 2 };
 const COMMITMENT_LABELS = { undecided: '未定', committed: 'やる' };
+/** タスクに書ける3つの並び。渡す先の ToDo と同じ3つです（`src/autoTaskVocabulary.js`）。 */
+const TASK_LINES = [
+  { id: 'doneCriteria', label: '完了条件', placeholder: '1行に1つ。例: 手順書に前提の節がある' },
+  { id: 'steps', label: '手順', placeholder: '1行に1つ。決め打ちにしたいところだけ' },
+  { id: 'notes', label: '補足', placeholder: '1行に1つ。進めるあいだ頭に置いてほしいこと' }
+];
 
 /**
  * 一覧の絞り込み。AIが起こしたタスクは読まれる前から並ぶので、「すべて」のままでは
@@ -337,13 +347,27 @@ export function createAutoTasksController({
       toaster.error(`メモは${MAX_TASK_PLAN_NOTE_CHARS}文字までです。`);
       return;
     }
+    const lines = {};
+    for (const { id: field, label } of TASK_LINES) {
+      const items = readLines(form.elements[field].value);
+      if (items.length > MAX_TASK_LIST_ITEMS) {
+        toaster.error(`${label}は${MAX_TASK_LIST_ITEMS}件までです。`);
+        return;
+      }
+      if (items.some((item) => item.length > MAX_TASK_LIST_ITEM_CHARS)) {
+        toaster.error(`${label}の1行は${MAX_TASK_LIST_ITEM_CHARS}文字までです。`);
+        return;
+      }
+      lines[field] = items;
+    }
     const saved = await change({
       plan: [{
         id,
         due: form.elements.due.value,
         priority: form.elements.priority.value,
         owner: form.elements.owner.value,
-        note
+        note,
+        ...lines
       }]
     }, '段取りを保存しました。');
     if (!saved) return;
@@ -357,7 +381,8 @@ export function createAutoTasksController({
       due: form.elements.due.value,
       priority: form.elements.priority.value,
       owner: form.elements.owner.value,
-      note: form.elements.note.value
+      note: form.elements.note.value,
+      ...Object.fromEntries(TASK_LINES.map(({ id }) => [id, form.elements[id].value]))
     });
   }
 
@@ -705,24 +730,35 @@ export function createAutoTasksController({
       due: task.plan?.due || '',
       priority: task.priority,
       owner: task.owner || '',
-      note: task.plan?.note || ''
+      note: task.plan?.note || '',
+      ...Object.fromEntries(TASK_LINES.map(({ id: field }) => [field, (task[field] || []).join('\n')]))
     };
     const options = PRIORITY_IDS
       .map((priority) => `<option value="${priority}"${priority === draft.priority ? ' selected' : ''}>${escapeHtml(PRIORITY_LABELS[priority])}</option>`)
       .join('');
+    // 完了条件・手順・補足は、そのまま渡す先の ToDo の同じ欄になります。1行1件で書きます。
+    const lines = TASK_LINES
+      .map(({ id: field, label, placeholder }) => `
+          <label>${escapeHtml(label)}<textarea name="${field}" rows="2" placeholder="${escapeHtml(placeholder)}"${disabled}>${escapeHtml(draft[field])}</textarea></label>`)
+      .join('');
     return `
       <details class="task-plan"${openPlanIds.has(task.id) ? ' open' : ''} data-task-plan="${id}">
-        <summary>段取り（期限・優先度・担当・メモ）</summary>
+        <summary>段取り（期限・優先度・担当・メモ・完了条件・手順・補足）</summary>
         <form class="task-plan-form" data-task-plan-form="${id}">
           <label>期限<input type="date" name="due" value="${escapeHtml(draft.due)}"${disabled}></label>
           <label>優先度<select name="priority"${disabled}>${options}</select></label>
           <label>担当<input type="text" name="owner" value="${escapeHtml(draft.owner)}" placeholder="例: 自分"${disabled}></label>
-          <label>自分のメモ<textarea name="note" rows="2" placeholder="決めたときに分かっていたこと">${escapeHtml(draft.note)}</textarea></label>
+          <label>自分のメモ<textarea name="note" rows="2" placeholder="決めたときに分かっていたこと">${escapeHtml(draft.note)}</textarea></label>${lines}
           <div class="context-note-actions">
             <button type="submit"${disabled}>段取りを保存</button>
           </div>
         </form>
       </details>`;
+  }
+
+  /** 1行1件で書かれた欄を、並びとして読みます。空行は落とします（サーバー側と同じ）。 */
+  function readLines(value) {
+    return String(value ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
   }
 
   /** 結果の本文はMarkdownですが、そのまま文字として出します。AIが書いたHTMLを画面へ流し込まないためです。 */

@@ -192,9 +192,9 @@ const EXPECTED = {
   'prompt:recap(minutes+question)': 'e43bfc4ee1ae2ae0d4fc633be3a3034da9781b233166b88e474cf35788fdbdff',
   'prompt:recap(followUp)': '45de7e3c7cab941cee09c504a6341e781ad41c103613890e0be428ad29428bac',
   'prompt:recap(followUpResent)': 'd5818555308215b5e9c9dc2f2708b4c512c0b4d1f61024ef84c16d4f92bb650d',
-  'prompt:tasks(transcript,first)': 'bf4956cf6f2847fca28b0f0d9a2487bfe007b768819899c1f54634afbc1533d3',
-  'prompt:tasks(transcript,appended+instructions)': '2c893b46b9bb42c3e7c2db2e0f857072cc0e8bbaa716a3faec3b306d3a8264d3',
-  'prompt:tasks(document,extractOnly)': '9099d3eccce9ab5130a61ebe3d36a0298ceb13b7fefc0ecf6e32ecac9b734823',
+  'prompt:tasks(transcript,first)': 'd453a88971e150bfd2d6018260efd9efacadfcac21c2300a39817f15ea8f8d4a',
+  'prompt:tasks(transcript,appended+instructions)': '09a311451577d008d708c4b2812771e4d342c5d56e01bd914e788fc4bdedbf6d',
+  'prompt:tasks(document,extractOnly)': '476b202defde11e06c071f80139d81fac7c0188473dc1ad7ac30eed6b303c34f',
   'prompt:taskRun(research)': '1b360b603666e5b146e7d53fb3bed3fc06ffed8da5677b9b703b5e172fe6eec2',
   'prompt:taskRun(sample+instructions)': '84f21e3710a655e76a33163790ae5f7c98f3e98dc1d22c67a83fb661c3ff03bf',
   'prompt:chat(first)': 'eca6465f453c6d1cd1845608167f881f915bdd589c8057ce9d2b63e63f1a9ef5',
@@ -343,7 +343,7 @@ test('AIへ渡す文面は、書き換えるまで一字も変わらない', asy
   const readSoFar = MEETING.indexOf('**鈴木** `[10:21:30]`');
   await service.extractTasks('meeting.md', {
     record: {
-      tasks: [{ id: 'task-fixed-1', title: '手順の前提を書く', kind: 'action', status: 'open', priority: 'now' }],
+      tasks: [{ id: 'task-fixed-1', title: '手順の前提を書く', kind: 'action', status: 'open', priority: 'high' }],
       analysis: { revision: crypto.createHash('sha256').update(MEETING.slice(0, readSoFar)).digest('hex'), length: readSoFar }
     },
     actions: ['organize', 'focus'],

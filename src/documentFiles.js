@@ -1,10 +1,16 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { TASKS_FILE_SUFFIX } from './autoTasks.js';
+import { TASKS_FILE_SUFFIX, findExistingTasksLocation } from './autoTasks.js';
 import { httpError } from './http.js';
 import { isMarkdownPath } from './links.js';
 import { isPdfPath } from './pdf/index.js';
-import { REVIEW_DIR, findExistingReviewLocation, normalizeRelativePath } from './reviewStore.js';
+import {
+  REVIEW_DIR,
+  REVIEW_EXPORT_SUFFIX,
+  REVIEW_FILE_SUFFIX,
+  findExistingReviewLocation,
+  normalizeRelativePath
+} from './reviewStore.js';
 
 /**
  * 一覧に出ているファイルそのものを、画面から作る・名前を変える・消すための操作です。
@@ -26,11 +32,10 @@ import { REVIEW_DIR, findExistingReviewLocation, normalizeRelativePath } from '.
 /**
  * `.review` に置く、その文書だけのデータ。名前の変更で一緒に動かし、削除で一緒に消します。
  *
- * レビューファイル（`.review.json`）と出力（`.review.md`）は対象ディレクトリの上に
- * あることがあるので、置き場所は `findExistingReviewLocation` に聞きます。タスクは
- * 必ず対象ディレクトリの `.review` です（`autoTasks.js` の `tasksPathFor`）。
+ * どれも対象ディレクトリの上にあることがあるので、置き場所は聞いてから組み立てます
+ * （`findExistingReviewLocation` と `findExistingTasksLocation`）。
  */
-const REVIEW_DATA_SUFFIXES = ['.review.json', '.review.md'];
+const REVIEW_DATA_SUFFIXES = [REVIEW_FILE_SUFFIX, REVIEW_EXPORT_SUFFIX];
 
 /** ファイル名1つ分の上限。これを超えると、ほとんどのファイルシステムが受け取りません。 */
 const MAX_NAME_CHARS = 255;
@@ -195,13 +200,14 @@ async function removeDocumentData(rootDir, relativeFile) {
  */
 async function dataLocations(rootDir, relativeFile) {
   const review = await findExistingReviewLocation(rootDir, relativeFile);
+  const tasks = await findExistingTasksLocation(rootDir, relativeFile);
   return [
     ...REVIEW_DATA_SUFFIXES.map((suffix) => ({
       baseDir: review.baseDir,
       targetFile: review.targetFile,
       suffix
     })),
-    { baseDir: path.resolve(rootDir), targetFile: relativeFile, suffix: TASKS_FILE_SUFFIX }
+    { baseDir: tasks.baseDir, targetFile: tasks.targetFile, suffix: TASKS_FILE_SUFFIX }
   ];
 }
 

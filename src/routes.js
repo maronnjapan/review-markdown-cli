@@ -474,10 +474,10 @@ async function tasksPayload(context, documentPath) {
   return tasksPayloadFor(context, documentPath, await readTasks(context.rootDir, documentPath));
 }
 
-function tasksPayloadFor({ autoTasks }, documentPath, record) {
+async function tasksPayloadFor({ autoTasks, rootDir }, documentPath, record) {
   return {
     tasks: record,
-    tasksFile: relativeTasksPath(documentPath),
+    tasksFile: await relativeTasksPath(rootDir, documentPath),
     runner: autoTasks ? autoTasks.status(documentPath, record) : null
   };
 }

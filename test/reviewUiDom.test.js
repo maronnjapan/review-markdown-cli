@@ -3322,7 +3322,7 @@ test('自動タスクが有効な文書ではタスクのタブが出て、整�
           record = { ...record, tasks: record.tasks.map((task) => (task.id === id ? { ...task, status } : task)) };
         }
         for (const added of body.add || []) {
-          record = { ...record, tasks: [...record.tasks, { id: `task-${record.tasks.length + 1}`, ...added, status: 'open', source: 'reviewer', priority: 'next', quote: '', owner: '' }] };
+          record = { ...record, tasks: [...record.tasks, { id: `task-${record.tasks.length + 1}`, ...added, status: 'open', source: 'reviewer', priority: 'normal', quote: '', owner: '' }] };
         }
         for (const { id, knowledge, files } of body.setReference || []) {
           record = {
@@ -3360,8 +3360,8 @@ test('自動タスクが有効な文書ではタスクのタブが出て、整�
         analysis: { revision: 'r1', length: markdown.length, sourceKind: 'transcript', analyzedAt: '2026-09-03T01:00:00.000Z', summary: '前提が足りません。' },
         focus: { now: '前提を調べて書く', reason: '鈴木さんの依頼だから', updatedAt: '2026-09-03T01:00:00.000Z' },
         tasks: [
-          { id: 'task-1', title: '手順の前提を調べる', detail: '当番が知らない前提を洗い出す。', kind: 'research', priority: 'now', status: 'ready', source: 'ai', quote: '前提を調べて書いてください。', owner: '', createdAt: '2026-09-03T01:00:00.000Z', result: { summary: '前提は3つです。', body: '# 調査メモ\n\n- OSの版', truncated: false, followUps: [], questions: ['どの環境か'], completedAt: '2026-09-03T01:00:30.000Z' } },
-          { id: 'task-2', title: '停止条件を運用チームに確認する', detail: '', kind: 'action', priority: 'next', status: 'open', source: 'ai', quote: '', owner: '田中', createdAt: '2026-09-03T01:00:00.000Z' }
+          { id: 'task-1', title: '手順の前提を調べる', detail: '当番が知らない前提を洗い出す。', kind: 'research', priority: 'high', status: 'ready', source: 'ai', quote: '前提を調べて書いてください。', owner: '', createdAt: '2026-09-03T01:00:00.000Z', result: { summary: '前提は3つです。', body: '# 調査メモ\n\n- OSの版', truncated: false, followUps: [], questions: ['どの環境か'], completedAt: '2026-09-03T01:00:30.000Z' } },
+          { id: 'task-2', title: '停止条件を運用チームに確認する', detail: '', kind: 'action', priority: 'normal', status: 'open', source: 'ai', quote: '', owner: '田中', createdAt: '2026-09-03T01:00:00.000Z' }
         ]
       };
       return ndjsonResponse([
@@ -3478,17 +3478,30 @@ test('自動タスクが有効な文書ではタスクのタブが出て、整�
     '決めたものだけを出す'
   );
 
-  // 段取り（期限・優先度・担当・メモ）は、決めたタスクにだけ付きます。
+  // 段取り（期限・優先度・担当・メモ・完了条件・手順・補足）は、決めたタスクにだけ付きます。
   assert.equal(document.querySelector('.task-card[data-task-id="task-2"] .task-plan') !== null, true);
   const planForm = document.querySelector('[data-task-plan-form="task-2"]');
   planForm.elements.due.value = '2026-09-10';
-  planForm.elements.priority.value = 'now';
+  planForm.elements.priority.value = 'high';
   planForm.elements.note.value = '手順を出す前に';
+  // 渡す先の ToDo と同じ3つ。1行1件で書き、空行は落として送ります。
+  planForm.elements.doneCriteria.value = '運用チームの返事がある\n\n手順書に停止条件が書いてある';
+  planForm.elements.steps.value = '手順書の版を確かめる';
+  planForm.elements.notes.value = '';
   planForm.requestSubmit();
   await waitFor(() => changeRequests.length === 7);
   assert.deepEqual(changeRequests[6][0], {
     path: 'docs/meeting.md',
-    plan: [{ id: 'task-2', due: '2026-09-10', priority: 'now', owner: '田中', note: '手順を出す前に' }]
+    plan: [{
+      id: 'task-2',
+      due: '2026-09-10',
+      priority: 'high',
+      owner: '田中',
+      note: '手順を出す前に',
+      doneCriteria: ['運用チームの返事がある', '手順書に停止条件が書いてある'],
+      steps: ['手順書の版を確かめる'],
+      notes: []
+    }]
   });
   await waitFor(() => document.querySelector('.task-card[data-task-id="task-2"] .task-due'));
   assert.match(document.querySelector('.task-card[data-task-id="task-2"] .task-due').textContent, /期限 2026-09-10/);
@@ -3527,7 +3540,7 @@ test('タスクは見守りを切っていても書けて、AIが読むのは押
       const body = JSON.parse(options.body);
       changeRequests.push(body);
       for (const added of body.add || []) {
-        record = { ...record, tasks: [...record.tasks, { id: `task-${record.tasks.length + 1}`, ...added, status: 'open', source: 'reviewer', priority: 'next', quote: '', owner: '' }] };
+        record = { ...record, tasks: [...record.tasks, { id: `task-${record.tasks.length + 1}`, ...added, status: 'open', source: 'reviewer', priority: 'normal', quote: '', owner: '' }] };
       }
       return payload();
     },
@@ -3536,7 +3549,7 @@ test('タスクは見守りを切っていても書けて、AIが読むのは押
       record = {
         ...record,
         analysis: { revision: 'r1', length: markdown.length, sourceKind: 'document', analyzedAt: '2026-09-07T01:00:00.000Z', summary: '' },
-        tasks: [...record.tasks, { id: 'task-ai', title: '停止条件を決める', detail: '', kind: 'decision', priority: 'now', status: 'open', source: 'ai', quote: '再起動の手順をまとめる。', owner: '', createdAt: '2026-09-07T01:00:00.000Z' }]
+        tasks: [...record.tasks, { id: 'task-ai', title: '停止条件を決める', detail: '', kind: 'decision', priority: 'high', status: 'open', source: 'ai', quote: '再起動の手順をまとめる。', owner: '', createdAt: '2026-09-07T01:00:00.000Z' }]
       };
       return ndjsonResponse([{ type: 'started' }, { type: 'phase', phase: 'extracting' }, { type: 'result', ...payload() }]);
     }
@@ -3597,7 +3610,7 @@ test('2つ目の文書を開いても、その文書のタスクを取り直す'
       const path = new URL(String(input), 'http://localhost').searchParams.get('path');
       readPaths.push(path);
       return recordOf(path, path === 'docs/two.md'
-        ? [{ id: 'task-2', title: '2つ目のタスク', detail: '', kind: 'action', priority: 'next', status: 'open', source: 'reviewer', quote: '', owner: '', createdAt: '2026-09-07T01:00:00.000Z' }]
+        ? [{ id: 'task-2', title: '2つ目のタスク', detail: '', kind: 'action', priority: 'normal', status: 'open', source: 'reviewer', quote: '', owner: '', createdAt: '2026-09-07T01:00:00.000Z' }]
         : []);
     }
   });

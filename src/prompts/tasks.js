@@ -71,9 +71,10 @@ export function taskExtractionSchema(existingIds = []) {
             kind: { type: 'string', enum: [...TASK_KIND_IDS] },
             priority: { type: 'string', enum: [...TASK_PRIORITIES] },
             quote: { type: 'string' },
-            owner: { type: 'string' }
+            owner: { type: 'string' },
+            doneCriteria: { type: 'array', items: { type: 'string' } }
           },
-          required: ['title', 'detail', 'kind', 'priority', 'quote', 'owner'],
+          required: ['title', 'detail', 'kind', 'priority', 'quote', 'owner', 'doneCriteria'],
           additionalProperties: false
         }
       },
@@ -142,7 +143,10 @@ export function extractTasksPrompt({
     'Give each task a "title" a person can act on in one line, and a "detail" saying what exactly has to happen and why it came up.',
     'Copy "quote" verbatim from the material: the words that call for this task. Leave it empty only for a task the material implies without stating.',
     'Set "kind": "action" when a person has to act (contact, fix, arrange); "decision" when someone has to make a call; "research" when something has to be found out and written down; "sample" when example code has to be written to try something; "inquiry" when a question someone asked has to be answered.',
-    'Set "priority": "now" when it blocks the discussion or the work right now, "next" when it is needed soon, "later" when it is worth remembering.',
+    'Set "priority": "high" when it blocks the discussion or the work right now, "normal" when it is needed soon, "low" when it is worth remembering.',
+    // 完了条件は、決めたタスクをそのままAIエージェントへ渡せるようにするための欄です。
+    // 書けないものを埋めさせると、材料が言っていない「終わり」で終わったことにされます。
+    'List in "doneCriteria" what has to be true for this task to be finished, one condition per line, taken from what the material actually asks for. Leave it empty when the material does not say what would finish it; never invent a bar nobody set.',
     'Set "owner" to who is expected to do it, only when the material says so. Never invent a person.',
     // 「対象の人」を決めているときだけ足す2行。1行目が範囲、2行目が担当の書き方です。
     owner

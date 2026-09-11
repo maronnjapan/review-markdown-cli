@@ -4,7 +4,14 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { MAX_NEW_TASKS_PER_RUN, MAX_TASK_RUNS_PER_TICK, MAX_TASK_SOURCE_CHARS, MIN_TASK_SOURCE_GROWTH_CHARS } from '../src/aiLimits.js';
+import {
+  MAX_NEW_TASKS_PER_RUN,
+  MAX_TASK_LIST_ITEMS,
+  MAX_TASK_LIST_ITEM_CHARS,
+  MAX_TASK_RUNS_PER_TICK,
+  MAX_TASK_SOURCE_CHARS,
+  MIN_TASK_SOURCE_GROWTH_CHARS
+} from '../src/aiLimits.js';
 import { AiService } from '../src/aiService.js';
 import { AiStore } from '../src/aiStore.js';
 import { createAutoTaskRunner } from '../src/autoTaskRunner.js';
@@ -19,7 +26,9 @@ import {
   matchesTaskOwner,
   normalizeAutoTaskActions,
   normalizeAutoTaskOwner,
+  normalizeTaskInput,
   normalizeTasksChange,
+  readExtractionAnswer,
   readTaskResult,
   readTasks,
   readTasksRecord,
@@ -64,7 +73,7 @@ test('保存済みの記録は、何が入っていても投げずに読める',
     analysis: { revision: 'abc', length: 12, sourceKind: 'transcript', analyzedAt: '2026-09-01T00:00:00.000Z' },
     focus: { now: '前提を書く', reason: '鈴木さんの依頼' },
     tasks: [
-      { id: 't1', title: '前提を調べる', kind: 'research', status: 'running', priority: 'now' },
+      { id: 't1', title: '前提を調べる', kind: 'research', status: 'running', priority: 'high' },
       { id: 't2', title: '', kind: 'action' },
       { id: 't3', title: '種類不明', kind: 'deploy', status: 'weird', priority: '?' }
     ]
@@ -75,7 +84,7 @@ test('保存済みの記録は、何が入っていても投げずに読める',
   assert.equal(record.tasks.length, 2, '題名の無いタスクは落とす');
   // 実行中のまま保存されたタスクは途中で落ちたものなので、未着手へ戻して読みます。
   assert.equal(record.tasks[0].status, 'open');
-  assert.deepEqual([record.tasks[1].kind, record.tasks[1].status, record.tasks[1].priority], ['action', 'open', 'next']);
+  assert.deepEqual([record.tasks[1].kind, record.tasks[1].status, record.tasks[1].priority], ['action', 'open', 'normal']);
 });
 
 test('画面からの変更は、変えたいことだけを受け取り、無いidは黙って飛ばす', async () => {
@@ -156,14 +165,14 @@ test('やると決めると段取りを持ち、見送っていたタスクは�
 
   const record = readTasksRecord({
     tasks: [
-      { id: 't1', title: '前提を調べる', kind: 'research', status: 'open', priority: 'later' },
-      { id: 't2', title: '見送ったもの', kind: 'action', status: 'dismissed', priority: 'next' }
+      { id: 't1', title: '前提を調べる', kind: 'research', status: 'open', priority: 'low' },
+      { id: 't2', title: '見送ったもの', kind: 'action', status: 'dismissed', priority: 'normal' }
     ]
   }, 'a.md');
   const at = new Date('2026-09-03T00:00:00.000Z');
   const decided = applyTasksChange(record, normalizeTasksChange({
     plan: [
-      { id: 't1', commitment: 'committed', due: '2026-09-10', note: ' 停止条件が決まってから ', priority: 'now', owner: '自分' },
+      { id: 't1', commitment: 'committed', due: '2026-09-10', note: ' 停止条件が決まってから ', priority: 'high', owner: '自分' },
       { id: 't2', commitment: 'committed' }
     ]
   }), at);
@@ -172,7 +181,7 @@ test('やると決めると段取りを持ち、見送っていたタスクは�
   assert.deepEqual(first.plan, {
     commitment: 'committed', due: '2026-09-10', note: '停止条件が決まってから', decidedAt: at.toISOString()
   });
-  assert.deepEqual([first.priority, first.owner], ['now', '自分'], '優先度と担当は、決めたあとに動かすのでタスク本体へ書く');
+  assert.deepEqual([first.priority, first.owner], ['high', '自分'], '優先度と担当は、決めたあとに動かすのでタスク本体へ書く');
   assert.equal(second.status, 'open', 'やると決め直したタスクは、見送りのままにしない');
   assert.deepEqual(committedTasks(decided.tasks).map((task) => task.id), ['t1', 't2']);
 
@@ -196,8 +205,8 @@ test('やると決めると段取りを持ち、見送っていたタスクは�
 test('やると決めたタスクは、AIの整理で見送られない', () => {
   const record = readTasksRecord({
     tasks: [
-      { id: 't1', title: '前提を調べる', kind: 'research', status: 'open', priority: 'now', plan: { commitment: 'committed', due: '2026-09-10' } },
-      { id: 't2', title: '決めていないもの', kind: 'action', status: 'open', priority: 'now' }
+      { id: 't1', title: '前提を調べる', kind: 'research', status: 'open', priority: 'high', plan: { commitment: 'committed', due: '2026-09-10' } },
+      { id: 't2', title: '決めていないもの', kind: 'action', status: 'open', priority: 'high' }
     ]
   }, 'a.md');
   const source = { revision: 'rev', length: 10, sourceKind: 'transcript' };
@@ -221,9 +230,9 @@ test('やると決めたタスクは、AIの整理で見送られない', () => 
 test('やると決めたタスクは、AIの実行でも画面の並びでも先に来る', () => {
   const record = readTasksRecord({
     tasks: [
-      { id: 'a', title: '優先度の高い候補', kind: 'research', status: 'open', priority: 'now', createdAt: '2026-09-01T00:00:00.000Z' },
-      { id: 'b', title: '決めたもの', kind: 'research', status: 'open', priority: 'later', createdAt: '2026-09-02T00:00:00.000Z', plan: { commitment: 'committed', due: '2026-09-20' } },
-      { id: 'c', title: '期限の近い決めたもの', kind: 'research', status: 'open', priority: 'later', createdAt: '2026-09-03T00:00:00.000Z', plan: { commitment: 'committed', due: '2026-09-10' } }
+      { id: 'a', title: '優先度の高い候補', kind: 'research', status: 'open', priority: 'high', createdAt: '2026-09-01T00:00:00.000Z' },
+      { id: 'b', title: '決めたもの', kind: 'research', status: 'open', priority: 'low', createdAt: '2026-09-02T00:00:00.000Z', plan: { commitment: 'committed', due: '2026-09-20' } },
+      { id: 'c', title: '期限の近い決めたもの', kind: 'research', status: 'open', priority: 'low', createdAt: '2026-09-03T00:00:00.000Z', plan: { commitment: 'committed', due: '2026-09-10' } }
     ]
   }, 'a.md');
   assert.deepEqual(runnableTasks(record, ['research']).map((task) => task.id), ['b', 'c', 'a'], '決めたものから片付けさせる');
@@ -236,15 +245,143 @@ test('同じファイルへの書き込みは1本の列に並ぶので、同時�
 
   await Promise.all([
     updateTasks(root, 'docs/plan.md', (current) => ({ ...current, watch: true })),
-    updateTasks(root, 'docs/plan.md', (current) => applyTasksChange(current, { add: [{ title: 'A', kind: 'action', detail: '', priority: 'next' }] })),
-    updateTasks(root, 'docs/plan.md', (current) => applyTasksChange(current, { add: [{ title: 'B', kind: 'action', detail: '', priority: 'next' }] }))
+    updateTasks(root, 'docs/plan.md', (current) => applyTasksChange(current, { add: [{ title: 'A', kind: 'action', detail: '', priority: 'normal' }] })),
+    updateTasks(root, 'docs/plan.md', (current) => applyTasksChange(current, { add: [{ title: 'B', kind: 'action', detail: '', priority: 'normal' }] }))
   ]);
 
   const record = await readTasks(root, 'docs/plan.md');
   assert.equal(record.watch, true);
   assert.deepEqual(record.tasks.map((task) => task.title).sort(), ['A', 'B']);
-  assert.equal(tasksPathFor(root, 'docs/plan.md'), path.join(root, '.review', 'docs', 'plan.md.tasks.json'));
+  assert.equal(await tasksPathFor(root, 'docs/plan.md'), path.join(root, '.review', 'docs', 'plan.md.tasks.json'));
   assert.deepEqual(await listWatchedFiles(root), ['docs/plan.md'], '見守りを付けた文書は .review から拾える');
+});
+
+test('タスクは、どの階層を対象に起動しても同じ .review を読み書きする', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'auto-tasks-shared-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const docs = path.join(root, 'docs');
+  await fs.mkdir(path.join(root, '.review'), { recursive: true });
+  await fs.mkdir(docs, { recursive: true });
+
+  // `docs/` を対象に起動して起こしたタスク。リポジトリ直下の `.review` に入ります。
+  await updateTasks(docs, 'plan.md', (current) => applyTasksChange(current, {
+    add: [{ title: '停止条件を確認する', kind: 'action', detail: '', priority: 'high' }]
+  }));
+  assert.equal(
+    await tasksPathFor(docs, 'plan.md'),
+    path.join(root, '.review', 'docs', 'plan.md.tasks.json'),
+    '対象ディレクトリの側には作らない'
+  );
+  assert.equal(
+    JSON.parse(await fs.readFile(path.join(root, '.review', 'docs', 'plan.md.tasks.json'), 'utf8')).targetFile,
+    'docs/plan.md',
+    'ファイルの中の対象名は、その置き場所から見たパス'
+  );
+
+  // リポジトリ直下を対象に開き直しても、同じタスクが見えます。
+  const fromRoot = await readTasks(root, 'docs/plan.md');
+  assert.deepEqual(fromRoot.tasks.map((task) => task.title), ['停止条件を確認する']);
+  assert.equal(fromRoot.targetFile, 'docs/plan.md');
+
+  // `docs/` から読むときの対象名は、そちらから見たパスのままです。
+  const fromDocs = await readTasks(docs, 'plan.md');
+  assert.deepEqual(fromDocs.tasks.map((task) => task.title), ['停止条件を確認する']);
+  assert.equal(fromDocs.targetFile, 'plan.md');
+});
+
+test('上に .review が無ければ、タスクは対象ディレクトリに作られる', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'auto-tasks-own-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  assert.equal(await tasksPathFor(root, 'plan.md'), path.join(root, '.review', 'plan.md.tasks.json'));
+});
+
+test('見守りの一覧は、上の .review からも拾い、対象ディレクトリの外は落とす', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'auto-tasks-watched-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const docs = path.join(root, 'docs');
+  await fs.mkdir(path.join(root, '.review'), { recursive: true });
+  await fs.mkdir(docs, { recursive: true });
+
+  await updateTasks(docs, 'meeting.md', (current) => ({ ...current, watch: true }));
+  await updateTasks(root, 'other/meeting.md', (current) => ({ ...current, watch: true }));
+
+  assert.deepEqual(await listWatchedFiles(docs), ['meeting.md'], '対象ディレクトリの中だけ、そこから見たパスで返す');
+  assert.deepEqual(await listWatchedFiles(root), ['docs/meeting.md', 'other/meeting.md']);
+});
+
+/* ---------------------------------------------------------------- *
+ * 渡す先の ToDo と揃えた形
+ * ---------------------------------------------------------------- */
+
+test('優先度は渡す先の ToDo と同じ3つで、揃える前の値も読める', () => {
+  const record = readTasksRecord({
+    tasks: [
+      { id: 't1', title: '揃える前', kind: 'action', status: 'open', priority: 'now' },
+      { id: 't2', title: '揃える前', kind: 'action', status: 'open', priority: 'next' },
+      { id: 't3', title: '揃える前', kind: 'action', status: 'open', priority: 'later' },
+      { id: 't4', title: 'いまの値', kind: 'action', status: 'open', priority: 'low' },
+      { id: 't5', title: '読めない値', kind: 'action', status: 'open', priority: 'urgent' }
+    ]
+  }, 'a.md');
+  assert.deepEqual(record.tasks.map((task) => task.priority), ['high', 'normal', 'low', 'low', 'normal']);
+
+  // 書くときは受け取りません。古い値を送り続ける先があると、記録に2つの言葉が混ざります。
+  assert.throws(() => normalizeTaskInput({ title: 'A', priority: 'now' }), /優先度が読めません/);
+  assert.throws(() => normalizeTasksChange({ plan: [{ id: 't1', priority: 'now' }] }), /優先度が読めません/);
+});
+
+test('完了条件・手順・補足は、1行1件でも配列でも受け取り、空にすると欄ごと消える', () => {
+  const added = applyTasksChange({ tasks: [], targetFile: 'a.md' }, normalizeTasksChange({
+    add: [{
+      title: '停止条件を確認する',
+      doneCriteria: ' 運用チームの返事がある \n\n 手順書に停止条件がある ',
+      steps: ['手順書の版を確かめる'],
+      notes: []
+    }]
+  }));
+  assert.deepEqual(added.tasks[0].doneCriteria, ['運用チームの返事がある', '手順書に停止条件がある'], '空行は落とす');
+  assert.deepEqual(added.tasks[0].steps, ['手順書の版を確かめる']);
+  assert.equal('notes' in added.tasks[0], false, '空の並びは欄ごと置かない');
+
+  const id = added.tasks[0].id;
+  const cleared = applyTasksChange(added, normalizeTasksChange({ plan: [{ id, doneCriteria: [] }] }));
+  assert.equal('doneCriteria' in cleared.tasks[0], false, '空にしたら欄ごと消す');
+  assert.deepEqual(cleared.tasks[0].steps, ['手順書の版を確かめる'], '送らなかった欄はそのまま');
+});
+
+test('並びの件数と長さは渡す先と同じ線で断る', () => {
+  assert.throws(
+    () => normalizeTaskInput({ title: 'A', doneCriteria: Array.from({ length: MAX_TASK_LIST_ITEMS + 1 }, () => '条件') }),
+    /完了条件が多すぎます/
+  );
+  assert.throws(
+    () => normalizeTaskInput({ title: 'A', steps: ['あ'.repeat(MAX_TASK_LIST_ITEM_CHARS + 1)] }),
+    /手順の1行が長すぎます/
+  );
+  assert.throws(() => normalizeTaskInput({ title: 'A', notes: 3 }), /補足は配列か、1行1件の文章で指定してください/);
+});
+
+test('AIの答えからは完了条件だけを受け取り、手順と補足は捨てる', () => {
+  const applied = applyExtraction({ tasks: [], targetFile: 'a.md' }, readExtractionAnswer({
+    summary: '',
+    focus: { now: '', reason: '' },
+    tasks: [{
+      title: '停止条件を確認する',
+      detail: '',
+      kind: 'action',
+      priority: 'high',
+      quote: '停止条件は運用チームに確認します。',
+      owner: '',
+      doneCriteria: ['運用チームの返事がある'],
+      steps: ['まず電話する'],
+      notes: ['急ぎ']
+    }],
+    updates: []
+  }), { revision: 'r1', length: 10, sourceKind: 'transcript' });
+  const task = applied.tasks[0];
+  assert.deepEqual(task.doneCriteria, ['運用チームの返事がある']);
+  assert.equal('steps' in task, false, '文書が言っていない手順は、AIには書かせない');
+  assert.equal('notes' in task, false);
 });
 
 /* ---------------------------------------------------------------- *
@@ -321,17 +458,17 @@ test('対象の人は、別名を並べられて、担当の書かれていな�
 test('抽出の答えは、同じ題名の残っているタスクを重ねず、整理と今すべきことは任せたときだけ当てる', () => {
   const record = readTasksRecord({
     tasks: [
-      { id: 't1', title: '前提を調べる', kind: 'research', status: 'open', priority: 'now', createdAt: '2026-09-01T00:00:00.000Z' },
-      { id: 't2', title: '単位を書く', kind: 'action', status: 'done', priority: 'next' }
+      { id: 't1', title: '前提を調べる', kind: 'research', status: 'open', priority: 'high', createdAt: '2026-09-01T00:00:00.000Z' },
+      { id: 't2', title: '単位を書く', kind: 'action', status: 'done', priority: 'normal' }
     ]
   }, 'meeting.md');
   const answer = {
     summary: '前提と停止条件が残っています。',
     focus: { now: '停止条件を運用チームに確認する', reason: '田中さんが引き受けた直後だから' },
     tasks: [
-      { title: '前提を調べる', detail: '重複', kind: 'research', priority: 'now', quote: '', owner: '' },
-      { title: '単位を書く', detail: '蒸し返し', kind: 'action', priority: 'later', quote: '単位', owner: '' },
-      { title: '停止条件を運用チームに確認する', detail: '田中さんが引き受けた。', kind: 'action', priority: 'now', quote: '停止条件は運用チームに確認します。', owner: '田中' }
+      { title: '前提を調べる', detail: '重複', kind: 'research', priority: 'high', quote: '', owner: '' },
+      { title: '単位を書く', detail: '蒸し返し', kind: 'action', priority: 'low', quote: '単位', owner: '' },
+      { title: '停止条件を運用チームに確認する', detail: '田中さんが引き受けた。', kind: 'action', priority: 'high', quote: '停止条件は運用チームに確認します。', owner: '田中' }
     ],
     updates: [{ id: 't1', status: 'done', reason: '調べ終えたと言った' }, { id: 'missing', status: 'done', reason: '' }]
   };
@@ -355,7 +492,7 @@ test('抽出の答えは、同じ題名の残っているタスクを重ねず�
   assert.equal(extractOnly.tasks[0].status, 'open', '整理を任せていなければ状態は変えない');
   assert.equal(extractOnly.focus, null);
 
-  const many = { ...answer, tasks: Array.from({ length: MAX_NEW_TASKS_PER_RUN + 5 }, (_, i) => ({ title: `T${i}`, detail: '', kind: 'action', priority: 'later', quote: '', owner: '' })) };
+  const many = { ...answer, tasks: Array.from({ length: MAX_NEW_TASKS_PER_RUN + 5 }, (_, i) => ({ title: `T${i}`, detail: '', kind: 'action', priority: 'low', quote: '', owner: '' })) };
   assert.equal(applyExtraction(readTasksRecord({}, 'x.md'), many, source, {}, at).tasks.length, MAX_NEW_TASKS_PER_RUN);
 });
 
@@ -364,9 +501,9 @@ test('対象の人を決めていると、担当が別の人のタスクは記�
     summary: '',
     focus: { now: '', reason: '' },
     tasks: [
-      { title: '前提を調べる', detail: '', kind: 'research', priority: 'now', quote: '', owner: '鈴木' },
-      { title: '停止条件を確認する', detail: '', kind: 'action', priority: 'now', quote: '', owner: '田中さん' },
-      { title: '図の単位を書く', detail: '', kind: 'action', priority: 'next', quote: '', owner: '' }
+      { title: '前提を調べる', detail: '', kind: 'research', priority: 'high', quote: '', owner: '鈴木' },
+      { title: '停止条件を確認する', detail: '', kind: 'action', priority: 'high', quote: '', owner: '田中さん' },
+      { title: '図の単位を書く', detail: '', kind: 'action', priority: 'normal', quote: '', owner: '' }
     ],
     updates: []
   };
@@ -386,7 +523,7 @@ test('対象の人を決めていると、担当が別の人のタスクは記�
 
 test('実行の結果は確認待ちとして入り、次のタスクを親付きで足し、失敗は未着手へ戻す', () => {
   const record = readTasksRecord({
-    tasks: [{ id: 't1', title: '前提を調べる', kind: 'research', status: 'running', priority: 'now' }]
+    tasks: [{ id: 't1', title: '前提を調べる', kind: 'research', status: 'running', priority: 'high' }]
   }, 'meeting.md');
   const result = readTaskResult({
     summary: '前提は3つです。',
@@ -411,10 +548,10 @@ test('実行の結果は確認待ちとして入り、次のタスクを親付�
   // 実行できるのは、未着手でAIが実行できる種類で、その自動化を任せられているものだけ。
   const candidates = readTasksRecord({
     tasks: [
-      { id: 'a', title: '連絡する', kind: 'action', status: 'open', priority: 'now' },
-      { id: 'b', title: '調べる', kind: 'research', status: 'open', priority: 'later', createdAt: '2026-09-02T00:00:00.000Z' },
-      { id: 'c', title: '答える', kind: 'inquiry', status: 'open', priority: 'now', createdAt: '2026-09-03T00:00:00.000Z' },
-      { id: 'd', title: '書く', kind: 'sample', status: 'ready', priority: 'now' }
+      { id: 'a', title: '連絡する', kind: 'action', status: 'open', priority: 'high' },
+      { id: 'b', title: '調べる', kind: 'research', status: 'open', priority: 'low', createdAt: '2026-09-02T00:00:00.000Z' },
+      { id: 'c', title: '答える', kind: 'inquiry', status: 'open', priority: 'high', createdAt: '2026-09-03T00:00:00.000Z' },
+      { id: 'd', title: '書く', kind: 'sample', status: 'ready', priority: 'high' }
     ]
   }, 'x.md');
   assert.deepEqual(runnableTasks(candidates, ['research', 'inquiry']).map((task) => task.id), ['c', 'b']);
@@ -527,11 +664,11 @@ test('見守るのは文字起こしだけ。変わった文書だけを読み�
           summary: '要約',
           focus: { now: '前提を書く', reason: '依頼されたから' },
           tasks: [
-            { title: `${documentPath} 調査1`, detail: '', kind: 'research', priority: 'now', quote: '', owner: '' },
-            { title: `${documentPath} 調査2`, detail: '', kind: 'research', priority: 'next', quote: '', owner: '' },
-            { title: `${documentPath} 調査3`, detail: '', kind: 'research', priority: 'next', quote: '', owner: '' },
-            { title: `${documentPath} 調査4`, detail: '', kind: 'research', priority: 'later', quote: '', owner: '' },
-            { title: `${documentPath} 連絡`, detail: '', kind: 'action', priority: 'now', quote: '', owner: '' }
+            { title: `${documentPath} 調査1`, detail: '', kind: 'research', priority: 'high', quote: '', owner: '' },
+            { title: `${documentPath} 調査2`, detail: '', kind: 'research', priority: 'normal', quote: '', owner: '' },
+            { title: `${documentPath} 調査3`, detail: '', kind: 'research', priority: 'normal', quote: '', owner: '' },
+            { title: `${documentPath} 調査4`, detail: '', kind: 'research', priority: 'low', quote: '', owner: '' },
+            { title: `${documentPath} 連絡`, detail: '', kind: 'action', priority: 'high', quote: '', owner: '' }
           ],
           updates: []
         },
@@ -611,7 +748,7 @@ test('画面の「整理する」は変わっていなくても読み直し、1�
     async extractTasks(documentPath, input) {
       const markdown = await fs.readFile(path.join(root, documentPath), 'utf8');
       return {
-        answer: { summary: '', focus: { now: '', reason: '' }, tasks: [{ title: '設計書の構成を決める', detail: '', kind: 'decision', priority: 'now', quote: '', owner: '' }], updates: [] },
+        answer: { summary: '', focus: { now: '', reason: '' }, tasks: [{ title: '設計書の構成を決める', detail: '', kind: 'decision', priority: 'high', quote: '', owner: '' }], updates: [] },
         source: { ...sliceTaskSource(markdown, input.record.analysis), sourceKind: 'document' }
       };
     },
@@ -648,7 +785,7 @@ test('タスクのルートは設定に関わらず使え、見守りだけが�
       onDelta('{"summary":');
       const markdown = await fs.readFile(path.join(root, documentPath), 'utf8');
       return {
-        answer: { summary: '前提が足りません。', focus: { now: '前提を書く', reason: '依頼' }, tasks: [{ title: '前提を調べる', detail: '', kind: 'research', priority: 'now', quote: '', owner: '' }], updates: [] },
+        answer: { summary: '前提が足りません。', focus: { now: '前提を書く', reason: '依頼' }, tasks: [{ title: '前提を調べる', detail: '', kind: 'research', priority: 'high', quote: '', owner: '' }], updates: [] },
         source: { ...sliceTaskSource(markdown, input.record.analysis), sourceKind: 'transcript' }
       };
     },
@@ -736,7 +873,7 @@ test('タスクのルートは設定に関わらず使え、見守りだけが�
   const exported = await fetch(`${baseUrl}/api/export?path=meeting.md`).then((response) => response.text());
   assert.match(exported, /## 自動タスク/);
   assert.match(exported, /今すべきこと: 前提を書く/);
-  assert.match(exported, /\[x\] 前提を調べる（完了／調査／いま）/);
+  assert.match(exported, /\[x\] 前提を調べる（完了／調査／高）/);
 });
 
 test('レビューMarkdownの自動タスクの節は、有効でないときは出ない', () => {
@@ -747,10 +884,10 @@ test('レビューMarkdownの自動タスクの節は、有効でないときは
     ...base,
     tasks: {
       focus: { now: '前提を書く', reason: '' },
-      tasks: [{ id: 't', title: '調べる', kind: 'research', status: 'ready', priority: 'now', owner: '田中', detail: '前提を洗う', quote: '当番は読めません', result: { summary: '3つ' } }]
+      tasks: [{ id: 't', title: '調べる', kind: 'research', status: 'ready', priority: 'high', owner: '田中', detail: '前提を洗う', quote: '当番は読めません', result: { summary: '3つ' } }]
     }
   });
-  assert.match(withTasks, /- \[ \] 調べる（確認待ち／調査／いま／担当: 田中）\n  前提を洗う\n  引用: 当番は読めません\n  AIの結果: 3つ/);
+  assert.match(withTasks, /- \[ \] 調べる（確認待ち／調査／高／担当: 田中）\n  前提を洗う\n  引用: 当番は読めません\n  AIの結果: 3つ/);
   assert.equal(/やると決めたこと/.test(withTasks), false, '決めたものが1件も無ければ、その見出しは出ない');
 });
 
@@ -761,17 +898,17 @@ test('レビューMarkdownは、やると決めたことを先に書き出す', 
     tasks: {
       focus: null,
       tasks: [
-        { id: 't1', title: '停止条件を確認する', kind: 'action', status: 'open', priority: 'later', detail: '運用チームへ', quote: '', owner: '田中', plan: { commitment: 'committed', due: '2026-09-10', note: '手順を出す前に' } },
-        { id: 't2', title: '決めていないもの', kind: 'research', status: 'open', priority: 'now', detail: '', quote: '', owner: '' },
-        { id: 't3', title: '済んだもの', kind: 'action', status: 'done', priority: 'now', detail: '', quote: '', owner: '', plan: { commitment: 'committed', due: '', note: '' } }
+        { id: 't1', title: '停止条件を確認する', kind: 'action', status: 'open', priority: 'low', detail: '運用チームへ', quote: '', owner: '田中', plan: { commitment: 'committed', due: '2026-09-10', note: '手順を出す前に' } },
+        { id: 't2', title: '決めていないもの', kind: 'research', status: 'open', priority: 'high', detail: '', quote: '', owner: '' },
+        { id: 't3', title: '済んだもの', kind: 'action', status: 'done', priority: 'high', detail: '', quote: '', owner: '', plan: { commitment: 'committed', due: '', note: '' } }
       ]
     }
   });
-  assert.match(markdown, /### やると決めたこと\n\n- \[ \] 停止条件を確認する（未着手／対応／あとで／やる／期限: 2026-09-10／担当: 田中）\n  手順を出す前に/);
+  assert.match(markdown, /### やると決めたこと\n\n- \[ \] 停止条件を確認する（未着手／対応／低／やる／期限: 2026-09-10／担当: 田中）\n  手順を出す前に/);
   assert.equal(/### やると決めたこと\n\n[\s\S]*決めていないもの[\s\S]*### すべてのタスク/.test(markdown), false, '決めたものだけを先に出す');
   assert.equal(/### やると決めたこと\n\n[\s\S]*済んだもの[\s\S]*### すべてのタスク/.test(markdown), false, '済んだものは、やることとしては出さない');
   const all = markdown.slice(markdown.indexOf('### すべてのタスク'));
-  assert.match(all, /- \[ \] 停止条件を確認する（未着手／対応／あとで／やる／期限: 2026-09-10／担当: 田中）/, '下の一覧でも「やる」と期限が分かる');
+  assert.match(all, /- \[ \] 停止条件を確認する（未着手／対応／低／やる／期限: 2026-09-10／担当: 田中）/, '下の一覧でも「やる」と期限が分かる');
   assert.match(all, /自分のメモ: 手順を出す前に/);
   assert.match(all, /- \[x\] 済んだもの/);
 });
@@ -800,8 +937,8 @@ function fakeCodex(turns) {
           summary: '前提と停止条件が残っています。',
           focus: { now: '前提を書く', reason: '鈴木さんの依頼' },
           tasks: [
-            { title: '手順の前提を調べる', detail: '当番が知らない前提を洗い出す。', kind: 'research', priority: 'now', quote: '前提を調べて書いてください。', owner: '' },
-            { title: '停止条件を運用チームに確認する', detail: '', kind: 'action', priority: 'now', quote: '停止条件は運用チームに確認します。', owner: '田中' }
+            { title: '手順の前提を調べる', detail: '当番が知らない前提を洗い出す。', kind: 'research', priority: 'high', quote: '前提を調べて書いてください。', owner: '' },
+            { title: '停止条件を運用チームに確認する', detail: '', kind: 'action', priority: 'high', quote: '停止条件は運用チームに確認します。', owner: '田中' }
           ],
           updates: []
         })

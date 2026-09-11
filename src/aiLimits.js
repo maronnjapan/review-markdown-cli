@@ -407,3 +407,13 @@ export const MAX_AUTO_TASK_OWNER_CHARS = 200;
  * 同じ長さを許しています。
  */
 export const MAX_TASK_KNOWLEDGE_CHARS = 2_000;
+
+/**
+ * 決めたタスクに書く3つの並び（完了条件・手順・補足）の、件数と1行の長さ。
+ *
+ * agent-xaa-platform の ToDo が受け取る上限と同じ値です（`done_criteria` / `steps` /
+ * `notes`）。こちらで通した長さがあちらで断られると、断りが返ってくるのは登録のときで、
+ * 書いた本人はもう画面を閉じています。手前で同じ線を引いておけば、書いている最中に分かります。
+ */
+export const MAX_TASK_LIST_ITEMS = 50;
+export const MAX_TASK_LIST_ITEM_CHARS = 500;

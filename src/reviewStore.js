@@ -5,6 +5,7 @@ import { SEVERITY_LABELS } from './aiVocabulary.js';
 import { committedTasks, isTaskCommitted, sortTasksForDisplay } from './autoTasks.js';
 import {
   TASK_KIND_LABELS,
+  TASK_LINES,
   TASK_PRIORITY_LABELS,
   TASK_STATUS_LABELS
 } from './autoTaskVocabulary.js';
@@ -15,6 +16,8 @@ import { PERSONA_FIELD_LABELS, normalizePersona } from './persona.js';
 import { normalizeReferenceFiles, readReferenceFilePaths } from './referenceFiles.js';
 
 export const REVIEW_DIR = '.review';
+export const REVIEW_FILE_SUFFIX = '.review.json';
+export const REVIEW_EXPORT_SUFFIX = '.review.md';
 
 export function normalizeRelativePath(rootDir, requestedPath) {
   if (!requestedPath || typeof requestedPath !== 'string') {
@@ -30,11 +33,11 @@ export function normalizeRelativePath(rootDir, requestedPath) {
 }
 
 export function reviewPathFor(rootDir, relativeFile) {
-  return path.join(rootDir, REVIEW_DIR, `${relativeFile}.review.json`);
+  return dataPathFor(rootDir, relativeFile, REVIEW_FILE_SUFFIX);
 }
 
 export function exportPathFor(rootDir, relativeFile) {
-  return path.join(rootDir, REVIEW_DIR, `${relativeFile}.review.md`);
+  return dataPathFor(rootDir, relativeFile, REVIEW_EXPORT_SUFFIX);
 }
 
 export async function readReview(rootDir, relativeFile) {
@@ -140,39 +143,77 @@ export async function findExistingReviewPath(rootDir, relativeFile) {
 /**
  * そのファイルのレビューファイルが実際に置かれている場所です。
  *
+ * @returns {Promise<{ filePath: string, baseDir: string, targetFile: string }>}
+ */
+export async function findExistingReviewLocation(rootDir, relativeFile) {
+  return findExistingDataLocation(rootDir, relativeFile, REVIEW_FILE_SUFFIX);
+}
+
+/**
+ * そのファイルの `.review` のデータが実際に置かれている場所です。
+ *
  * `baseDir` は `.review` を持っているディレクトリで、`targetFile` はそこから見た
  * 対象のパスです。対象ディレクトリの一段上に `.review` があるとき（リポジトリ全体で
  * 1つの `.review` を使い、その中の `docs/` だけをレビューしているとき）は、
  * `baseDir` が対象ディレクトリの外を指します。名前の変更でレビューデータを一緒に
  * 動かす側（`documentFiles.js`）は、この2つが要ります。
  *
+ * ── まだ無いデータを、どこへ置くか ──────────────────────
+ * 探して見つからなかったときは、すでに `.review` を持っている最も近い上の階層へ置きます。
+ * 対象ディレクトリの側に作ると、同じリポジトリを別の階層から開いたときに、見えない
+ * データがもう1組できるからです。`docs/` を対象に書いたコメントとタスクが、リポジトリ
+ * 直下から開き直すと消えて見える、というのがその姿です。1つの `.review` に寄せておけば、
+ * どの階層を対象に起動しても同じものを読み書きし、リポジトリごと共有できます。
+ * 上に `.review` が1つも無ければ、対象ディレクトリに作ります。
+ *
+ * 種類（`suffix`）ごとに探しますが、無いときの行き先は種類によらず同じ階層です。
+ * コメントだけが上、タスクだけが下、という分かれ方をさせないためです。
+ *
  * @returns {Promise<{ filePath: string, baseDir: string, targetFile: string }>}
  */
-export async function findExistingReviewLocation(rootDir, relativeFile) {
-  const primaryPath = reviewPathFor(rootDir, relativeFile);
+export async function findExistingDataLocation(rootDir, relativeFile, suffix) {
   const absoluteTargetFile = path.resolve(rootDir, relativeFile);
   const primaryDir = path.resolve(rootDir);
   let currentDir = primaryDir;
+  /** すでに `.review` を持っている、最も近い階層。まだ無いデータの行き先です。 */
+  let holder = null;
 
   while (true) {
     const currentRelativeFile = path.relative(currentDir, absoluteTargetFile).split(path.sep).join('/');
     if (!currentRelativeFile.startsWith('..') && !path.isAbsolute(currentRelativeFile)) {
-      const candidatePath = reviewPathFor(currentDir, currentRelativeFile);
+      const candidatePath = dataPathFor(currentDir, currentRelativeFile, suffix);
       if (await fileExists(candidatePath)) {
         return { filePath: candidatePath, baseDir: currentDir, targetFile: currentRelativeFile };
+      }
+      if (!holder && await directoryExists(path.join(currentDir, REVIEW_DIR))) {
+        holder = { baseDir: currentDir, targetFile: currentRelativeFile };
       }
     }
 
     const parentDir = path.dirname(currentDir);
-    if (parentDir === currentDir) return { filePath: primaryPath, baseDir: primaryDir, targetFile: relativeFile };
+    if (parentDir === currentDir) break;
     currentDir = parentDir;
   }
+
+  const { baseDir, targetFile } = holder || { baseDir: primaryDir, targetFile: relativeFile };
+  return { filePath: dataPathFor(baseDir, targetFile, suffix), baseDir, targetFile };
+}
+
+export function dataPathFor(baseDir, targetFile, suffix) {
+  return path.join(baseDir, REVIEW_DIR, `${targetFile}${suffix}`);
 }
 
 async function fileExists(filePath) {
+  return statMatches(filePath, (stat) => stat.isFile());
+}
+
+async function directoryExists(dirPath) {
+  return statMatches(dirPath, (stat) => stat.isDirectory());
+}
+
+async function statMatches(targetPath, matches) {
   try {
-    const stat = await fs.stat(filePath);
-    return stat.isFile();
+    return matches(await fs.stat(targetPath));
   } catch (error) {
     if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return false;
     throw error;
@@ -353,7 +394,8 @@ function appendAutoTasks(lines, tasks) {
     for (const task of sortTasksForDisplay(committed)) {
       const body = [
         `[ ] ${task.title}（${taskHead(task)}）`,
-        task.plan?.note || ''
+        task.plan?.note || '',
+        ...taskLineBlocks(task)
       ].filter(Boolean).join('\n');
       lines.push(...indentedListItem(body));
     }
@@ -367,11 +409,23 @@ function appendAutoTasks(lines, tasks) {
       task.detail || '',
       task.quote ? `引用: ${task.quote}` : '',
       task.plan?.note ? `自分のメモ: ${task.plan.note}` : '',
+      ...taskLineBlocks(task),
       task.result?.summary ? `AIの結果: ${task.result.summary}` : ''
     ].filter(Boolean).join('\n');
     lines.push(...indentedListItem(body));
   }
   lines.push('');
+}
+
+/**
+ * 完了条件・手順・補足。書いてあるものだけを、1行1件のまま書き出します。
+ *
+ * 渡した相手が最初に要るのは「何ができたら終わりか」なので、結果の要約より前に置きます。
+ */
+function taskLineBlocks(task) {
+  return TASK_LINES
+    .filter(({ id }) => task[id]?.length)
+    .map(({ id, label }) => [`${label}:`, ...task[id].map((item) => `- ${item}`)].join('\n'));
 }
 
 /** タスク1件の見出し。状態・種類・優先度に、決めたもの（やる・期限）と担当を足します。 */
@@ -466,4 +520,22 @@ function quoteBlock(text) {
     .split('\n')
     .map((line) => `> ${line}`)
     .join('\n');
+}
+
+/**
+ * いま読み書きに使う `.review` を持っているディレクトリ。
+ *
+ * 対象ディレクトリから上へたどり、最初に見つかったものを返します。1つも無ければ
+ * 対象ディレクトリです。文書を1つに決めずに `.review` の中を辿りたいところ
+ * （`autoTasks.js` の `listWatchedFiles`）が使います。
+ */
+export async function findReviewBaseDir(rootDir) {
+  const primaryDir = path.resolve(rootDir);
+  let currentDir = primaryDir;
+  while (true) {
+    if (await directoryExists(path.join(currentDir, REVIEW_DIR))) return currentDir;
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) return primaryDir;
+    currentDir = parentDir;
+  }
 }
