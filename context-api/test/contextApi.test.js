@@ -3,14 +3,15 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { chunkContent } from '../src/context/chunking.js';
-import { parseContextArgs } from '../src/context/command.js';
-import { createLocalEmbedder, hashEmbedding } from '../src/context/embedding.js';
-import { applyContextPatch, buildContext } from '../src/context/model.js';
-import { ancestorPaths, normalizeSearchRequest, scopeKeysFor } from '../src/context/scope.js';
-import { createContextApi } from '../src/context/server.js';
-import { createContextStore } from '../src/context/store.js';
-import { createLocalVectorStore } from '../src/context/vectorStores/local.js';
+import { chunkContent } from '../src/chunking.js';
+import { readConfig } from '../src/config.js';
+import { createLocalEmbedder, hashEmbedding } from '../src/embedding.js';
+import { applyContextPatch, buildContext } from '../src/model.js';
+import { ancestorPaths, normalizeSearchRequest, scopeKeysFor } from '../src/scope.js';
+import { createContextApi } from '../src/server.js';
+import { createContextStore } from '../src/store.js';
+import { createVectorStore } from '../src/vectorStores/index.js';
+import { createLocalVectorStore } from '../src/vectorStores/local.js';
 
 /**
  * Context API（保存した判断を預かるサービス）のテストです。
@@ -286,14 +287,30 @@ test('トークンを設定したときだけ、Authorization を求める', asy
   assert.equal(authorized.status, 200);
 });
 
-test('起動の指定は、知らない値を受け取らない', () => {
-  assert.deepEqual(parseContextArgs(['start', '--port=9000']).port, 9000);
-  assert.equal(parseContextArgs(['start', '--vector-db', 'chroma']).vectorStore.kind, 'chroma');
-  assert.equal(parseContextArgs(['start', '--embedding', 'ollama']).embedding.provider, 'ollama');
-  assert.equal(parseContextArgs([]).help, true, 'コマンドを書かなければヘルプ');
-  assert.throws(() => parseContextArgs(['start', '--vector-db', 'qdrant']), /unknown vector db/);
-  assert.throws(() => parseContextArgs(['start', '--embedding', 'gemini']), /unknown embedding/);
-  assert.throws(() => parseContextArgs(['restart']), /unknown context command/);
+test('既定の索引はChromaDBで、環境変数で切り替える', () => {
+  const defaults = readConfig({ CONTEXT_DATA_DIR: '/data' });
+  assert.equal(defaults.vectorStore.kind, 'chroma');
+  assert.equal(defaults.port, 8765);
+  // 素で動かすときは、この端末からしか届きません（Dockerでは公開ポート側で縛ります）。
+  assert.equal(defaults.host, '127.0.0.1');
+  assert.equal(defaults.token, null, '認証は既定では行わない');
+  assert.equal(defaults.embedding.provider, 'local');
+
+  const configured = readConfig({
+    CONTEXT_DATA_DIR: '/data',
+    VECTOR_DB: 'local',
+    CONTEXT_API_PORT: '9000',
+    CONTEXT_API_HOST: '0.0.0.0',
+    EMBEDDING_PROVIDER: 'ollama',
+    EMBEDDING_MODEL: 'nomic-embed-text'
+  });
+  assert.equal(configured.vectorStore.kind, 'local');
+  assert.equal(configured.port, 9000);
+  assert.equal(configured.host, '0.0.0.0');
+  assert.deepEqual(configured.embedding, { provider: 'ollama', model: 'nomic-embed-text' });
+
+  assert.throws(() => readConfig({ CONTEXT_API_PORT: 'http' }), /CONTEXT_API_PORT/);
+  assert.throws(() => createVectorStore({ kind: 'qdrant' }), /使えないVector DB/);
 });
 
 /* ---------------------------------------------------------------- *
@@ -322,12 +339,15 @@ async function startApi(t, { vectorStore, ...options } = {}) {
   const dataDir = await temporaryDir(t);
   const api = createContextApi({
     dataDir,
+    // 既定の索引はChromaDBですが、テストは1ファイルの索引で走らせます。
+    // 立ち上がっているものに結果が左右されると、テストが確かめているものが変わります。
+    vectorStore: { kind: 'local' },
     ...options,
     ...(vectorStore
       ? { store: createContextStore({ dataDir, embedder: createLocalEmbedder(), vectorStore }) }
       : {})
   });
-  const server = api.listen(0);
+  const server = api.listen(0, { host: '127.0.0.1' });
   await new Promise((resolve) => server.once('listening', resolve));
   return {
     base: `http://127.0.0.1:${server.address().port}`,

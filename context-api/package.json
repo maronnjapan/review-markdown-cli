@@ -1,0 +1,19 @@
+{
+  "name": "review-markdown-context-api",
+  "version": "0.1.0",
+  "description": "Context API: stores the decisions a reviewer wants an AI to keep as a premise, and searches them by meaning.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "author": "maronnjapan",
+  "bin": {
+    "review-markdown-context-api": "./bin/context-api.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node ./bin/context-api.js",
+    "test": "node --test"
+  }
+}

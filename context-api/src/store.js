@@ -124,9 +124,11 @@ export function createContextStore({ dataDir, embedder: rawEmbedder, vectorStore
     /**
      * 使える状態にします。Vector DBへ繋がらなければここで投げ、呼ぶ側が 503 にします。
      * 埋め込みが前回と違っていれば、索引を作り直してから返ります。
+     *
+     * @param {object} [options] Vector DBへそのまま渡します（起動時の待ち時間など）。
      */
-    async ready() {
-      await vectorStore.ready();
+    async ready(options = {}) {
+      await vectorStore.ready(options);
       await load();
       if (indexedWith === embedder.id) return { reindexed: 0 };
       let reindexed = 0;

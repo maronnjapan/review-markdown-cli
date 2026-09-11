@@ -59,7 +59,7 @@ export function contextApiError(message, statusCode = 400) {
 
 /**
  * `POST /contexts` が受け取った値をContextへ組み立てます。
- * 受け付けられない値は 400 で断ります（`src/context/server.js` がそのまま返します）。
+ * 受け付けられない値は 400 で断ります（`server.js` がそのまま返します）。
  */
 export function buildContext(input = {}, { now = new Date().toISOString(), id = createContextId() } = {}) {
   const scope = normalizeScope(input.scope);

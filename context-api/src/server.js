@@ -12,23 +12,23 @@
  * 自分のデータディレクトリだけです。実ファイルを扱うのはCLIの仕事で、Contextを扱うのが
  * こちらの仕事、という切り分けを、コードの届く範囲でも守っています。
  *
- * ── 127.0.0.1 にだけBindする理由 ─────────────────────────
+ * ── この端末からしか届かないようにする ────────────────────
  * 認証を実装していないからです（仕様1.6）。個人のPCの中だけで完結する前提なので、
- * 同じネットワークの他の端末から見えてはいけません。`0.0.0.0` でListenしません。
+ * 同じネットワークの他の端末から見えてはいけません。素で動かすときは `127.0.0.1` に
+ * だけBindし、Dockerで動かすときはホストへ公開するポートのほうを縛ります
+ * （`config.js` の説明と `docker-compose.yml`）。
  * 将来の共有（仕様8章）に備えて、`token` を渡したときだけ `Authorization: Bearer` を
  * 求める形にしてあります。既定は認証なしです。
  */
 
 import http from 'node:http';
-import { httpError, readJsonBody, sendError, sendJson } from '../http.js';
+import { DEFAULT_PORT } from './config.js';
+import { httpError, readJsonBody, sendError, sendJson } from './http.js';
 import { createEmbedder } from './embedding.js';
 import { contextApiError } from './model.js';
 import { normalizeSearchRequest } from './scope.js';
 import { createContextStore } from './store.js';
 import { createVectorStore } from './vectorStores/index.js';
-
-/** Context APIの既定のポート。CLI設定の `contextEndpoint` の既定と揃えます。 */
-export const DEFAULT_CONTEXT_PORT = 8765;
 
 /** 1件のContextを、APIの応答の形にします。保存の形をそのまま外へ出しています。 */
 function contextPayload(context) {
@@ -152,14 +152,18 @@ export function createContextApi(options = {}) {
   return {
     store,
     handleRequest,
-    /** @param {number} port @param {Function} [callback] */
-    listen(port = DEFAULT_CONTEXT_PORT, callback) {
+    /**
+     * @param {number} [port]
+     * @param {object} [options]
+     * @param {string} [options.host] Bindするアドレス。既定は `127.0.0.1` です。
+     *   コンテナの中だけ `0.0.0.0` にします（理由は `config.js` の説明）。
+     */
+    listen(port = DEFAULT_PORT, { host = '127.0.0.1' } = {}, callback) {
       const server = http.createServer((request, response) => {
         handleRequest(request, response).catch((error) => sendError(response, error));
       });
       server.once('close', () => store.close?.());
-      // ここを `0.0.0.0` にしないこと（このモジュール冒頭の説明）。
-      return server.listen(port, '127.0.0.1', callback);
+      return server.listen(port, host, callback);
     }
   };
 }

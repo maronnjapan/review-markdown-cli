@@ -22,7 +22,7 @@ import {
   normalizeAutoTaskOwner
 } from './autoTasks.js';
 import { AUTO_TASK_ACTION_IDS, DEFAULT_AUTO_TASK_INTERVAL_SECONDS } from './autoTaskVocabulary.js';
-import { DEFAULT_CONTEXT_PORT } from './context/server.js';
+import { DEFAULT_CONTEXT_PORT } from './contextCommand.js';
 import { normalizePatterns } from './pathFilter.js';
 import { DEFAULT_TRANSCRIPT_PATTERNS, normalizeTranscriptPatterns } from './transcriptFiles.js';
 

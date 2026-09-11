@@ -108,7 +108,7 @@ function encodeRandom(bytes) {
 /**
  * いま開いているファイルから、Context検索に渡すディレクトリを作ります。
  *
- * 渡すのは1つだけです。祖先へ遡るのはContext API側の仕事なので（`src/context/scope.js`）、
+ * 渡すのは1つだけです。祖先へ遡るのはContext API側の仕事なので（`context-api/src/scope.js`）、
  * ここで列挙しません。同じ決まりを2か所に持つと、片方だけ直したときに、保存したのに
  * 出てこないContextができます。
  *

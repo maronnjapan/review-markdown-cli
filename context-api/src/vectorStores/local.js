@@ -62,7 +62,10 @@ export function createLocalVectorStore({ dataDir, fileName = 'vectors.json' } = 
     id: 'local',
     label: `ローカルファイル（${filePath}）`,
 
-    /** 使える状態かどうか。ファイルは無くてよく、書ける場所であることだけを見ます。 */
+    /**
+     * 使える状態かどうか。ファイルは無くてよく、書ける場所であることだけを見ます。
+     * 待ち時間の指定は受け取りますが使いません。相手がいないので、待つことがありません。
+     */
     async ready() {
       await fs.mkdir(path.dirname(filePath), { recursive: true });
       await load();

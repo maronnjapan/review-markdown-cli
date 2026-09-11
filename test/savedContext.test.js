@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { AiService } from '../src/aiService.js';
 import { AiStore } from '../src/aiStore.js';
 import { normalizeConfigValue } from '../src/config.js';
-import { createContextApi } from '../src/context/server.js';
 import { createServer } from '../src/server.js';
 import { citedContextIds, evidenceFrom, normalizeContextPlan } from '../src/contextRouting.js';
 import { createContextService, createDisabledContextService } from '../src/contextService.js';
@@ -252,18 +252,122 @@ async function exists(filePath) {
   }
 }
 
-/** Context APIを立ち上げ、そこへ繋いだ AiService を作ります。AIは差し替えます。 */
+/**
+ * 預け先の代わりです。仕様6章の口だけを、その場で覚える形で実装しています。
+ *
+ * 本物（`context-api/`）を呼ばないのは、CLIが預け先の中身を知らないことを、テストでも
+ * 守るためです。CLIが当てにしてよいのはHTTPの約束だけで、索引がChromaDBかどうかも、
+ * 埋め込みが何かも関係ありません。ここが本物を読み込んでいると、あちらを作り替えた
+ * だけでこちらが落ち、「CLIは預け先の中身を知らない」が嘘になります。
+ * 約束そのものが守られているかは `context-api/test/` が見ています。
+ */
+async function startStubContextApi() {
+  const contexts = new Map();
+  let nextId = 0;
+
+  const handle = async (request) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    const body = await readBody(request);
+    const id = url.pathname.startsWith('/contexts/') ? decodeURIComponent(url.pathname.slice('/contexts/'.length)) : null;
+
+    if (url.pathname === '/health') return [200, { status: 'ok', embedding: { id: 'stub' }, vector_store: { id: 'stub' } }];
+    if (url.pathname === '/contexts' && request.method === 'POST') {
+      if (!body.content) return [400, { error: 'content を指定してください' }];
+      const now = new Date().toISOString();
+      const context = {
+        context_id: `ctx_stub_${nextId += 1}`,
+        workspace_id: body.workspace_id ?? null,
+        content: body.content,
+        scope: body.scope || 'workspace',
+        scope_path: body.scope_path ?? null,
+        kind: body.kind || 'note',
+        source_type: body.source_type || 'manual',
+        source_path: body.source_path ?? null,
+        created_at: now,
+        updated_at: now
+      };
+      contexts.set(context.context_id, context);
+      return [201, { context_id: context.context_id, created_at: now }];
+    }
+    if (url.pathname === '/contexts' && request.method === 'GET') {
+      return [200, { results: [...contexts.values()] }];
+    }
+    if (id && request.method === 'GET') {
+      return contexts.has(id) ? [200, { context: contexts.get(id) }] : [404, { error: '見つかりません' }];
+    }
+    if (id && request.method === 'PATCH') {
+      if (!contexts.has(id)) return [404, { error: '見つかりません' }];
+      const updated = { ...contexts.get(id), ...body, updated_at: new Date().toISOString() };
+      contexts.set(id, updated);
+      return [200, { context: updated }];
+    }
+    if (id && request.method === 'DELETE') {
+      return contexts.delete(id) ? [200, { deleted: true }] : [404, { error: '見つかりません' }];
+    }
+    if (url.pathname === '/search' && request.method === 'POST') {
+      if (!body.query) return [400, { error: 'query を指定してください' }];
+      const allowed = scopeKeys(body);
+      const results = [...contexts.values()]
+        .filter((context) => allowed.has(scopeKeyOf(context)))
+        .map((context) => ({ ...context, score: overlap(body.query, context.content) }))
+        .filter((context) => context.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, body.limit || 5);
+      return [200, { results }];
+    }
+    return [404, { error: 'Not found' }];
+  };
+
+  const server = http.createServer((request, response) => {
+    handle(request).then(([status, payload]) => {
+      response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify(payload));
+    });
+  });
+  server.listen(0, '127.0.0.1');
+  await new Promise((resolve) => server.once('listening', resolve));
+  return {
+    server,
+    endpoint: `http://127.0.0.1:${server.address().port}`,
+    closeApi: () => new Promise((resolve) => server.close(resolve))
+  };
+}
+
+/** 範囲キー。本物と同じ決まりです（`context-api/src/scope.js`）。 */
+function scopeKeyOf(context) {
+  if (context.scope === 'global') return 'global';
+  if (context.scope === 'workspace') return `ws:${context.workspace_id}`;
+  return `path:${context.workspace_id}:${context.scope_path}`;
+}
+
+/** 開いている場所から、祖先ディレクトリまで。展開の決まりも本物と同じです。 */
+function scopeKeys({ workspace_id: workspaceId, scope_path: scopePath, include_global: includeGlobal = true }) {
+  const keys = new Set();
+  if (workspaceId) {
+    const segments = String(scopePath || '').split('/').filter(Boolean);
+    for (let length = segments.length; length > 0; length -= 1) {
+      keys.add(`path:${workspaceId}:${segments.slice(0, length).join('/')}`);
+    }
+    keys.add(`ws:${workspaceId}`);
+  }
+  if (includeGlobal) keys.add('global');
+  return keys;
+}
+
+/** 近さの代わり。語がいくつ重なったかだけを数えます。 */
+function overlap(query, content) {
+  const words = String(query).split(/[\s、。]+/).filter((word) => word.length > 1);
+  const hits = words.filter((word) => content.includes(word)).length;
+  return words.length ? hits / words.length : 0;
+}
+
+/** 預け先の代わりを立て、そこへ繋いだ AiService を作ります。AIも差し替えます。 */
 async function startChat(t, { needsContext = true } = {}) {
   const root = await temporaryDir(t);
   const dataDir = await temporaryDir(t);
-  const contextDir = await temporaryDir(t);
   await fs.writeFile(path.join(root, 'guide.md'), '# 手順\n\n本文です。\n', 'utf8');
 
-  const api = createContextApi({ dataDir: contextDir });
-  const server = api.listen(0);
-  await new Promise((resolve) => server.once('listening', resolve));
-  const endpoint = `http://127.0.0.1:${server.address().port}`;
-  const closeApi = () => new Promise((resolve) => server.close(resolve));
+  const { server, endpoint, closeApi } = await startStubContextApi();
   t.after(() => (server.listening ? closeApi() : null));
 
   const prompts = [];
@@ -397,4 +501,18 @@ async function startReviewServer(t, root, options) {
     baseUrl: `http://127.0.0.1:${server.address().port}`,
     headers: { 'Content-Type': 'application/json', 'X-Review-Markdown-Token': 'saved-context-token' }
   };
+}
+
+function readBody(request) {
+  return new Promise((resolve) => {
+    let raw = '';
+    request.on('data', (chunk) => { raw += chunk; });
+    request.on('end', () => {
+      try {
+        resolve(raw ? JSON.parse(raw) : {});
+      } catch {
+        resolve({});
+      }
+    });
+  });
 }

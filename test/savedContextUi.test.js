@@ -115,7 +115,7 @@ test('預け先が止まっていれば、欄は出したまま、使えない�
 
   const status = document.querySelector('#saved-context-status').textContent;
   assert.match(status, /接続できません/);
-  assert.match(status, /review-markdown context start/, '起動するための1行を出す');
+  assert.match(status, /docker compose up -d/, '立ち上げるための1行を出す');
   assert.match(status, /ファイルの閲覧・編集・コメントはそのまま使えます/);
   // 欄ごと消すと、この機能があることも、いま使えないことも画面から分かりません。
   assert.equal(document.querySelector('#saved-context-panel').classList.contains('hidden'), false);

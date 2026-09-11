@@ -29,7 +29,9 @@
   },
   "scripts": {
     "start": "node ./bin/markdown-review.js . --no-open",
-    "test": "node --test"
+    "test": "node --test",
+    "test:cli": "node --test \"test/*.test.js\"",
+    "test:context-api": "node --test \"context-api/test/*.test.js\""
   },
   "keywords": [
     "markdown",

@@ -74,12 +74,14 @@ autoTasks はタスクの見守りです。会議中の文字起こし（transcr
 autoTasksInstructions は特にしてほしいことの文章です。どれも「設定」から変えられます。
 
 contextEndpoint は、保存した判断（Context）を預かるサービスのURLです。
-review-markdown context start で起動し、ここへそのURLを書くと、AIチャットが
-質問に応じて保存済みの判断を引き直すようになります。未設定なら、Contextの保存と
-検索だけが使えません（他の機能はこれまでどおり動きます）。
+預け先はこのCLIとは別のサービスで、リポジトリの context-api/ にあります。
+そちらを立ち上げてここへURLを書くと、AIチャットが質問に応じて保存済みの判断を
+引き直すようになります。未設定なら、Contextの保存と検索だけが使えません
+（他の機能はこれまでどおり動きます）。
 
-  review-markdown context start
+  cd context-api && docker compose up -d
   review-markdown config set contextEndpoint http://127.0.0.1:8765 --global
+  review-markdown context status   # 繋がるかどうかを確かめる
 
 aiContext は翻訳・AIチャット・指摘の配置で AI に渡す読み取りコンテキストです。
 ここに書いた前提はディレクトリ配下のすべての文書に効きます。

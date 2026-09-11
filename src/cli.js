@@ -86,8 +86,10 @@ Saved context:
   「保存した判断」は、次の会話でも前提にしたい決定や作法を1件ずつ残したものです。
   原稿とは別の場所（Context API）に預け、質問の内容に応じてAIが引き直します。
   引いたときは、どの判断を根拠にしたかを回答と一緒に画面へ出します。
+  Context APIはこのCLIとは別のサービスです（リポジトリの context-api/。索引はChromaDB）。
+  CLIがすることは、設定したURLを叩くことだけです。
 
-    review-markdown context start                       # 預かるサービスを起動する（別プロセス）
+    cd context-api && docker compose up -d              # 預かるサービスを立ち上げる（別サービス）
     review-markdown config set contextEndpoint http://127.0.0.1:8765 --global
     review-markdown context status                      # 繋がるかどうかを確かめる
 

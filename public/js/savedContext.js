@@ -32,7 +32,7 @@ const SCOPES = [
   { value: 'global', label: 'どのWorkspaceでも（個人の共通知識）' }
 ];
 
-/** 種類。読み方の指示なので、画面でも説明を添えます（`src/context/model.js`）。 */
+/** 種類。読み方の指示なので、画面でも説明を添えます（`context-api/src/model.js`）。 */
 const KINDS = [
   { value: 'decision', label: '決定', hint: 'このプロジェクトで決まったこと' },
   { value: 'preference', label: '作法', hint: 'いつもこうしている、という自分の決め事' },
@@ -179,10 +179,12 @@ export function createSavedContextController({ refs, state, api, toaster }) {
   function unavailableMessage(status) {
     if (!status.configured) {
       return '保存した判断の預け先（contextEndpoint）が設定されていません。'
-        + 'review-markdown context start で起動し、review-markdown config set contextEndpoint <URL> --global で設定してください。';
+        + 'context-api/ で docker compose up -d を実行し、'
+        + 'review-markdown config set contextEndpoint <URL> --global で設定してください。';
     }
     return `${status.endpoint} へ接続できません（${status.error || '理由不明'}）。`
-      + ' review-markdown context start で起動してください。ファイルの閲覧・編集・コメントはそのまま使えます。';
+      + ' context-api/ で docker compose up -d を実行してください。'
+      + ' ファイルの閲覧・編集・コメントはそのまま使えます。';
   }
 
   function bindEvents() {

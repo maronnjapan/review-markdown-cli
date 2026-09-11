@@ -1,9 +1,9 @@
 /**
- * ChromaDBを索引に使うときの口です。
+ * ChromaDBを索引に使うときの口です。既定の索引はこちらです。
  *
- * 既定はローカルファイル（`local.js`）で、こちらは件数が増えてからの選択肢です。
- * 起動時に `--vector-db chroma` を付けると、`http://127.0.0.1:8000` で動いている
- * Chromaへ繋ぎます。
+ * `docker compose up` を打つと、このサービスと一緒にChromaDBが立ち上がり、
+ * `CHROMA_URL` で繋がります。Dockerを使わずに試すときは `VECTOR_DB=local` で、
+ * 1ファイルの索引（`local.js`）へ切り替えられます。
  *
  * ── npmのクライアントを使わない理由 ──────────────────────
  * ChromaはHTTPで話せるので、`fetch` だけで足ります。依存を足すと、Chromaを使わない人
@@ -68,7 +68,16 @@ export function createChromaVectorStore({
     // 同じ名前で作り直しても既存を返します（get_or_create）。起動のたびに作り直しません。
     const created = await request(`${root}/collections`, {
       method: 'POST',
-      body: { name: collection, get_or_create: true }
+      body: {
+        name: collection,
+        get_or_create: true,
+        // 距離の測り方をコサインにします。既定はL2で、長さ1に揃えたベクトル
+        // （`embedding.js`）でもL2距離はコサイン類似度と目盛りが違うので、
+        // `1 - distance` がスコアになりません。0から1で読める値に揃えるためです。
+        // 既にあるコレクションは作ったときの測り方のままなので、途中で変えるときは
+        // コレクション名（CHROMA_COLLECTION）を変えて作り直してください。
+        metadata: { 'hnsw:space': 'cosine' }
+      }
     });
     connection = { root, collectionId: created.id || created.collection_id || collection };
     return connection;
@@ -78,9 +87,34 @@ export function createChromaVectorStore({
     id: 'chroma',
     label: `ChromaDB（${base} / ${collection}）`,
 
-    async ready() {
-      await connect();
-      return true;
+    /**
+     * 繋がるまで待ちます。
+     *
+     * Docker Composeでは、このサービスとChromaDBがほぼ同時に立ち上がります。
+     * `depends_on` の healthcheck で順番は付けていますが、それでも一瞬先に来ることが
+     * あるので、ここでも待ちます。待たずに諦めると、コンテナが起動直後に1回落ちて、
+     * 再起動で偶然うまくいく、という直しにくい形になります。
+     *
+     * @param {object} [options]
+     * @param {number} [options.waitSeconds] 何秒まで待つか。0なら1回だけ試します。
+     * @param {Function} [options.onWait] 待っていることを伝える先（起動ログ）。
+     */
+    async ready({ waitSeconds = 0, onWait = () => {} } = {}) {
+      const deadline = Date.now() + waitSeconds * 1000;
+      let notified = false;
+      while (true) {
+        try {
+          await connect();
+          return true;
+        } catch (error) {
+          if (Date.now() >= deadline) throw error;
+          if (!notified) {
+            onWait(`ChromaDBを待っています（${base}、最大${waitSeconds}秒）`);
+            notified = true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
     },
 
     async upsert(chunks) {
@@ -124,7 +158,8 @@ export function createChromaVectorStore({
       return ids.map((id, index) => ({
         id,
         contextId: metadatas[index]?.context_id,
-        // Chromaはコサイン距離を返すので、他のVector DBと同じ「大きいほど近い」へ揃えます。
+        // コサイン距離で返るので（`connect` で測り方を指定しています）、他のVector DBと
+        // 同じ「大きいほど近い」へ揃えます。
         score: 1 - Number(distances[index] ?? 1),
         metadata: metadatas[index] || {}
       }));

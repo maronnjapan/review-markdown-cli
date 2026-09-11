@@ -3,12 +3,7 @@ import { DEFAULT_AI_PROVIDER } from '../src/aiProviders/index.js';
 import { assertTargetDirectory, parseArgs, USAGE } from '../src/cli.js';
 import { applyConfigToOptions, loadConfig } from '../src/config.js';
 import { CONFIG_USAGE, parseConfigArgs, runConfigCommand } from '../src/configCommand.js';
-import {
-  CONTEXT_USAGE,
-  checkContextServer,
-  parseContextArgs,
-  startContextServer
-} from '../src/context/command.js';
+import { CONTEXT_USAGE, checkContextServer, parseContextArgs } from '../src/contextCommand.js';
 import { extensionDir, runExtensionCommand } from '../src/extensionCommand.js';
 import { encodePairingCode } from '../src/pairing.js';
 import { DEFAULT_AUTO_TASK_ACTIONS, DEFAULT_AUTO_TASK_INTERVAL_SECONDS } from '../src/autoTaskVocabulary.js';
@@ -22,8 +17,8 @@ if (argv[0] === 'config') await runConfig(argv.slice(1));
 // 同じ書き方の約束で `extension` も受けます。拡張機能のフォルダは入れ方によって場所が
 // 変わるので、読み込ませる前にパスを引ける口が要ります。
 if (argv[0] === 'extension') runSubcommand(runExtensionCommand(argv.slice(1)));
-// 保存した判断を預かるサービス。CLIとは別のプロセスで動かします（仕様3.4）。
-// `start` はここから戻りません（`runContext`）。
+// 保存した判断の預け先は、このCLIとは別のサービスです（`context-api/`）。
+// ここからできるのは、繋がるかどうかを確かめることだけです。
 if (argv[0] === 'context') await runContext(argv.slice(1));
 
 const options = await readOptions();
@@ -45,7 +40,7 @@ if (options.aiContext) console.log(`  ai context: ${summarize(options.aiContext)
 // 機能が黙って無いことになり、画面で「使えません」と出てから設定を探すことになります。
 console.log(options.contextEndpoint
   ? `  context api: ${options.contextEndpoint}（起動していないときはContextの保存と検索だけが使えません）`
-  : '  context api: 未設定（review-markdown context start と config set contextEndpoint で使えます）');
+  : '  context api: 未設定（context-api/ を立ち上げて config set contextEndpoint を書くと使えます）');
 if (options.manager) console.log('  manager: enabled');
 if (options.translation) console.log('  translation: enabled');
 // 裏でAIを動かし続ける機能なので、どの間隔で何を任せているかまで起動時に見せます。
@@ -81,8 +76,8 @@ const forceExitAfterMs = 500;
 process.on('SIGINT', shutdown);
 
 /**
- * `review-markdown context ...`。`start` だけは待ち受け続けるので、他のサブコマンドの
- * ように結果を出して終わる形にはなりません。
+ * `review-markdown context status`。設定した預け先へ `/health` を1回投げるだけです。
+ * 名指ししなければ、設定ファイルに書いた `contextEndpoint` / `contextToken` を使います。
  */
 async function runContext(contextArgv) {
   let parsed;
@@ -97,21 +92,12 @@ async function runContext(contextArgv) {
     console.log(CONTEXT_USAGE);
     return process.exit(0);
   }
-  if (parsed.command === 'status') runSubcommand(await checkContextServer(parsed));
 
-  try {
-    const { server, lines } = await startContextServer(parsed);
-    for (const line of lines) console.log(line);
-    console.log('停止するには Ctrl+C を押してください。');
-    process.on('SIGINT', () => server.close(() => process.exit(0)));
-  } catch (error) {
-    console.error(`Error: Context API を起動できませんでした: ${error.message}`);
-    process.exit(1);
-  }
-  // ここから先へは進みません。待ち受け続けるのがこのコマンドの仕事なので、戻ると
-  // 続けてレビューの起動処理が走り、`context` を対象ディレクトリとして読もうとします。
-  // 他のサブコマンドが `process.exit` で終わるのと同じ位置にある、終わらない版です。
-  await new Promise(() => {});
+  const { config } = await loadConfig({ targetDir: '.' }).catch(() => ({ config: {} }));
+  runSubcommand(await checkContextServer({
+    endpoint: parsed.endpoint ?? config.contextEndpoint,
+    token: parsed.token ?? config.contextToken
+  }));
 }
 
 async function runConfig(configArgv) {

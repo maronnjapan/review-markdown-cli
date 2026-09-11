@@ -1,0 +1,53 @@
+# Context API と、その索引である ChromaDB をまとめて立ち上げます。
+#
+#   docker compose up -d
+#   review-markdown config set contextEndpoint http://127.0.0.1:8765 --global
+#
+# ── ホストへ公開するポートを 127.0.0.1 に縛っている理由 ──────────────
+# このサービスは認証を持ちません（個人利用かつこの端末の中だけ、という前提です）。
+# `8765:8765` と書くと、同じネットワークの他の端末からも届きます。保存した判断が
+# そこから読めてしまうので、公開先を必ずこの端末に縛ります。ChromaDB は外へ出しません。
+services:
+  chroma:
+    image: chromadb/chroma:0.6.3
+    restart: unless-stopped
+    volumes:
+      - chroma-data:/chroma/chroma
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+    # ホストへは出しません。繋ぐのは同じネットワークにいる context-api だけです。
+    expose:
+      - "8000"
+    healthcheck:
+      # 起動しきる前に context-api が繋ぎに行くと、1回落ちて再起動で偶然直る、という
+      # 直しにくい形になります。順番はここで付けます（context-api 側でも待ちます）。
+      test: ["CMD", "/bin/sh", "-c", "exec 3<>/dev/tcp/127.0.0.1/8000 && printf 'GET /api/v2/heartbeat HTTP/1.0\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q '200 OK'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  context-api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      chroma:
+        condition: service_healthy
+    environment:
+      VECTOR_DB: chroma
+      CHROMA_URL: http://chroma:8000
+      CHROMA_COLLECTION: review_markdown_contexts
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_ENDPOINT: ${EMBEDDING_ENDPOINT:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      CONTEXT_API_TOKEN: ${CONTEXT_API_TOKEN:-}
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - context-data:/data
+
+volumes:
+  chroma-data:
+  context-data:

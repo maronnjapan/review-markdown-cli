@@ -31,6 +31,23 @@ npm link          # review-markdown コマンドが使えるようになる
 npm unlink -g review-markdown   # 解除する場合
 ```
 
+## リポジトリの構成
+
+2つに分かれています。
+
+| ディレクトリ | 中身 |
+| --- | --- |
+| ルート（`bin/` `src/` `public/`） | `review-markdown` CLI。ローカルのファイルを読み書きし、AI へ渡します |
+| [`context-api/`](context-api/) | Context API。保存した判断を預かり、意味で引けるようにします（索引は ChromaDB） |
+
+CLI から Context API へは HTTP で繋ぐだけです。
+索引の種類も埋め込みの選び方も CLI は知らないので、そちらを作り替えても CLI は動きます。
+Context API は原稿のファイルを一度も開きません。実ファイルを扱うのは CLI の仕事です。
+
+```
+CLI → Context API → ChromaDB
+```
+
 ## 使い方
 
 レビューしたいディレクトリで実行します。
@@ -67,11 +84,12 @@ review-markdown config add exclude 'drafts/**' node_modules
 review-markdown .
 ```
 
-次の会話でも前提にしたい決定を残す[保存した判断](#保存した判断)を使うときは、預かるサービスを別プロセスで起動し、繋ぐ先を設定します。
+次の会話でも前提にしたい決定を残す[保存した判断](#保存した判断)を使うときは、預かるサービス（このリポジトリの `context-api/`）を立ち上げ、繋ぐ先を設定します。
 
 ```bash
-review-markdown context start                                             # 別のターミナルで動かし続けます
+cd context-api && docker compose up -d                                    # ChromaDBごと立ち上がります
 review-markdown config set contextEndpoint http://127.0.0.1:8765 --global
+review-markdown context status                                            # 繋がるかどうかを確かめる
 ```
 
 ## 主な機能
@@ -1025,11 +1043,14 @@ CLI からは HTTP で繋ぐだけなので、預け先の中身（索引の種�
 
 ### 使い始める
 
-Context API は別プロセスで動かします。
+Context API はこのリポジトリの [`context-api/`](context-api/) にある別のサービスです。
+CLI に組み込んでいないのは、索引に ChromaDB を立て、埋め込みを選び、コンテナで動かすところまでが
+あちらの都合だからです。原稿を読むための CLI がその起動を引き受けると、片方の都合がもう片方へ流れ込みます。
+CLI がすることは、設定した URL を叩くことだけです。
 
 ```bash
-# 1. 預かるサービスを起動する（このまま動かし続けます）
-review-markdown context start
+# 1. 預かるサービスを立ち上げる（ChromaDBごと立ち上がります）
+cd context-api && docker compose up -d
 
 # 2. CLI から繋ぐ先を設定する（--global が要ります。理由は下の「送り先はプロジェクト設定から決めさせない」）
 review-markdown config set contextEndpoint http://127.0.0.1:8765 --global
@@ -1038,24 +1059,35 @@ review-markdown config set contextEndpoint http://127.0.0.1:8765 --global
 review-markdown context status
 ```
 
-起動すると、預け先と索引の場所を出します。
-
 ```
-# Context API is serving http://127.0.0.1:8765
-#   data: /home/you/.local/share/review-markdown/context
+# Context API: http://127.0.0.1:8765
 #   embedding: ローカル計算（文字N-gramのハッシュ）
-#   vector db: ローカルファイル（/home/you/.local/share/review-markdown/context/vectors.json）
+#   vector db: ChromaDB（http://chroma:8000 / review_markdown_contexts）
 ```
 
-このサービスは `127.0.0.1` にだけ Bind します。
-認証は既定では行いません（個人の PC の中だけで完結する前提です）。
-`--token` を付けたときだけ `Authorization: Bearer <token>` を求めます。
+Docker を使わずに試すときは、索引を1ファイルに切り替えて直接起動できます。
+
+```bash
+cd context-api && VECTOR_DB=local npm start
+```
+
+このサービスは認証を持ちません（個人の PC の中だけで完結する前提です）。
+素で動かすときは `127.0.0.1` にだけ Bind し、Docker では公開ポートを `127.0.0.1:8765:8765` と縛ります。
+どちらの動かし方でも、外から見える範囲は「この端末だけ」です。ChromaDB はホストへ公開しません。
+
+`CONTEXT_API_TOKEN` を設定したときだけ `Authorization: Bearer <token>` を求めます。
 その場合は CLI 側にも同じトークンを設定します。
 
 ```bash
-review-markdown context start --token <token>
+# context-api/.env
+CONTEXT_API_TOKEN=<token>
+```
+
+```bash
 review-markdown config set contextToken <token> --global
 ```
+
+設定の一覧と API の詳細は [`context-api/README.md`](context-api/README.md) にあります。
 
 ### 判断を残す
 
@@ -1149,24 +1181,29 @@ id は `.review/workspace.json` に入ります。
 
 ### 索引と埋め込みを取り替える
 
-既定では、追加のインストールも API キーも要りません。
-索引はローカルの JSON ファイル、埋め込みはこのプロセスの中で計算するハッシュです。
+索引は ChromaDB で、`docker compose up` が一緒に立ち上げます。
+埋め込みは既定でこのプロセスの中の計算なので、API キーも外部への通信も要りません。
+取り替えるときは `context-api/.env` を書きます。
 
 ```bash
-# ChromaDBを索引に使う（chroma run などで別途起動しておきます）
-review-markdown context start --vector-db chroma --chroma-url http://127.0.0.1:8000
-
 # Ollamaの埋め込みを使う（端末の外へは出ません）
-review-markdown context start --embedding ollama --embedding-model nomic-embed-text
+EMBEDDING_PROVIDER=ollama
+EMBEDDING_MODEL=nomic-embed-text
+EMBEDDING_ENDPOINT=http://host.docker.internal:11434
 
 # OpenAI互換のAPIを使う（判断の本文がそのAPIへ渡ります）
-OPENAI_API_KEY=... review-markdown context start --embedding openai --embedding-model text-embedding-3-small
+EMBEDDING_PROVIDER=openai
+EMBEDDING_MODEL=text-embedding-3-small
+OPENAI_API_KEY=sk-...
 ```
 
 既定のローカル計算は、語の重なりで近さを測ります。
 言い換え（「認証方式」と「ログインのしくみ」）には弱く、表記ゆれ（`refresh_token` と `refreshToken`）には強い、という性質です。
 検索語は AI が組み立てるので、保存したときに使ったであろう語（OIDC、OAuth、SAML）が足されて引かれます。
 言い換えまで拾わせたいときは、埋め込みを取り替えてください。
+
+索引だけを ChromaDB からローカルの1ファイルへ替えることもできます（`VECTOR_DB=local`）。
+Docker を用意せずに試すときの道で、繋ぎ先が変わらないので CLI 側の設定はそのままです。
 
 埋め込みを取り替えると、次の起動で保存済みの判断の索引を作り直します。
 違う埋め込みで作った数字同士を比べても意味が無いので、作り直すまで検索できないからです。

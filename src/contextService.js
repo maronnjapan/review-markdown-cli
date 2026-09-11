@@ -28,11 +28,11 @@ import { ensureWorkspaceId, readWorkspaceId, scopePathFor } from './workspace.js
 /** Context APIを待つ時間。越えたら「使えない」として扱います。 */
 const REQUEST_TIMEOUT_MS = 15_000;
 
-/** 検索で渡す既定の件数。Context API側の既定と揃えます（`src/context/scope.js`）。 */
+/** 検索で渡す既定の件数。Context API側の既定と揃えます（`context-api/src/scope.js`）。 */
 export const DEFAULT_CONTEXT_LIMIT = 5;
 
 /** 画面とAIへ出す、使えないときの言い方。どこから出ても同じ文にします。 */
-export const CONTEXT_UNAVAILABLE_MESSAGE = 'Context API を利用できません（review-markdown context start で起動してください）';
+export const CONTEXT_UNAVAILABLE_MESSAGE = 'Context API を利用できません（context-api/ で docker compose up -d を実行してください）';
 
 export function contextUnavailableError(detail = '') {
   return Object.assign(new Error(detail ? `${CONTEXT_UNAVAILABLE_MESSAGE}: ${detail}` : CONTEXT_UNAVAILABLE_MESSAGE), {
