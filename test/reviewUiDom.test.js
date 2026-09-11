@@ -3674,6 +3674,11 @@ async function renderViews(markdown) {
 }
 
 /** Boots public/app.js against a fresh jsdom with the given API responses. */
+/** どのテストも同じ答えでよい窓口。テスト側が同じ道を書けば、そちらが勝ちます。 */
+const DEFAULT_RESPONSES = {
+  '/api/saved-contexts': () => ({ status: { configured: false, available: false, endpoint: null }, contexts: [] })
+};
+
 async function startApp(t, url, responses) {
   const indexHtml = await fs.readFile(path.join(projectDir, 'public', 'index.html'), 'utf8');
   const dom = new JSDOM(indexHtml, { url, pretendToBeVisual: true });
@@ -3688,7 +3693,9 @@ async function startApp(t, url, responses) {
 
   globalThis.fetch = async (input, options = {}) => {
     const requested = String(input).split('?')[0];
-    const handler = responses[requested];
+    // 保存した判断の預け先は、起動時に1回だけ確かめます（`createApp.js` の `start`）。
+    // この画面のテストはどれもそれを見ないので、既定で「設定されていない」と答えます。
+    const handler = responses[requested] || DEFAULT_RESPONSES[requested];
     if (!handler) throw new Error(`Unexpected fetch: ${input}`);
     const result = await handler(input, options);
     if (result instanceof Response) return result;

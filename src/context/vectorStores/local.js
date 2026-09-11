@@ -22,10 +22,17 @@ export function createLocalVectorStore({ dataDir, fileName = 'vectors.json' } = 
   const filePath = path.join(dataDir, fileName);
   /** Chunk id -> `{ contextId, vector, metadata }`。読み込むまでは null です。 */
   let entries = null;
+  /** 読み込み中の約束。同時に届いた要求が、同じファイルを二度読まないようにします。 */
+  let loading = null;
   let writeQueue = Promise.resolve();
 
-  async function load() {
-    if (entries) return entries;
+  function load() {
+    if (entries) return Promise.resolve(entries);
+    loading = loading || readFile().finally(() => { loading = null; });
+    return loading;
+  }
+
+  async function readFile() {
     try {
       const parsed = JSON.parse(await fs.readFile(filePath, 'utf8'));
       entries = new Map(Array.isArray(parsed?.entries) ? parsed.entries.map((entry) => [entry.id, entry]) : []);
@@ -36,15 +43,19 @@ export function createLocalVectorStore({ dataDir, fileName = 'vectors.json' } = 
     return entries;
   }
 
+  /** 書き込みは1本の列に。失敗した1回で列が詰まらないようにします（`store.js` と同じ形）。 */
   function persist() {
-    writeQueue = writeQueue.then(async () => {
-      await fs.mkdir(path.dirname(filePath), { recursive: true });
-      const payload = { version: INDEX_VERSION, entries: [...entries.values()] };
-      const temporary = `${filePath}.${process.pid}.tmp`;
-      await fs.writeFile(temporary, `${JSON.stringify(payload)}\n`, 'utf8');
-      await fs.rename(temporary, filePath);
-    });
-    return writeQueue;
+    const queued = writeQueue.then(write, write);
+    writeQueue = queued.catch(() => {});
+    return queued;
+  }
+
+  async function write() {
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    const payload = { version: INDEX_VERSION, entries: [...entries.values()] };
+    const temporary = `${filePath}.${process.pid}.tmp`;
+    await fs.writeFile(temporary, `${JSON.stringify(payload)}\n`, 'utf8');
+    await fs.rename(temporary, filePath);
   }
 
   return {

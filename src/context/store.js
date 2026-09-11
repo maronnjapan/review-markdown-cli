@@ -46,10 +46,20 @@ export function createContextStore({ dataDir, embedder: rawEmbedder, vectorStore
   let contexts = null;
   /** 索引を作った埋め込みのid。正本のファイルに一緒に入れます。 */
   let indexedWith = null;
+  /**
+   * 読み込み中の約束。要求は同時に届くので、1回目が読み終わる前に2回目が来ます。
+   * ここで覚えておかないと、2回目が読み直した中身で1回目の保存を上書きします。
+   */
+  let loading = null;
   let writeQueue = Promise.resolve();
 
-  async function load() {
-    if (contexts) return contexts;
+  function load() {
+    if (contexts) return Promise.resolve(contexts);
+    loading = loading || readFile().finally(() => { loading = null; });
+    return loading;
+  }
+
+  async function readFile() {
     try {
       const parsed = JSON.parse(await fs.readFile(filePath, 'utf8'));
       contexts = new Map((parsed?.contexts || []).map((context) => [context.context_id, context]));
@@ -62,19 +72,26 @@ export function createContextStore({ dataDir, embedder: rawEmbedder, vectorStore
     return contexts;
   }
 
+  /**
+   * 書き込みは1本の列にします。失敗した1回で列が詰まらないよう、列そのものからは
+   * 失敗を落とします（呼んだ側は返した約束で受け取ります。`src/aiStore.js` と同じ形）。
+   */
   function persist() {
-    writeQueue = writeQueue.then(async () => {
-      await fs.mkdir(path.dirname(filePath), { recursive: true });
-      const payload = {
-        version: STORE_VERSION,
-        embedding: indexedWith,
-        contexts: [...contexts.values()]
-      };
-      const temporary = `${filePath}.${process.pid}.tmp`;
-      await fs.writeFile(temporary, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
-      await fs.rename(temporary, filePath);
-    });
-    return writeQueue;
+    const queued = writeQueue.then(write, write);
+    writeQueue = queued.catch(() => {});
+    return queued;
+  }
+
+  async function write() {
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    const payload = {
+      version: STORE_VERSION,
+      embedding: indexedWith,
+      contexts: [...contexts.values()]
+    };
+    const temporary = `${filePath}.${process.pid}.tmp`;
+    await fs.writeFile(temporary, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    await fs.rename(temporary, filePath);
   }
 
   /** Context 1件を索引へ入れ直します。古いChunkは必ず先に捨てます。 */

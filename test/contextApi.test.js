@@ -144,6 +144,32 @@ test('長い判断は切って索引にするが、返すのはContext 1件', as
   assert.equal(results[0].context.content, content, '返すのは切る前の本文');
 });
 
+test('同時に届いた保存は、どれも失われない', async (t) => {
+  const dataDir = await temporaryDir(t);
+  const store = createContextStore({
+    dataDir, embedder: createLocalEmbedder(), vectorStore: createLocalVectorStore({ dataDir })
+  });
+
+  // `ready()` を待たずに一斉に届く形です。HTTPの要求は同時に来るので、正本を読み込む
+  // ところで待ち合わせないと、後から読んだ側が先に保存した1件を上書きします。
+  await Promise.all(Array.from({ length: 10 }, (_, index) => store.create({
+    workspace_id: 'W', content: `決定その${index}。認証はOIDCで行う。`, scope: 'workspace'
+  })));
+  await store.close();
+
+  const reopened = createContextStore({
+    dataDir, embedder: createLocalEmbedder(), vectorStore: createLocalVectorStore({ dataDir })
+  });
+  await reopened.ready();
+  assert.equal((await reopened.list({ workspaceId: 'W' })).length, 10, '端末に10件とも残っている');
+  assert.equal(
+    (await reopened.search(normalizeSearchRequest({ query: '認証はOIDCで行う', workspace_id: 'W', limit: 20 }))).length,
+    10,
+    '索引にも10件とも入っている'
+  );
+  await reopened.close();
+});
+
 test('範囲の食い違いと欠けた必須項目は、保存させない', () => {
   const fails = (input, expected) => assert.throws(() => buildContext(input), (error) => {
     assert.equal(error.statusCode, 400);
