@@ -293,10 +293,19 @@ function reviewedPartHtml(comment) {
     </section>`;
 }
 
+/**
+ * コメント1件でできること。
+ *
+ * 「判断として保存」だけは、このコメントを別の場所（保存した判断）へ移す道です。
+ * コメントは、この文書のこの場所についての依頼で、直せば役目が終わります。
+ * そのなかに、次の文書でも効く決定が混ざっていることがあり、それを残すための導線です。
+ * 自動では移しません。コメントを書いた時点では、まだ判断が固まっていないことが多いからです。
+ */
 function actionsHtml(index, disabled, status, labels) {
   return `
     <div class="comment-actions">
       <button type="button" data-action="onRepeat" data-index="${index}"${disabled}>同じ対象に追加</button>
+      <button type="button" data-action="onSaveContext" data-index="${index}"${disabled}>判断として保存</button>
       <button type="button" class="status-action" data-action="onToggleStatus" data-index="${index}"${disabled}>${status === 'resolved' ? labels.reopenAction : labels.resolveAction}</button>
       <button type="button" data-action="onRequestDelete" data-index="${index}"${disabled}>削除</button>
     </div>`;

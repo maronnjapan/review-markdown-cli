@@ -413,6 +413,9 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     bindGlobalEvents();
     panes.bind();
     ai.prepare();
+    // 保存した判断は、その画面を開く前から効きます。何が渡りうるかをAIパネルが
+    // 名乗れるよう、預け先へ繋がるかどうかだけを起動時に1回確かめます。
+    savedContextPage.load().then(() => ai.refreshTarget());
     return route();
   }
 
@@ -1160,6 +1163,15 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
         },
         onRepeat(index) {
           dialog.open(copyCommentTarget(state.comments[index]));
+        },
+        // コメントに混ざっていた「次の文書でも効く決定」を、保存した判断へ移します。
+        // 移すのは本文だけで、保存するかどうかはあちらの画面で本人が決めます（仕様4.4）。
+        onSaveContext(index) {
+          const comment = state.comments[index];
+          if (!comment?.comment?.trim()) return;
+          state.savedContextDraftSource = 'comment';
+          window.location.hash = `#/saved-context/${encodeURIComponent(state.currentPath)}`;
+          savedContextPage.draft(comment.comment);
         },
         onFocusTarget(index) {
           focusCommentTarget(index);

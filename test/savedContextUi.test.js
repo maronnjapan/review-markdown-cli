@@ -244,11 +244,51 @@ test('保存した判断が1件も当たらなかったことも、回答に出�
   );
 });
 
+test('コメントに混ざっていた決定は、押したときだけ判断へ移す', async (t) => {
+  const comment = {
+    id: 'comment-1',
+    comment: '認証はOIDCで統一すると決めたので、ここもそろえてください。',
+    status: 'open',
+    target: { type: 'document', headingPath: [] }
+  };
+  const { document, window } = await startApp(t, {
+    '/api/file': null,
+    '/api/saved-contexts': () => ({
+      status: { configured: true, available: true, endpoint: 'http://127.0.0.1:8765' },
+      contexts: []
+    })
+  }, { comments: [comment] });
+
+  await waitFor(() => document.querySelector('[data-action="onSaveContext"]'));
+  document.querySelector('[data-action="onSaveContext"]').click();
+
+  // 移すのは本文だけです。保存するかどうかは、移した先で本人が決めます（仕様4.4）。
+  await waitFor(() => window.location.hash === '#/saved-context/docs%2Fnote.md');
+  assert.equal(document.querySelector('#saved-context-input').value, comment.comment);
+  assert.equal(document.querySelectorAll('.saved-context-card').length, 0, '押しただけでは保存しない');
+});
+
+test('AIパネルは、保存した判断も渡りうることを質問の前に言う', async (t) => {
+  const { document } = await startApp(t, {
+    '/api/saved-contexts': () => ({
+      status: { configured: true, available: true, endpoint: 'http://127.0.0.1:8765' },
+      contexts: []
+    })
+  });
+
+  document.querySelector('#ai-tab-button').click();
+  // 「新規」は、文書全体を対象にした会話の始まりです。何が渡るかはここから出ます。
+  document.querySelector('#ai-new-conversation').click();
+  await waitFor(() => document.querySelector('#ai-target-comments')?.textContent.includes('保存した判断'));
+  // 件数は出しません。引くかどうかは質問ごとにAIが決めるので、渡る件数は質問の前に決まりません。
+  assert.match(document.querySelector('#ai-target-comments').textContent, /質問に関係する「保存した判断」/);
+});
+
 /* ---------------------------------------------------------------- *
  * 道具
  * ---------------------------------------------------------------- */
 
-async function startApp(t, responses = {}) {
+async function startApp(t, responses = {}, { comments = [] } = {}) {
   const markdown = '# 設計メモ\n\n本文です。\n';
   const [html, editableHtml] = await Promise.all([
     renderMarkdown(markdown),
@@ -271,7 +311,7 @@ async function startApp(t, responses = {}) {
       markdown,
       html,
       editableHtml,
-      review: { targetFile: 'docs/note.md', comments: [] },
+      review: { targetFile: 'docs/note.md', comments },
       features: { manager: false, translation: false },
       reviewFile: '.review/docs/note.md.review.json'
     }),
@@ -280,7 +320,9 @@ async function startApp(t, responses = {}) {
     '/api/ai/review-skills': () => ({ skills: [] }),
     '/api/ai/reference-files': () => ({ files: [], total: 0 }),
     '/api/saved-contexts': () => ({ status: { configured: false, available: false, endpoint: null }, contexts: [] }),
-    ...responses
+    '/api/review': () => ({ saved: true }),
+    // null を渡した口は、既定のまま使うという指定です（コメント付きで開くときなど）。
+    ...Object.fromEntries(Object.entries(responses).filter(([, handler]) => handler))
   };
 
   globalThis.fetch = async (input, options = {}) => {
