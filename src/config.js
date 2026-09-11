@@ -22,6 +22,7 @@ import {
   normalizeAutoTaskOwner
 } from './autoTasks.js';
 import { AUTO_TASK_ACTION_IDS, DEFAULT_AUTO_TASK_INTERVAL_SECONDS } from './autoTaskVocabulary.js';
+import { DEFAULT_CONTEXT_PORT } from './context/server.js';
 import { normalizePatterns } from './pathFilter.js';
 import { DEFAULT_TRANSCRIPT_PATTERNS, normalizeTranscriptPatterns } from './transcriptFiles.js';
 
@@ -118,6 +119,15 @@ const CONFIG_KEY_SPECS = {
     kind: 'text',
     parse: (value, source) => normalizeAiContext(value, source),
     help: 'AIがこのディレクトリの原稿を読むときの前提（文章）'
+  },
+  contextEndpoint: {
+    kind: 'scalar',
+    // レビュー対象のリポジトリが同梱する設定ファイルからは読みません。ここに書いた先へ、
+    // 保存した判断がそのまま送られます。原稿を開いただけで送り先が変わってよい値では
+    // ないので、`aiProvider` と同じ扱いにします。
+    scope: 'user',
+    parse: (value, source) => parseEndpoint(value, source),
+    help: `Context API のURL（例: http://127.0.0.1:${DEFAULT_CONTEXT_PORT}。未設定ならContext機能は使いません）`
   },
   aiProvider: {
     kind: 'scalar',
@@ -293,6 +303,32 @@ export function parseProvider(value, source = 'aiProvider') {
   return provider;
 }
 
+/**
+ * Context API のURL。`http://127.0.0.1:8765` のような1本のURLだけを受け付けます。
+ *
+ * パスやクエリを許さないのは、`/contexts` や `/search` を足す側がこちらだからです
+ * （`src/contextService.js`）。末尾のスラッシュは落として、設定ファイルの書き方の
+ * 違いで繋がったり繋がらなかったりしないようにします。
+ */
+export function parseEndpoint(value, source = 'endpoint') {
+  if (typeof value !== 'string') throw new Error(`${source} は文字列で指定してください: ${JSON.stringify(value)}`);
+  const text = value.trim().replace(/\/+$/, '');
+  if (!text) throw new Error(`${source} に空の値は指定できません`);
+  let url;
+  try {
+    url = new URL(text);
+  } catch {
+    throw new Error(`${source} はURLで指定してください（例: http://127.0.0.1:${DEFAULT_CONTEXT_PORT}）: ${value}`);
+  }
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error(`${source} は http または https で指定してください: ${value}`);
+  }
+  if (url.pathname !== '/' || url.search || url.hash) {
+    throw new Error(`${source} にはパスやクエリを含めないでください: ${value}`);
+  }
+  return `${url.protocol}//${url.host}`;
+}
+
 /** モデル名や推論強度のような、空白を含まない1語の設定値。 */
 export function parseIdentifier(value, source = 'value') {
   if (typeof value !== 'string') throw new Error(`${source} は文字列で指定してください: ${JSON.stringify(value)}`);
@@ -414,6 +450,8 @@ export function applyConfigToOptions(options, config = {}) {
     // AIの選択とモデルの指定はコマンドラインに口を持たないので、設定ファイルの値が
     // そのまま届きます。どれも未設定なら、既定のAIをその既定のモデルで走らせます。
     aiProvider: config.aiProvider ?? DEFAULT_AI_PROVIDER,
+    // Context APIの場所。未設定なら、Contextの保存も検索もしないまま動きます（仕様7.4）。
+    contextEndpoint: config.contextEndpoint,
     aiModelProvider: config.aiModelProvider,
     aiModels: aiModelsFromConfig(config)
   };

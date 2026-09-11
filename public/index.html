@@ -98,6 +98,7 @@
               <a class="tool-link" data-tool-link="files" href="#/">参照ファイル</a>
               <a class="tool-link" data-tool-link="chat" href="#/">AIチャット</a>
               <a class="tool-link" data-tool-link="chatLog" href="#/">チャットの記録</a>
+              <a class="tool-link" data-tool-link="savedContext" href="#/">保存した判断</a>
               <a class="tool-link hidden" data-tool-link="manager" href="#/">管理者<span id="manager-link-count" class="tab-count" hidden></span></a>
               <a class="tool-link" data-tool-link="placement" href="#/">指摘の配置</a>
               <a class="tool-link" data-tool-link="review" href="#/">AIレビュー</a>
@@ -261,6 +262,7 @@
                     <label><input type="checkbox" value="notes" checked> コンテキストメモ</label>
                     <label><input type="checkbox" value="persona" checked> 読み手ペルソナ</label>
                     <label><input type="checkbox" value="files" checked> 参照ファイル</label>
+                    <label><input type="checkbox" value="savedContext" checked> 保存した判断</label>
                   </div>
                 </details>
                 <label class="settings-field ai-chat-skills">
@@ -309,6 +311,7 @@
             <a class="tool-link" data-tool-link="files" href="#/">参照ファイル</a>
             <a class="tool-link" data-tool-link="chat" href="#/">AIチャット</a>
             <a class="tool-link" data-tool-link="chatLog" href="#/">チャットの記録</a>
+            <a class="tool-link" data-tool-link="savedContext" href="#/">保存した判断</a>
             <a class="tool-link hidden" data-tool-link="manager" href="#/">管理者</a>
             <a class="tool-link" data-tool-link="placement" href="#/">指摘の配置</a>
             <a class="tool-link" data-tool-link="review" href="#/">AIレビュー</a>
@@ -367,6 +370,43 @@
                 </form>
                 <div id="workspace-reference-files-list" class="reference-files-list"></div>
               </div>
+            </div>
+          </section>
+          <section id="saved-context-panel" class="saved-context-panel tool-panel card hidden" aria-live="polite">
+            <div class="pane-scroll">
+              <div class="ai-header">
+                <div>
+                  <p class="eyebrow">Saved context</p>
+                  <h2>保存した判断</h2>
+                </div>
+                <span id="saved-context-endpoint" class="ai-context-state" hidden></span>
+              </div>
+              <p class="placement-hint">次の会話でも前提にしたい決定や作法を1件ずつ残します。原稿とは別の場所（Context API）に預けるので、CLIを閉じても残り、質問の内容に応じてAIが引き直します。古くなったものはここで直すか消してください。直した内容は次の質問から前提になります。</p>
+              <p id="saved-context-status" class="ai-context-status" aria-live="polite"></p>
+              <form id="saved-context-form" class="saved-context-form hidden">
+                <label class="settings-field">
+                  <span class="settings-field-label">残す内容</span>
+                  <textarea id="saved-context-input" rows="3" placeholder="例: このプロジェクトではOIDCを利用する"></textarea>
+                </label>
+                <div class="saved-context-fields">
+                  <label class="settings-field">
+                    <span class="settings-field-label">効く範囲</span>
+                    <select id="saved-context-scope" aria-label="この判断が効く範囲"></select>
+                  </label>
+                  <label class="settings-field">
+                    <span class="settings-field-label">種類</span>
+                    <select id="saved-context-kind" aria-label="この判断の種類"></select>
+                  </label>
+                  <button type="submit">保存する</button>
+                </div>
+              </form>
+              <form id="saved-context-search-form" class="saved-context-search-form hidden">
+                <input id="saved-context-search" type="search" placeholder="保存した判断を探す（例: 認証）" aria-label="保存した判断を探す">
+                <button type="submit">探す</button>
+                <button id="saved-context-search-clear" type="button">すべて表示</button>
+              </form>
+              <h3 id="saved-context-list-label" class="saved-context-list-label">保存した判断</h3>
+              <div id="saved-context-list" class="saved-context-list"></div>
             </div>
           </section>
           <section id="conversations-panel" class="conversations-panel tool-panel card hidden" aria-live="polite">

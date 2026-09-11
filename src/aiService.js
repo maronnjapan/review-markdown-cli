@@ -39,6 +39,8 @@ import {
 } from './aiProviders/index.js';
 import { purposeFor } from './codexProfiles.js';
 import { collectCommentContext, commentContextBlock } from './commentContext.js';
+import { createDisabledContextService } from './contextService.js';
+import { contextUsage, evidenceFrom, normalizeContextPlan } from './contextRouting.js';
 import { applyConversationEdits } from './conversationEdits.js';
 import { readDirectoryPremise } from './directoryContext.js';
 import { buildBriefDraft, normalizeBriefInput } from './documentBrief.js';
@@ -58,6 +60,13 @@ import {
   verificationSchema
 } from './documentReview.js';
 import { PERSONA_SCHEMA, buildPersona, normalizePersonaInput, personaPrompt } from './persona.js';
+import {
+  CONTEXT_PLAN_SCHEMA,
+  contextPlanPrompt,
+  emptyContextsBlock,
+  savedContextsBlock,
+  unavailableContextsBlock
+} from './prompts/savedContexts.js';
 import {
   PLACEMENT_SCHEMA,
   buildPlacements,
@@ -95,7 +104,9 @@ const ANSWER_SUBJECTS = {
   // 1回目の要約と、続けて聞いたときの答えの両方がこの文言で断ります。
   recap: '直近の文字起こしについてのAIの答え',
   tasks: '自動タスクの抽出結果',
-  taskRun: '自動タスクの実行結果'
+  taskRun: '自動タスクの実行結果',
+  // 保存した判断を引くかどうかの判断（`prompts/savedContexts.js`）。
+  contextPlan: 'Context検索の要否'
 };
 
 export function createAiService(rootDir, options = {}) {
@@ -112,14 +123,23 @@ export function createAiService(rootDir, options = {}) {
     store,
     client,
     projectContext: options.aiContext,
-    managerEnabled: options.features?.manager === true
+    managerEnabled: options.features?.manager === true,
+    // 保存した判断の預け先。設定していなければ、何もできないServiceが入り、
+    // Contextを使わないままCLIは動きます（仕様7.4）。
+    contextService: options.contextService
   });
 }
 
 export class AiService {
-  constructor(rootDir, { store, client, projectContext = '', managerEnabled = false }) {
+  constructor(rootDir, { store, client, projectContext = '', managerEnabled = false, contextService } = {}) {
     this.rootDir = rootDir;
     this.store = store;
+    /**
+     * 保存した判断（Context）の預け先。裏がローカルのファイルでも共有サービスでも、
+     * ここから見える形は同じです（仕様7.2）。設定されていなければ、呼ぶと
+     * 「使えません」と断るだけのものが入ります。
+     */
+    this.contexts = contextService || createDisabledContextService();
     // どのAIかは `aiProviders/` が決めます。ここから先は、相手が誰でも同じ扱いです。
     this.ai = client;
     // The reading context from the config file or --ai-context. It applies to
@@ -705,6 +725,102 @@ export class AiService {
     return readTaskResult(answer);
   }
 
+  /**
+   * 保存した判断を、この質問のために引きます（仕様2.1、7.1の `search_context`）。
+   *
+   * 手順は3つです。まず「この質問に保存済みの判断が要るか」をモデルに決めさせ、要ると
+   * 答えたときだけ検索し、当たったものを枠にしてプロンプトへ足します。要らないと
+   * 答えたときは、枠を足しません。
+   *
+   * 1往復ぶん余計にAIを呼びます。それでも質問のたびに検索しないのは、一般知識で
+   * 答えられる質問に無関係なContextが混ざるほうが、回答としては壊れるからです。
+   *
+   * @returns {Promise<{block: string, usage: Function|null}>} `usage` は回答の本文を
+   *   受け取って、画面と記録へ残す根拠を作る関数です。回答が出るまで根拠は確定しません
+   *   （どのContextを使ったかは、回答の中の `[ctx_...]` で分かるからです）。
+   */
+  async lookUpSavedContexts({ question, documentPath, enabled, signal }) {
+    if (!this.contexts.enabled || (enabled && !enabled.has('savedContext'))) return { block: '', usage: null };
+
+    const plan = await this.planContextSearch(question, documentPath, signal);
+    if (!plan.needsContext) {
+      return { block: '', usage: () => contextUsage({ status: 'skipped', reason: plan.reason }) };
+    }
+
+    try {
+      const results = await this.contexts.searchContext(plan.query, { documentPath });
+      return {
+        block: results.length ? savedContextsBlock(results) : emptyContextsBlock(),
+        usage: (text) => contextUsage({
+          status: 'used',
+          query: plan.query,
+          reason: plan.reason,
+          evidence: evidenceFrom(results, text)
+        })
+      };
+    } catch (error) {
+      // 繋がらないことを黙って一般論で埋めません（仕様7.4）。使えなかったと伝えたうえで
+      // 答えさせ、画面にも同じことを出します。
+      if (!error.unavailable) throw error;
+      return {
+        block: unavailableContextsBlock(error.message),
+        usage: () => contextUsage({ status: 'unavailable', query: plan.query, error: error.message })
+      };
+    }
+  }
+
+  /** 検索するかどうかと、検索語。答えを読めなければ、質問そのままで引きます。 */
+  async planContextSearch(question, documentPath, signal) {
+    try {
+      const { answer } = await this.askForJson({
+        feature: 'contextPlan',
+        prompt: contextPlanPrompt(question, { documentPath }),
+        outputSchema: CONTEXT_PLAN_SCHEMA,
+        signal
+      });
+      return normalizeContextPlan(answer);
+    } catch (error) {
+      if (error.name === 'AbortError') throw error;
+      // 判断を引き出せなかったときは、引いてから答えます。関係の薄いContextが混ざる
+      // ほうが、保存した判断を見落として一般論で答えるより、取り返しがつくからです。
+      return { needsContext: true, query: question, reason: '検索の要否を判断できなかったので、質問そのままで引きました' };
+    }
+  }
+
+  /** Context APIが使えるかどうか。画面がContextの欄を出すかの判断に使います。 */
+  async contextStatus() {
+    return this.contexts.status();
+  }
+
+  /**
+   * 判断を1件保存します（仕様7.5）。起点は3つあり、どれもユーザーが確かめてから確定します。
+   * `manual`（自分で書いた）/ `comment`（コメントからの昇格）/ `agent`（AIの提案の承認）。
+   */
+  async saveContext(content, options = {}) {
+    return this.contexts.saveContext(content, options);
+  }
+
+  async searchContext(query, options = {}) {
+    return this.contexts.searchContext(query, options);
+  }
+
+  async listContexts(options = {}) {
+    return this.contexts.listContexts(options);
+  }
+
+  async getContext(contextId) {
+    return this.contexts.getContext(contextId);
+  }
+
+  /** 訂正の反映（仕様1.3の4つ目、6.3）。本文が変われば、Context API側で索引も作り直されます。 */
+  async updateContext(contextId, changes) {
+    return this.contexts.updateContext(contextId, changes);
+  }
+
+  async deleteContext(contextId) {
+    return this.contexts.deleteContext(contextId);
+  }
+
   async listConversations(documentPath) {
     return this.store.listConversations(documentPath);
   }
@@ -755,15 +871,27 @@ export class AiService {
         ? await collectCommentContext(this.rootDir, conversation.documentPath, conversation.target)
         : { entries: [], revision: '' };
       const readingContext = filterReadingContext(await this.readingContext(conversation.documentPath), enabled);
+      // 保存した判断を引くかどうかは、質問ごとに決めます（仕様2.1）。引かないと決まれば
+      // 枠は空文字になり、プロンプトはContextを知らなかった頃と1文字も変わりません。
+      const saved = await this.lookUpSavedContexts({
+        question: content,
+        documentPath: conversation.documentPath,
+        enabled,
+        signal
+      });
       const { text } = await this.ai.runTurn({
         threadId,
-        prompt: chatPrompt(conversation, content, comments, readingContext, firstTurn),
+        prompt: chatPrompt(conversation, content, comments, readingContext, firstTurn, saved.block),
         onDelta,
         signal
       });
       conversation.commentsRevision = comments.revision;
       conversation.contextRevision = readingContext.revision;
-      const assistantMessage = await this.appendMessage(conversation, 'assistant', text);
+      const assistantMessage = await this.appendMessage(conversation, 'assistant', text, {
+        // どのContextを根拠にしたかは、回答と一緒に残します。あとから記録を開いた
+        // ときにも根拠が見えないと、訂正の起点がなくなります（仕様7.3）。
+        ...(saved.usage ? { context: saved.usage(text) } : {})
+      });
       return { conversation, message: assistantMessage };
     } catch (error) {
       conversation.updatedAt = new Date().toISOString();
@@ -883,8 +1011,8 @@ export class AiService {
   }
 
   /** 会話へ1件足して保存します。保存まで済ませるので、呼んだ時点で記録は残ります。 */
-  async appendMessage(conversation, role, content) {
-    const message = { id: crypto.randomUUID(), role, content, createdAt: new Date().toISOString() };
+  async appendMessage(conversation, role, content, extra = {}) {
+    const message = { id: crypto.randomUUID(), role, content, createdAt: new Date().toISOString(), ...extra };
     conversation.messages.push(message);
     conversation.updatedAt = message.createdAt;
     await this.store.saveConversation(conversation);
@@ -924,7 +1052,12 @@ function recapTurns(question, answer) {
   return question && answer ? [{ question, answer }] : [];
 }
 
-const DEFAULT_CONVERSATION_CONTEXT = ['comments', 'reading', 'brief', 'notes', 'persona', 'files'];
+/**
+ * 会話へ渡せる前提の一覧です。画面のチェックボックスと同じ並びで、外したものは渡しません。
+ * `savedContext` だけは他と性質が違います。他が「いま開いている文書まわりのもの」なのに対し、
+ * これは「以前に保存した判断」で、渡すかどうかの前に、引くかどうかをモデルが決めます。
+ */
+const DEFAULT_CONVERSATION_CONTEXT = ['comments', 'reading', 'brief', 'notes', 'persona', 'files', 'savedContext'];
 
 /**
  * 「もう起こしたタスク」としてモデルへ渡す形。id・題名・種類・状態・優先度だけで、
@@ -969,18 +1102,22 @@ function filterReadingContext(context, enabled) {
  * 1回目は読ませたいものを全部並べ、2回目以降はスレッドに任せます。
  * ただしコメントと前提だけは、会話中に書き換わっていれば添え直します。
  */
-function chatPrompt(conversation, userMessage, comments, readingContext, firstTurn) {
+function chatPrompt(conversation, userMessage, comments, readingContext, firstTurn, savedContextsBlockText = '') {
   if (firstTurn) {
     return initialChatPrompt(
       conversation,
       userMessage,
       comments.entries.length ? commentContextBlock(comments) : '',
-      aiContextBlock(readingContext)
+      aiContextBlock(readingContext),
+      savedContextsBlockText
     );
   }
   return followUpChatPrompt(userMessage, {
     commentsBlock: commentsChanged(conversation, comments) ? commentContextBlock(comments) : null,
-    readingContextBlock: contextChanged(conversation, readingContext) ? aiContextBlock(readingContext) : null
+    readingContextBlock: contextChanged(conversation, readingContext) ? aiContextBlock(readingContext) : null,
+    // 保存した判断は、質問のたびに引き直します。前のターンで渡したものが、今回の質問にも
+    // 当たるとは限らないので、「変わったときだけ」ではなく、引いたときは毎回添えます。
+    savedContextsBlock: savedContextsBlockText || null
   });
 }
 

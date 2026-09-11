@@ -68,6 +68,14 @@ export const TOOL_PAGES = [
     lead: 'この文書で交わした相談です。間違ったまま残っている発言は、ここで直せます。'
   },
   {
+    key: 'savedContext',
+    route: 'saved-context',
+    label: '保存した判断',
+    title: '保存した判断',
+    panel: 'savedContextPanel',
+    lead: '次の会話でも前提にしたい決定や作法です。ここに残したものを、AIが質問に応じて引き直します。'
+  },
+  {
     key: 'manager',
     route: 'manager',
     label: '管理者',

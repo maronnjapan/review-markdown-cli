@@ -125,6 +125,44 @@ export const api = {
     return fetchJson(`/api/ai/reference-files?path=${encodeURIComponent(path)}`, aiOptions());
   },
 
+  /**
+   * 保存した判断（Context）。行き先はCLIではなくContext APIですが、画面から見た窓口は
+   * 他と同じです。Context APIが止まっていても、`status.available` が false になるだけで
+   * この呼び出し自体は失敗しません（`src/routes.js` の `listSavedContexts`）。
+   */
+  async listSavedContexts() {
+    await ensureAiToken();
+    return fetchJson('/api/saved-contexts', aiOptions());
+  },
+
+  async searchSavedContexts(payload) {
+    await ensureAiToken();
+    return postJson('/api/saved-contexts/search', payload, aiHeaders());
+  },
+
+  async saveContext(payload) {
+    await ensureAiToken();
+    return postJson('/api/saved-context', payload, aiHeaders());
+  },
+
+  async updateSavedContext(payload) {
+    await ensureAiToken();
+    return fetchJson('/api/saved-context', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...aiHeaders() },
+      body: JSON.stringify(payload)
+    });
+  },
+
+  async deleteSavedContext(contextId) {
+    await ensureAiToken();
+    return fetchJson('/api/saved-context', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', ...aiHeaders() },
+      body: JSON.stringify({ contextId })
+    });
+  },
+
   async listReviewSkills() {
     await ensureAiToken();
     return fetchJson('/api/ai/review-skills', aiOptions());

@@ -1,4 +1,5 @@
 import { completeJsonField } from './partialJson.js';
+import { KIND_LABELS, scopeLabel } from './savedContext.js';
 import { createTranslationPrefetch } from './translationPrefetch.js';
 import { escapeHtml, truncate } from './util.js';
 
@@ -16,6 +17,11 @@ export function createAiController({
   flushComments = async () => true,
   // 相談して分かったことをコンテキストメモの下書きへ渡します。
   onKeepContext = () => {},
+  // 同じ答えを、次の会話でも前提にする「保存した判断」の下書きへ渡します。
+  // メモがこの文書についての記録なのに対し、こちらはWorkspaceに残る判断です。
+  onSaveContext = () => {},
+  // 根拠に出た判断を、直しに行くための入口です（仕様7.5の訂正の導線）。
+  onOpenSavedContext = () => {},
   onPaneRequested = () => {},
   // 記録は別の画面（`contextPage.js`）でも並べます。届いたのがこちらなので、
   // 届いた時点であちらへも知らせます。知らせないと、文書を開いた直後に記録の画面を
@@ -359,7 +365,10 @@ export function createAiController({
       state.persona ? '読み手ペルソナ' : '',
       // 添えたファイルは中身ごと渡ります。件数を出すのはメモと同じ理由で、
       // 添えたはずのファイルが渡っていないことに質問の前に気づけるようにするためです。
-      fileCount ? `参照ファイル${fileCount}件の中身` : ''
+      fileCount ? `参照ファイル${fileCount}件の中身` : '',
+      // 保存した判断は、質問ごとにAIが引くかどうかを決めます。件数を出せないのは
+      // そのためで、渡るかどうかではなく「引かれることがある」ことだけを言います。
+      state.savedContextStatus?.available ? '質問に関係する「保存した判断」' : ''
     ].filter(Boolean);
     refs.aiTargetComments.textContent = shared.length ? `${shared.join('と')}も渡します。` : '';
     refs.aiTargetComments.hidden = shared.length === 0;
@@ -428,9 +437,10 @@ export function createAiController({
     // 相談の答えは、そのままでは次の相談にもレビューにも残りません。
     // 前提として残す価値があると判断した回答だけを、レビュアーがメモへ移します。
     refs.aiMessages.addEventListener('click', (event) => {
-      const button = event.target.closest('[data-keep-context]');
-      if (!button) return;
-      onKeepContext(button.closest('.ai-message')?.querySelector('.ai-message-body')?.textContent || '');
+      const body = () => event.target.closest('.ai-message')?.querySelector('.ai-message-body')?.textContent || '';
+      if (event.target.closest('[data-keep-context]')) return onKeepContext(body());
+      if (event.target.closest('[data-save-context]')) return onSaveContext(body());
+      if (event.target.closest('[data-open-saved-context]')) return onOpenSavedContext();
     });
   }
 
@@ -495,6 +505,53 @@ function messageHtml(message, streaming = false) {
     <article class="ai-message" data-role="${escapeHtml(message.role)}"${streaming ? ' data-streaming="true"' : ''}>
       <strong>${label}</strong>
       <p class="ai-message-body">${escapeHtml(message.content || '')}</p>
-      ${keepable ? '<button type="button" class="ai-message-keep" data-keep-context>コンテキストに残す</button>' : ''}
+      ${keepable ? contextUsageHtml(message.context) : ''}
+      ${keepable ? '<div class="ai-message-actions">'
+        + '<button type="button" class="ai-message-keep" data-keep-context>コンテキストに残す</button>'
+        + '<button type="button" class="ai-message-keep" data-save-context>判断として保存</button>'
+        + '</div>' : ''}
     </article>`;
+}
+
+/**
+ * その回答が、保存した判断をどう使ったかです（仕様1.3の3つ目、7.3）。
+ *
+ * 根拠が見えないと、誤った判断が回答を歪めていてもユーザーは気づけません。気づけない
+ * ということは、訂正の起点がないということです。だから、使ったものは名指しで出し、
+ * 渡したが使わなかったものも畳んで出します。「渡していない」と「渡したが効いていない」は
+ * 別のことで、直す先も違うからです。
+ *
+ * 引けなかったとき（Context APIが止まっている）も黙りません。その回答は、保存済みの
+ * 判断と矛盾しているかもしれない、と分かるようにしておきます（仕様7.4）。
+ */
+function contextUsageHtml(usage) {
+  if (!usage) return '';
+  if (usage.status === 'unavailable') {
+    return `<p class="ai-context-evidence" data-state="unavailable">保存した判断を読めなかったので、この回答は以前の決定と食い違っているかもしれません。${escapeHtml(usage.error || '')}</p>`;
+  }
+  if (usage.status !== 'used') return '';
+  const evidence = usage.evidence || [];
+  if (evidence.length === 0) {
+    return '<p class="ai-context-evidence" data-state="empty">この質問に関係する判断は保存されていませんでした。</p>';
+  }
+  const cited = evidence.filter((entry) => entry.cited);
+  const unused = evidence.filter((entry) => !entry.cited);
+  return `
+    <div class="ai-context-evidence" data-state="used">
+      <p class="ai-context-evidence-label">${cited.length ? `根拠にした判断 ${cited.length}件` : '渡した判断はどれも根拠に挙げられていません'}
+        <button type="button" class="ai-evidence-open" data-open-saved-context>直す・消す</button></p>
+      ${cited.map(evidenceHtml).join('')}
+      ${unused.length ? `<details class="ai-context-evidence-rest"><summary>渡したが使われなかった判断 ${unused.length}件</summary>${unused.map(evidenceHtml).join('')}</details>` : ''}
+    </div>`;
+}
+
+/** 根拠1件。idと本文の冒頭と範囲を出します（仕様7.3が求める3つです）。 */
+function evidenceHtml(entry) {
+  return `
+    <p class="ai-evidence-item">
+      <code class="ai-evidence-id">${escapeHtml(entry.contextId)}</code>
+      <span class="ai-evidence-kind">${escapeHtml(KIND_LABELS[entry.kind] || '知識')}</span>
+      <span class="ai-evidence-scope">${escapeHtml(scopeLabel({ scope: entry.scope, scope_path: entry.scopePath }))}</span>
+      <span class="ai-evidence-content">${escapeHtml(truncate(entry.content || '', 80))}</span>
+    </p>`;
 }

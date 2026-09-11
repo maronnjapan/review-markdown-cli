@@ -8,6 +8,7 @@ import {
   relativeTasksPath,
   updateTasks
 } from './autoTasks.js';
+import { createDisabledContextService } from './contextService.js';
 import { DIRECTORY_CONTEXT_PATH, readDirectoryPremise, writeDirectoryPremise } from './directoryContext.js';
 import { documentRevision } from './documentEdits.js';
 import { createDocument, deleteDocument, renameDocument } from './documentFiles.js';
@@ -58,6 +59,12 @@ const ROUTES = [
   { methods: ['GET', 'HEAD'], pathname: '/vendor/pdfjs/pdf.worker.min.mjs', handle: openPdfJsAsset },
   { methods: ['POST'], pathname: '/api/review', handle: saveReview },
   { methods: ['POST'], pathname: '/api/context/directory', handle: saveDirectoryContext },
+  // 保存した判断（Context）。上の `/api/context/directory` が「この文書をどう読むか」の
+  // 前提なのに対し、こちらは「このプロジェクトで何が決まっているか」で、預け先も別です
+  // （Context API。`src/contextService.js`）。
+  { methods: ['GET'], pathname: '/api/saved-contexts', handle: listSavedContexts },
+  { methods: ['POST'], pathname: '/api/saved-contexts/search', handle: searchSavedContexts },
+  { methods: ['POST', 'PATCH', 'DELETE'], pathname: '/api/saved-context', handle: savedContext },
   { methods: ['GET'], pathname: '/api/export', handle: exportReview },
   { methods: ['GET'], pathname: '/api/ai/status', handle: aiStatus },
   { methods: ['GET'], pathname: '/api/settings', handle: readSettings },
@@ -103,6 +110,9 @@ export function createRequestHandler({
   aiService,
   aiToken,
   liveCaptionsToken,
+  // 保存した判断の預け先（`src/contextService.js`）。設定していなければ、
+  // 呼ぶと「使えません」と断るだけのものが入ります。
+  contextService = createDisabledContextService(),
   projectAiContext = '',
   settings = createSettings(),
   // 自動タスクの実行係（`autoTaskRunner.js`）。無いときは、その機能のルートだけが動きません。
@@ -135,6 +145,7 @@ export function createRequestHandler({
       aiService,
       aiToken,
       liveCaptionsToken,
+      contextService,
       projectAiContext,
       settings,
       autoTasks,
@@ -155,6 +166,74 @@ export function createRequestHandler({
     }
     throw httpError('Not found', 404);
   };
+}
+
+/**
+ * 保存した判断の一覧と、Context APIが使えるかどうかです。
+ *
+ * 使えないことをエラーにしません。画面はこの答えを見て、「保存した判断」の欄を
+ * 使えない状態で出します。欄ごと消すと、Contextを保存できることも、いま使えないことも、
+ * 画面からは分かりません（仕様7.4）。
+ */
+async function listSavedContexts(context) {
+  const { contextService, response } = context;
+  authorizeAiRequest(context);
+  const status = await contextService.status();
+  if (!status.available) return sendJson(response, { status, contexts: [] });
+  try {
+    return sendJson(response, { status, contexts: await contextService.listContexts({ limit: 200 }) });
+  } catch (error) {
+    return sendJson(response, { status: { ...status, available: false, error: error.message }, contexts: [] });
+  }
+}
+
+/** 画面の検索欄。AIを通さずに、保存した判断を引き直せる道です。 */
+async function searchSavedContexts(context) {
+  const { contextService, request, response } = context;
+  authorizeAiRequest(context);
+  const body = await readJsonBody(request);
+  const query = String(body.query || '').trim();
+  if (!query) throw httpError('検索したい語を入力してください', 400);
+  return sendJson(response, {
+    results: await contextService.searchContext(query, { documentPath: body.path, limit: body.limit })
+  });
+}
+
+/**
+ * 保存・訂正・削除です（仕様6.2、6.3）。3つを1本にまとめているのは、どれも同じ1件を
+ * 相手にする操作で、画面から見れば「残す・直す・消す」だからです。
+ */
+async function savedContext(context) {
+  const { rootDir, filter, contextService, request, response } = context;
+  authorizeAiRequest(context);
+  const body = await readJsonBody(request);
+  if (request.method === 'DELETE') {
+    await contextService.deleteContext(String(body.contextId || ''));
+    return sendJson(response, { deleted: true });
+  }
+  if (request.method === 'PATCH') {
+    return sendJson(response, {
+      context: await contextService.updateContext(String(body.contextId || ''), {
+        content: body.content,
+        scope: body.scope,
+        scopePath: body.scopePath,
+        kind: body.kind
+      })
+    });
+  }
+  // 保存の起点になったファイルは、レビュー対象の中のものだけを受け取ります。
+  // Context APIはファイルを読みませんが、読めないものへのパスを残しても意味が無く、
+  // 対象の外を指すパスを保存できると、そこに何があるかを外から書き込めることになります。
+  const documentPath = body.path ? reviewTarget(rootDir, filter, body.path) : null;
+  const saved = await contextService.saveContext(String(body.content || ''), {
+    scope: body.scope,
+    scopePath: body.scopePath,
+    documentPath,
+    kind: body.kind,
+    sourceType: body.sourceType,
+    sourcePath: body.sourcePath ? reviewTarget(rootDir, filter, body.sourcePath) : undefined
+  });
+  return sendJson(response, saved);
 }
 
 async function aiStatus({ aiService, aiToken, request, response }) {

@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { normalizeAiContext } from './aiContext.js';
 import { createAiService } from './aiService.js';
 import { createAutoTaskRunner } from './autoTaskRunner.js';
+import { createContextService } from './contextService.js';
 import { sendError } from './http.js';
 import { createPathFilter } from './pathFilter.js';
 import { createRequestHandler } from './routes.js';
@@ -33,8 +34,11 @@ export { listMarkdownFiles } from './markdownFiles.js';
  *   未指定なら既定（`transcriptFiles.js` の `DEFAULT_TRANSCRIPT_PATTERNS`）です。
  * @param {object} [options.settingsFile] 画面から変えた設定の保存先（`createSettingsFile`）。
  *   渡さないと、変更は今回の起動のあいだだけ効きます。
+ * @param {string} [options.contextEndpoint] Context API のURL（設定ファイルの `contextEndpoint`）。
+ *   設定していなければ、保存した判断は使わずに動きます（仕様7.4）。
  *
  * テストのための差し替え口:
+ * @param {object} [options.contextService] ContextService そのもの。渡すと `contextEndpoint` は見ません。
  * @param {object} [options.aiService] AiService そのもの。渡すと下の3つは見ません。
  * @param {object} [options.aiStore] 会話と翻訳キャッシュの保存先。
  * @param {object} [options.aiClient] AIクライアント。渡すと `aiProvider` は見ません。
@@ -55,8 +59,15 @@ export function createServer(targetDir = '.', options = {}) {
     manager: options.manager === true,
     file: options.settingsFile || null
   });
+  // 保存した判断の預け先。CLIから見えるのはHTTPの向こうだけで、索引が何かは知りません
+  // （仕様3.2）。設定していなければ、何もできないServiceが入ります。
+  const contextService = options.contextService || createContextService({
+    rootDir,
+    endpoint: options.contextEndpoint,
+    token: options.contextToken
+  });
   const aiService = options.aiService
-    || createAiService(rootDir, { ...options, features: settings.features });
+    || createAiService(rootDir, { ...options, contextService, features: settings.features });
   const aiToken = options.aiToken || crypto.randomBytes(24).toString('base64url');
   // Meet Captions Memoなど、この画面と同一オリジンではない呼び出し元向けの別トークン。
   // aiTokenと分けているのは、AI機能のオリジン制限（同一オリジンのみ）をこの用途には
@@ -74,7 +85,8 @@ export function createServer(targetDir = '.', options = {}) {
     log: options.log || ((line) => console.log(line))
   });
   const handleRequest = createRequestHandler({
-    rootDir, filter, aiService, aiToken, liveCaptionsToken, projectAiContext, settings, autoTasks, transcripts
+    rootDir, filter, aiService, aiToken, liveCaptionsToken, projectAiContext, settings, autoTasks, transcripts,
+    contextService
   });
 
   const app = {
@@ -90,7 +102,7 @@ export function createServer(targetDir = '.', options = {}) {
       return server.listen(port, '127.0.0.1', callback);
     }
   };
-  return { app, rootDir, filter, aiService, settings, liveCaptionsToken, autoTasks, transcripts };
+  return { app, rootDir, filter, aiService, settings, liveCaptionsToken, autoTasks, transcripts, contextService };
 }
 
 /**

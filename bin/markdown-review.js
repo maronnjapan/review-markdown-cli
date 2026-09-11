@@ -3,6 +3,12 @@ import { DEFAULT_AI_PROVIDER } from '../src/aiProviders/index.js';
 import { assertTargetDirectory, parseArgs, USAGE } from '../src/cli.js';
 import { applyConfigToOptions, loadConfig } from '../src/config.js';
 import { CONFIG_USAGE, parseConfigArgs, runConfigCommand } from '../src/configCommand.js';
+import {
+  CONTEXT_USAGE,
+  checkContextServer,
+  parseContextArgs,
+  startContextServer
+} from '../src/context/command.js';
 import { extensionDir, runExtensionCommand } from '../src/extensionCommand.js';
 import { encodePairingCode } from '../src/pairing.js';
 import { DEFAULT_AUTO_TASK_ACTIONS, DEFAULT_AUTO_TASK_INTERVAL_SECONDS } from '../src/autoTaskVocabulary.js';
@@ -16,6 +22,8 @@ if (argv[0] === 'config') await runConfig(argv.slice(1));
 // 同じ書き方の約束で `extension` も受けます。拡張機能のフォルダは入れ方によって場所が
 // 変わるので、読み込ませる前にパスを引ける口が要ります。
 if (argv[0] === 'extension') runSubcommand(runExtensionCommand(argv.slice(1)));
+// 保存した判断を預かるサービス。CLIとは別のプロセスで動かします（仕様3.4）。
+if (argv[0] === 'context') await runContext(argv.slice(1));
 
 const options = await readOptions();
 if (options.help) {
@@ -32,6 +40,11 @@ if (options.configSources?.length) console.log(`  config: ${options.configSource
 if (filter.include.length) console.log(`  include: ${filter.include.join(', ')}`);
 if (filter.exclude.length) console.log(`  exclude: ${filter.exclude.join(', ')}`);
 if (options.aiContext) console.log(`  ai context: ${summarize(options.aiContext)}`);
+// 保存した判断の預け先。設定していないときも1行出します。出さないと、使えるはずの
+// 機能が黙って無いことになり、画面で「使えません」と出てから設定を探すことになります。
+console.log(options.contextEndpoint
+  ? `  context api: ${options.contextEndpoint}（起動していないときはContextの保存と検索だけが使えません）`
+  : '  context api: 未設定（review-markdown context start と config set contextEndpoint で使えます）');
 if (options.manager) console.log('  manager: enabled');
 if (options.translation) console.log('  translation: enabled');
 // 裏でAIを動かし続ける機能なので、どの間隔で何を任せているかまで起動時に見せます。
@@ -65,6 +78,36 @@ let isShuttingDown = false;
 const forceExitAfterMs = 500;
 
 process.on('SIGINT', shutdown);
+
+/**
+ * `review-markdown context ...`。`start` だけは待ち受け続けるので、他のサブコマンドの
+ * ように結果を出して終わる形にはなりません。
+ */
+async function runContext(contextArgv) {
+  let parsed;
+  try {
+    parsed = parseContextArgs(contextArgv);
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+    console.error(`\n${CONTEXT_USAGE}`);
+    return process.exit(1);
+  }
+  if (parsed.help || !parsed.command) {
+    console.log(CONTEXT_USAGE);
+    return process.exit(0);
+  }
+  if (parsed.command === 'status') runSubcommand(await checkContextServer(parsed));
+
+  try {
+    const { server, lines } = await startContextServer(parsed);
+    for (const line of lines) console.log(line);
+    console.log('停止するには Ctrl+C を押してください。');
+    process.on('SIGINT', () => server.close(() => process.exit(0)));
+  } catch (error) {
+    console.error(`Error: Context API を起動できませんでした: ${error.message}`);
+    process.exit(1);
+  }
+}
 
 async function runConfig(configArgv) {
   try {

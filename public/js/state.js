@@ -79,6 +79,16 @@ export function createState() {
     commentsVersion: 0,
     commentSaveFailed: false,
 
+    /**
+     * 保存した判断（Context）。文書ごとではなくWorkspaceのものなので、文書を開き直しても
+     * 捨てません。捨てると、文書を移るたびにContext APIへ引きに行くことになります。
+     */
+    savedContexts: [],
+    savedContextStatus: null,
+    savedContextResults: null,
+    // 相談の答えから下書きへ移したときだけ立ちます。保存の起点（source_type）が変わります。
+    savedContextDraftSource: null,
+
     // Read-only Codex translation and chat
     sidePane: 'comments',
     aiStatus: null,
@@ -163,6 +173,10 @@ export function resetDocumentState(state, filePath) {
   state.referenceFilesDirty = false;
   state.referenceCandidates = null;
   state.referenceCandidatesLoading = false;
+  // 保存した判断そのものは文書に紐づかないので残します。消すのは、その文書で
+  // 打った検索の結果と、書きかけの出どころだけです。
+  state.savedContextResults = null;
+  state.savedContextDraftSource = null;
   state.pendingTarget = null;
   state.currentSelectionTarget = null;
   state.commentsDirty = false;

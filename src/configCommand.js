@@ -73,6 +73,14 @@ autoTasks はタスクの見守りです。会議中の文字起こし（transcr
 任せること（organize / focus / research / sample / inquiry。書いたものだけが走ります）、
 autoTasksInstructions は特にしてほしいことの文章です。どれも「設定」から変えられます。
 
+contextEndpoint は、保存した判断（Context）を預かるサービスのURLです。
+review-markdown context start で起動し、ここへそのURLを書くと、AIチャットが
+質問に応じて保存済みの判断を引き直すようになります。未設定なら、Contextの保存と
+検索だけが使えません（他の機能はこれまでどおり動きます）。
+
+  review-markdown context start
+  review-markdown config set contextEndpoint http://127.0.0.1:8765 --global
+
 aiContext は翻訳・AIチャット・指摘の配置で AI に渡す読み取りコンテキストです。
 ここに書いた前提はディレクトリ配下のすべての文書に効きます。
 文書ごとの前提はブラウザのAIパネルから書けて、両方まとめて AI へ渡します。

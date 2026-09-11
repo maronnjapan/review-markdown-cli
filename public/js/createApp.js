@@ -22,6 +22,7 @@ import { createDocumentReviewController } from './documentReview.js';
 import { createDocumentReviseController } from './documentRevise.js';
 import { createDocumentTargets } from './documentTargets.js';
 import { createReferenceFilesController } from './referenceFiles.js';
+import { createSavedContextController } from './savedContext.js';
 import { aliasRefs, queryRefs } from './dom.js';
 import { createEditor } from './editor.js';
 import { createFileListView } from './fileListView.js';
@@ -237,6 +238,8 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       ...referenceFileOptions
     })
   ]);
+  // 保存した判断（Context）。文書ごとの前提ではなくWorkspaceのものなので、操作盤は1つです。
+  const savedContextPage = createSavedContextController({ refs, state, api, toaster });
   const editor = createEditor({
     refs,
     state,
@@ -268,6 +271,17 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
     // 相談して分かったことは、その場でメモへ流し込めます。残すかどうかと、
     // どこまでを前提として書くかはレビュアーが決めます。
     onKeepContext: (text) => sideContextNotes.keepFromChat(text),
+    // 相談の答えのうち、次の会話でも前提にしたいものを「保存した判断」の下書きへ移します。
+    // AIが書いたものをそのまま残さず、必ず本人が見てから確定させます（仕様7.5）。
+    onSaveContext(text) {
+      state.savedContextDraftSource = 'agent';
+      window.location.hash = `#/saved-context/${encodeURIComponent(state.currentPath)}`;
+      savedContextPage.draft(text);
+    },
+    // 根拠に出た判断から、その場で直しに行けるようにします（仕様7.5の訂正の導線）。
+    onOpenSavedContext() {
+      if (state.currentPath) window.location.hash = `#/saved-context/${encodeURIComponent(state.currentPath)}`;
+    },
     onPaneRequested: openSidePane
   });
   const placement = createCommentPlacementController({
@@ -472,6 +486,9 @@ export function createApp(document, { api = defaultApi, pdfViewerFactory = creat
       hideSidePane();
       if (context) contextPage.render();
       else showToolPanel(page);
+      // 保存した判断は、開くたびに引き直します。別の画面やAIの提案から増えていることが
+      // あるので、前に開いたときの一覧をそのまま出すと、直したはずのものが残って見えます。
+      if (page.key === 'savedContext') savedContextPage.load();
       // 別の画面で交わした相談も、開いた時点の記録として並べ直します。
       if (page.key === 'chatLog') contextPage.renderConversations();
       return;

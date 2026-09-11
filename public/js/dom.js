@@ -240,6 +240,21 @@ const SELECTORS = {
   workspaceReferenceFilesList: '#workspace-reference-files-list',
   personaPanel: '#persona-page-panel',
   referenceFilesPanel: '#reference-files-panel',
+  // 保存した判断（Context）の画面。読み取りコンテキストの欄（contextNotes…）とは
+  // 別物です。あちらは「この文書をどう読むか」、こちらは「このプロジェクトで何が
+  // 決まっているか」で、預け先も違います（`src/contextService.js`）。
+  savedContextPanel: '#saved-context-panel',
+  savedContextForm: '#saved-context-form',
+  savedContextInput: '#saved-context-input',
+  savedContextScope: '#saved-context-scope',
+  savedContextKind: '#saved-context-kind',
+  savedContextStatus: '#saved-context-status',
+  savedContextEndpoint: '#saved-context-endpoint',
+  savedContextSearchForm: '#saved-context-search-form',
+  savedContextSearch: '#saved-context-search',
+  savedContextSearchClear: '#saved-context-search-clear',
+  savedContextListLabel: '#saved-context-list-label',
+  savedContextList: '#saved-context-list',
   conversationsPanel: '#conversations-panel',
   workspacePersonaState: '#workspace-persona-state',
   workspacePersonaForm: '#workspace-persona-form',

@@ -6,6 +6,7 @@ import { normalizePatterns } from './pathFilter.js';
 
 export const USAGE = `Usage: review-markdown [targetDir] [options]
        review-markdown config <command> [options]
+       review-markdown context <command> [options]
        review-markdown extension [--path]
 
 Options:
@@ -80,6 +81,25 @@ Tasks:
   設定ファイルの autoTasksActions / autoTasksInterval / autoTasksInstructions /
   autoTasksOwner で決めます。autoTasksOwner に名前を書くと、その人がやることだけを
   タスクに起こします。押していないのにAIへ送る唯一の道なので、既定では無効です。
+
+Saved context:
+  「保存した判断」は、次の会話でも前提にしたい決定や作法を1件ずつ残したものです。
+  原稿とは別の場所（Context API）に預け、質問の内容に応じてAIが引き直します。
+  引いたときは、どの判断を根拠にしたかを回答と一緒に画面へ出します。
+
+    review-markdown context start                       # 預かるサービスを起動する（別プロセス）
+    review-markdown config set contextEndpoint http://127.0.0.1:8765 --global
+    review-markdown context status                      # 繋がるかどうかを確かめる
+
+  contextEndpoint を設定していないときは、Contextの保存と検索だけが使えません。
+  ファイルの閲覧・編集・コメント・一般的なAI質問は、これまでどおり使えます。
+  サービスを止めているときも同じで、AIがContextを引こうとしたときにだけ、引けなかった
+  ことを画面とAIの回答へ出します。黙って一般論で答えさせないためです。
+
+  範囲は3つです。Workspace全体、特定ディレクトリ以下（開いているファイルの位置から
+  祖先へ遡って効きます）、そしてWorkspaceを問わない個人の共通知識です。
+  contextEndpoint はレビュー対象のリポジトリが同梱する設定ファイルからは読みません
+  （保存した判断の送り先なので、原稿を開いただけで変わってよい値ではありません）。
 
 AI context:
   aiContext は、翻訳・AIチャット・指摘の配置で AI がこの原稿を読むときの前提です。

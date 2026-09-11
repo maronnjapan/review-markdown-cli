@@ -274,6 +274,7 @@ test('本文の隣に置かないものは、別タブでも開けるリンク�
       ['A', 'files', '#/files/docs%2Fnote.md'],
       ['A', 'chat', '#/chat/docs%2Fnote.md'],
       ['A', 'chatLog', '#/chat-log/docs%2Fnote.md'],
+      ['A', 'savedContext', '#/saved-context/docs%2Fnote.md'],
       ['A', 'manager', '#/manager/docs%2Fnote.md'],
       ['A', 'placement', '#/placement/docs%2Fnote.md'],
       ['A', 'review', '#/ai-review/docs%2Fnote.md'],
@@ -2704,7 +2705,7 @@ test('every side pane scrolls inside itself, so nothing is cut off below the fol
    * ページごとスクロールできることを見ます。
    */
   const toolPanels = [...document.querySelectorAll('.tool-page-body > section')];
-  assert.equal(toolPanels.length, 9, 'ツール画面のパネルを数え漏らしていない');
+  assert.equal(toolPanels.length, 10, 'ツール画面のパネルを数え漏らしていない');
   for (const panel of toolPanels) {
     assert.ok(
       selectors.every((selector) => !panel.matches(selector)),
