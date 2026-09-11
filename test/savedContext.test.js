@@ -77,6 +77,9 @@ test('接続できないことと503は、同じ「利用不可」として扱�
     assert.equal((await service.status()).available, false);
     await assert.rejects(() => service.searchContext('認証'), (error) => {
       assert.equal(error.unavailable, true);
+      // 画面へ出るときも 503 のままにします。500 だとこのアプリの不具合に見え、
+      // 直す先（Context APIを起動する）が分かりません。
+      assert.equal(error.statusCode, 503);
       return true;
     });
   }

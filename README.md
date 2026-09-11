@@ -1050,6 +1050,12 @@ review-markdown context status
 このサービスは `127.0.0.1` にだけ Bind します。
 認証は既定では行いません（個人の PC の中だけで完結する前提です）。
 `--token` を付けたときだけ `Authorization: Bearer <token>` を求めます。
+その場合は CLI 側にも同じトークンを設定します。
+
+```bash
+review-markdown context start --token <token>
+review-markdown config set contextToken <token> --global
+```
 
 ### 判断を残す
 

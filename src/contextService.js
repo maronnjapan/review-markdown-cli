@@ -36,7 +36,10 @@ export const CONTEXT_UNAVAILABLE_MESSAGE = 'Context API を利用できません
 
 export function contextUnavailableError(detail = '') {
   return Object.assign(new Error(detail ? `${CONTEXT_UNAVAILABLE_MESSAGE}: ${detail}` : CONTEXT_UNAVAILABLE_MESSAGE), {
-    unavailable: true
+    unavailable: true,
+    // 画面へもこの札のまま返します。500 は「このアプリの不具合」なので、預け先が
+    // 止まっているだけのときに出すと、直す先を間違えさせます。
+    statusCode: 503
   });
 }
 

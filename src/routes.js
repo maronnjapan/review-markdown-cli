@@ -189,13 +189,16 @@ async function listSavedContexts(context) {
 
 /** 画面の検索欄。AIを通さずに、保存した判断を引き直せる道です。 */
 async function searchSavedContexts(context) {
-  const { contextService, request, response } = context;
+  const { rootDir, filter, contextService, request, response } = context;
   authorizeAiRequest(context);
   const body = await readJsonBody(request);
   const query = String(body.query || '').trim();
   if (!query) throw httpError('検索したい語を入力してください', 400);
+  // 開いている文書は、検索範囲（そのディレクトリ以下）になります。他のルートと同じ道で
+  // 解決するので、レビュー対象の外を指すパスはここで断られます。
+  const documentPath = body.path ? reviewTarget(rootDir, filter, body.path) : null;
   return sendJson(response, {
-    results: await contextService.searchContext(query, { documentPath: body.path, limit: body.limit })
+    results: await contextService.searchContext(query, { documentPath, limit: body.limit })
   });
 }
 

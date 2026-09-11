@@ -129,6 +129,14 @@ const CONFIG_KEY_SPECS = {
     parse: (value, source) => parseEndpoint(value, source),
     help: `Context API のURL（例: http://127.0.0.1:${DEFAULT_CONTEXT_PORT}。未設定ならContext機能は使いません）`
   },
+  contextToken: {
+    kind: 'scalar',
+    // 送り先と同じ理由で、レビュー対象のリポジトリからは読みません。資格情報なので、
+    // 書ける場所を広げると、原稿を開いただけで別の相手へ渡せることになります。
+    scope: 'user',
+    parse: (value, source) => parseIdentifier(value, source),
+    help: 'Context API が Authorization: Bearer を求めるときのトークン（既定: 認証なし）'
+  },
   aiProvider: {
     kind: 'scalar',
     scope: 'user',
@@ -452,6 +460,7 @@ export function applyConfigToOptions(options, config = {}) {
     aiProvider: config.aiProvider ?? DEFAULT_AI_PROVIDER,
     // Context APIの場所。未設定なら、Contextの保存も検索もしないまま動きます（仕様7.4）。
     contextEndpoint: config.contextEndpoint,
+    contextToken: config.contextToken,
     aiModelProvider: config.aiModelProvider,
     aiModels: aiModelsFromConfig(config)
   };

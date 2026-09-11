@@ -23,6 +23,7 @@ if (argv[0] === 'config') await runConfig(argv.slice(1));
 // 変わるので、読み込ませる前にパスを引ける口が要ります。
 if (argv[0] === 'extension') runSubcommand(runExtensionCommand(argv.slice(1)));
 // 保存した判断を預かるサービス。CLIとは別のプロセスで動かします（仕様3.4）。
+// `start` はここから戻りません（`runContext`）。
 if (argv[0] === 'context') await runContext(argv.slice(1));
 
 const options = await readOptions();
@@ -107,6 +108,10 @@ async function runContext(contextArgv) {
     console.error(`Error: Context API を起動できませんでした: ${error.message}`);
     process.exit(1);
   }
+  // ここから先へは進みません。待ち受け続けるのがこのコマンドの仕事なので、戻ると
+  // 続けてレビューの起動処理が走り、`context` を対象ディレクトリとして読もうとします。
+  // 他のサブコマンドが `process.exit` で終わるのと同じ位置にある、終わらない版です。
+  await new Promise(() => {});
 }
 
 async function runConfig(configArgv) {
