@@ -128,7 +128,8 @@ export function createChromaVectorStore({
           // 本文の正本は `store.js` が持ちます。ここへ入れるのは、Chromaの画面から
           // 索引を覗いたときに、何のベクトルか分かるようにするためです。
           documents: chunks.map((chunk) => chunk.text || ''),
-          metadatas: chunks.map((chunk) => ({ ...chunk.metadata, context_id: chunk.contextId }))
+          // Chromaのメタデータは文字列・数値・真偽値だけです。null を送ると要求ごと断られるので落とします。
+          metadatas: chunks.map((chunk) => compactMetadata({ ...chunk.metadata, context_id: chunk.contextId }))
         }
       });
     },
@@ -143,13 +144,18 @@ export function createChromaVectorStore({
       return 0;
     },
 
-    async query({ vector, limit = 10, scopeKeys = null }) {
+    /**
+     * @param {object} query `local.js` と同じ形です。`sources` は出どころ（`context` / `page`）の絞り込みで、
+     *   出どころの無い古い索引は起動時に作り直されるので（`store.js` の索引の版）、ここでは見ません。
+     */
+    async query({ vector, limit = 10, scopeKeys = null, sources = null }) {
       const { root, collectionId } = await connect();
+      const where = whereClause({ scopeKeys, sources });
       const body = {
         query_embeddings: [vector],
         n_results: limit,
         include: ['metadatas', 'distances'],
-        ...(scopeKeys ? { where: { scope_key: { $in: scopeKeys } } } : {})
+        ...(where ? { where } : {})
       };
       const result = await request(`${root}/collections/${collectionId}/query`, { method: 'POST', body });
       const ids = result.ids?.[0] || [];
@@ -165,6 +171,30 @@ export function createChromaVectorStore({
       }));
     },
 
+    /** 索引に入っているChunkの数。 */
+    async count() {
+      const { root, collectionId } = await connect();
+      const result = await request(`${root}/collections/${collectionId}/count`);
+      return typeof result === 'number' ? result : Number(result?.count ?? result ?? 0);
+    },
+
     async close() {}
   };
+}
+
+/**
+ * Chromaの `where` です。条件が2つ以上のときだけ `$and` で包みます（1つのときに `$and` を使うと断られます）。
+ */
+function whereClause({ scopeKeys, sources }) {
+  const clauses = [];
+  if (scopeKeys) clauses.push({ scope_key: { $in: scopeKeys } });
+  if (sources) clauses.push({ source: { $in: sources } });
+  if (clauses.length === 0) return null;
+  return clauses.length === 1 ? clauses[0] : { $and: clauses };
+}
+
+function compactMetadata(metadata) {
+  return Object.fromEntries(
+    Object.entries(metadata).filter(([, value]) => value !== null && value !== undefined)
+  );
 }

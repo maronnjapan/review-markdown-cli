@@ -103,13 +103,17 @@ export function createLocalVectorStore({ dataDir, fileName = 'vectors.json' } = 
      * @param {number} query.limit 返すChunkの上限。Context単位へまとめるのは呼ぶ側です。
      * @param {string[]} [query.scopeKeys] 検索してよい範囲（`scope.js` の `scopeKeysFor`）。
      *   省略すると絞りません。
+     * @param {string[]} [query.sources] 出どころ（`context` / `page`）で絞ります。省略すると絞りません。
+     *   出どころの無い古い索引は `context` として扱います（ページを載せる前に作った索引です）。
      */
-    async query({ vector, limit = 10, scopeKeys = null }) {
+    async query({ vector, limit = 10, scopeKeys = null, sources = null }) {
       await load();
       const allowed = scopeKeys ? new Set(scopeKeys) : null;
+      const allowedSources = sources ? new Set(sources) : null;
       const scored = [];
       for (const entry of entries.values()) {
         if (allowed && !allowed.has(entry.metadata?.scope_key)) continue;
+        if (allowedSources && !allowedSources.has(entry.metadata?.source || 'context')) continue;
         scored.push({
           id: entry.id,
           contextId: entry.contextId,
@@ -118,6 +122,12 @@ export function createLocalVectorStore({ dataDir, fileName = 'vectors.json' } = 
         });
       }
       return scored.sort((a, b) => b.score - a.score).slice(0, limit);
+    },
+
+    /** 索引に入っているChunkの数。画面の設定欄と `/health` が出します。 */
+    async count() {
+      await load();
+      return entries.size;
     },
 
     async close() {

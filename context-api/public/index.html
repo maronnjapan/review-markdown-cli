@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Knowledge</title>
+    <meta name="description" content="ページと保存した判断を意味で引ける、個人のナレッジベース。">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23202124'/%3E%3Cpath d='M9 8h4v16H9zM15 8h3l6 8-6 8h-3l6-8z' fill='%23fff'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/ui/app.css">
+  </head>
+  <body>
+    <div id="app" class="app">
+      <aside id="sidebar" class="sidebar" aria-label="サイドバー">
+        <div class="sidebar-head">
+          <button id="workspace-button" class="workspace-button" type="button" title="Workspaceを切り替える">
+            <span id="workspace-avatar" class="workspace-avatar">K</span>
+            <span id="workspace-name" class="workspace-name">Workspace</span>
+            <span class="workspace-chevron" aria-hidden="true">⌄</span>
+          </button>
+          <button id="sidebar-collapse" class="icon-button" type="button" title="サイドバーをたたむ" aria-label="サイドバーをたたむ">«</button>
+        </div>
+        <nav class="sidebar-actions" aria-label="機能">
+          <button id="search-button" class="sidebar-action" type="button"><span class="sidebar-glyph">⌕</span><span>検索</span><kbd id="shortcut-hint">⌘K</kbd></button>
+          <a id="ask-link" class="sidebar-action" href="#/"><span class="sidebar-glyph">✦</span><span>資料に聞く</span></a>
+          <a id="contexts-link" class="sidebar-action" href="#/"><span class="sidebar-glyph">📌</span><span>保存した判断</span></a>
+        </nav>
+        <div class="sidebar-section">
+          <span class="sidebar-label">ページ</span>
+          <button id="new-page-button" class="icon-button" type="button" title="新しいページ" aria-label="新しいページ">＋</button>
+        </div>
+        <nav id="page-tree" class="page-tree" aria-label="ページ"></nav>
+        <div class="sidebar-foot">
+          <a id="settings-link" class="sidebar-action" href="#/settings"><span class="sidebar-glyph">⚙</span><span>設定</span></a>
+        </div>
+      </aside>
+      <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
+      <main class="main">
+        <header class="topbar">
+          <button id="sidebar-open" class="icon-button sidebar-open-button" type="button" title="サイドバーを開く" aria-label="サイドバーを開く">☰</button>
+          <nav id="breadcrumb" class="breadcrumb" aria-label="現在地"></nav>
+          <div class="topbar-right">
+            <span id="save-status" class="save-status" aria-live="polite"></span>
+            <button id="page-menu-button" class="icon-button hidden" type="button" title="ページの操作" aria-label="ページの操作">⋯</button>
+          </div>
+        </header>
+        <section id="view" class="view"></section>
+      </main>
+    </div>
+    <div id="popover" class="popover hidden" role="menu"></div>
+    <div id="palette" class="palette hidden"></div>
+    <div id="toast" class="toast" aria-live="polite"></div>
+    <script type="module" src="/ui/js/main.js"></script>
+  </body>
+</html>

@@ -21,8 +21,33 @@ export function sendError(response, error) {
   sendJson(response, { error: error.message || 'Internal Server Error' }, statusCode);
 }
 
-/** 受け取る本文の上限。Contextの本文は8000文字までなので、これで十分に余ります。 */
-const MAX_BODY_BYTES = 1024 * 1024;
+/**
+ * 受け取る本文の上限。ページの本文は200,000文字まで、取り込みは1回に500件までなので、
+ * その両方が収まる大きさにしてあります。
+ */
+const MAX_BODY_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Server-Sent Eventsを書き始めます。`/ask` が回答を少しずつ流すのに使います。
+ * @returns {{send: Function, end: Function}} `send(event, data)` は1つの出来事、`end()` で閉じます。
+ */
+export function startSse(response) {
+  response.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-store',
+    Connection: 'keep-alive',
+    'X-Content-Type-Options': 'nosniff'
+  });
+  return {
+    send(event, data) {
+      if (response.writableEnded || response.destroyed) return;
+      response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    },
+    end() {
+      if (!response.writableEnded) response.end();
+    }
+  };
+}
 
 export function readJsonBody(request) {
   return new Promise((resolve, reject) => {

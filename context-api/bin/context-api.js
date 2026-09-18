@@ -15,7 +15,7 @@ const api = createContextApi(config);
 // 最初の保存で初めて失敗し、そのときにはもう「保存できたつもり」のユーザーがいます。
 let ready;
 try {
-  ready = await api.store.ready({
+  ready = await api.ready({
     waitSeconds: config.waitForVectorDbSeconds,
     onWait: (line) => console.log(line)
   });
@@ -33,13 +33,17 @@ await new Promise((resolve, reject) => {
 });
 
 const port = server.address().port;
+const shownHost = config.host === '0.0.0.0' ? '127.0.0.1' : config.host;
 console.log(`Context API is serving http://${config.host}:${port}`);
 console.log(`  data: ${config.dataDir}`);
 console.log(`  embedding: ${api.store.embedder.label}`);
 console.log(`  vector db: ${api.store.vectorStore.label}`);
+console.log(`  answer: ${api.chatModel ? api.chatModel.label : '生成しない（CHAT_PROVIDER 未設定。検索だけ使えます）'}`);
 if (config.token) console.log('  auth: Authorization: Bearer <CONTEXT_API_TOKEN>');
-if (ready.reindexed) console.log(`  埋め込みが変わったので、保存済みの${ready.reindexed}件を作り直しました`);
-console.log(`  CLIから使うには: review-markdown config set contextEndpoint http://127.0.0.1:${port} --global`);
+if (ready.reindexed) console.log(`  埋め込みか索引の形が変わったので、保存済みの${ready.reindexed}件（判断${ready.contexts}件、ページ${ready.pages}件）を作り直しました`);
+if (config.ui) console.log(`  画面（ページと検索）: http://${shownHost}:${port}/`);
+console.log(`  MCP（Claude Code など）: claude mcp add --transport http knowledge http://${shownHost}:${port}/mcp`);
+console.log(`  CLIから使うには: review-markdown config set contextEndpoint http://${shownHost}:${port} --global`);
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => server.close(() => process.exit(0)));

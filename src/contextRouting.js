@@ -20,8 +20,11 @@
  * ようにするためです。
  */
 
-/** 回答の中に書かれたContextのid。`[ctx_...]` と `ctx_...` の両方を拾います。 */
-const CITATION_PATTERN = /ctx_[A-Za-z0-9_-]+/g;
+/**
+ * 回答の中に書かれたContextとページのid。`[ctx_...]` と `ctx_...` の両方を拾います。
+ * ページ（`pg_...`）も同じ形で名指しさせます（`prompts/savedContexts.js`）。
+ */
+const CITATION_PATTERN = /(?:ctx|pg)_[A-Za-z0-9_-]+/g;
 
 /** モデルが決めた計画。答えが壊れていても、検索しない側へ倒します。 */
 export function normalizeContextPlan(answer) {
@@ -41,7 +44,7 @@ export function normalizeContextPlan(answer) {
  * モデルが作ったidをそのまま画面へ出すと、存在しない根拠が根拠として表示されます。
  */
 export function citedContextIds(text, contexts = []) {
-  const provided = new Set(contexts.map((context) => context.context_id));
+  const provided = new Set(contexts.map(knowledgeId));
   const cited = new Set();
   for (const match of String(text || '').matchAll(CITATION_PATTERN)) {
     if (provided.has(match[0])) cited.add(match[0]);
@@ -50,24 +53,51 @@ export function citedContextIds(text, contexts = []) {
 }
 
 /**
- * 画面へ返す根拠です。渡したContextすべてに、使われたかどうかの印を付けます。
+ * 検索結果1件のid。Contextは `ctx_...`、ページは `pg_...` です。
+ * Context APIの検索は、`sources` にページを含めるとページも混ぜて返します（`type: 'page'`）。
+ */
+export function knowledgeId(result) {
+  return result.type === 'page' ? result.page_id : result.context_id;
+}
+
+/**
+ * 画面へ返す根拠です。渡したContextとページすべてに、使われたかどうかの印を付けます。
  *
- * @param {Array} contexts `search_context` が返したもの。
+ * @param {Array} contexts `search_context` が返したもの（Contextとページ）。
  * @param {string} answerText モデルの回答。
- * @returns {Array} `{ contextId, content, score, scope, scopePath, kind, updatedAt, cited }`
+ * @returns {Array} `{ type, contextId, content, score, scope, scopePath, kind, updatedAt, cited }`。
+ *   ページには `pageId`、`title`、`heading`、`workspaceId` も付きます。`contextId` には
+ *   どちらでもidが入ります（画面が名指しに使う欄を1つにするためです）。
  */
 export function evidenceFrom(contexts = [], answerText = '') {
   const cited = new Set(citedContextIds(answerText, contexts));
-  return contexts.map((context) => ({
-    contextId: context.context_id,
-    content: context.content,
-    score: context.score,
-    scope: context.scope,
-    scopePath: context.scope_path || null,
-    kind: context.kind || 'note',
-    updatedAt: context.updated_at || null,
-    cited: cited.has(context.context_id)
-  }));
+  return contexts.map((context) => (context.type === 'page'
+    ? {
+      type: 'page',
+      contextId: context.page_id,
+      pageId: context.page_id,
+      workspaceId: context.workspace_id || null,
+      title: context.title || '',
+      heading: context.heading || '',
+      content: context.snippet ?? context.content ?? '',
+      score: context.score,
+      scope: 'workspace',
+      scopePath: null,
+      kind: 'page',
+      updatedAt: context.updated_at || null,
+      cited: cited.has(context.page_id)
+    }
+    : {
+      type: 'context',
+      contextId: context.context_id,
+      content: context.content,
+      score: context.score,
+      scope: context.scope,
+      scopePath: context.scope_path || null,
+      kind: context.kind || 'note',
+      updatedAt: context.updated_at || null,
+      cited: cited.has(context.context_id)
+    }));
 }
 
 /**

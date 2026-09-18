@@ -181,6 +181,9 @@ export function createContextService({ rootDir, endpoint, token, fetchImpl = fet
     /**
      * Semantic Search（仕様6.4）。祖先ディレクトリの展開はContext APIが行うので、
      * ここが渡すのは、いま開いているファイルのディレクトリ1つだけです。
+     *
+     * @param {string[]} [options.sources] 出どころ。省くとContext API側の既定（判断だけ）です。
+     *   `['context', 'page']` にすると、ナレッジベースのページの抜粋も混ざります（`type: 'page'`）。
      */
     async searchContext(query, options = {}) {
       const workspaceId = await workspaceIdFor({ create: false });
@@ -192,7 +195,8 @@ export function createContextService({ rootDir, endpoint, token, fetchImpl = fet
         ...(workspaceId ? { workspace_id: workspaceId } : {}),
         ...(scopePath ? { scope_path: scopePath } : {}),
         include_global: options.includeGlobal !== false,
-        limit: options.limit || DEFAULT_CONTEXT_LIMIT
+        limit: options.limit || DEFAULT_CONTEXT_LIMIT,
+        ...(options.sources ? { sources: options.sources } : {})
       };
       const payload = await request('/search', { method: 'POST', body });
       return payload.results || [];

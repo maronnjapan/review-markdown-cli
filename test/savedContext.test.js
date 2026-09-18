@@ -9,6 +9,7 @@ import { AiStore } from '../src/aiStore.js';
 import { normalizeConfigValue } from '../src/config.js';
 import { createServer } from '../src/server.js';
 import { citedContextIds, evidenceFrom, normalizeContextPlan } from '../src/contextRouting.js';
+import { savedContextsBlock } from '../src/prompts/savedContexts.js';
 import { createContextService, createDisabledContextService } from '../src/contextService.js';
 import { createWorkspaceId, ensureWorkspaceId, readWorkspaceId, scopePathFor } from '../src/workspace.js';
 
@@ -122,6 +123,9 @@ test('workspace_id と scope_path は、呼ぶ側ではなくServiceが補う', 
   assert.equal(sent[1].body.scope_path, 'src/auth/oauth');
   assert.equal(sent[1].body.include_global, true);
   assert.equal(sent[1].body.limit, 5, '既定は5件（仕様6.4の【要確認6】への回答）');
+  assert.equal(sent[1].body.sources, undefined, '出どころを省けば、預け先の既定（判断だけ）に任せる');
+  await service.searchContext('Refresh Token', { documentPath: 'src/auth/oauth/token.md', sources: ['context', 'page'] });
+  assert.deepEqual(sent[2].body.sources, ['context', 'page'], 'ページも求めるときだけ送る');
 
   // Workspace直下のファイルには、ディレクトリの範囲がありません。
   await assert.rejects(
@@ -178,6 +182,51 @@ test('保存した判断は、CLIを立ち上げ直しても回答に出て、�
   assert.equal(message.context.evidence[0].cited, true, 'どの判断を根拠にしたかが記録に残る');
   assert.equal(message.context.evidence[0].content, 'このプロジェクトではOIDCを利用する');
   assert.match(prompts.at(-1), /<saved_contexts>/);
+});
+
+test('ナレッジベースのページの抜粋も、判断と同じ枠で渡り、根拠に出る', async (t) => {
+  const { service, endpoint, prompts, searches } = await startChat(t);
+  // 判断を1件も保存していなくても、ページがあればそれが前提になります。
+  await service.saveContext('この判断はWorkspace idを作るためだけに保存する', { scope: 'workspace', kind: 'note' });
+  const workspaceId = await service.contexts.workspaceId({ create: false });
+  const created = await fetch(`${endpoint}/pages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspace_id: workspaceId, title: '認証の設計', content: '認証方式はOIDCにする。ログインはIdPへ委ねる。' })
+  }).then((response) => response.json());
+
+  const conversation = await service.createConversation({ documentPath: 'guide.md', target: { type: 'document' } });
+  const { message } = await service.sendMessage(conversation.id, 'このプロジェクトの認証方式って何？');
+
+  assert.deepEqual(searches.at(-1).sources, ['context', 'page'], 'AIは判断とページの両方を求める');
+  assert.match(prompts.at(-1), /<page id="pg_stub_\d+" title="認証の設計" updated="[^"]*">\n認証方式はOIDCにする/);
+  assert.match(prompts.at(-1), /for example \[ctx_123\] or \[pg_456\]/, 'ページも名指しさせる');
+  assert.match(message.content, /\[pg_stub_\d+\]/);
+  const page = message.context.evidence.find((entry) => entry.type === 'page');
+  assert.equal(page.pageId, created.page.page_id);
+  assert.equal(page.contextId, created.page.page_id, '画面が名指しに使う欄は1つ');
+  assert.equal(page.title, '認証の設計');
+  assert.equal(page.cited, true, 'どのページを根拠にしたかが記録に残る');
+});
+
+test('ページの引用と根拠の形', () => {
+  const results = [
+    { type: 'context', context_id: 'ctx_1', content: 'OIDCを利用する', scope: 'workspace', kind: 'decision' },
+    { type: 'page', page_id: 'pg_1', workspace_id: 'W', title: '認証', heading: 'トークン', snippet: '有効期限は15分', content: '有効期限は15分', breadcrumb: [{ page_id: 'pg_0', title: '設計' }, { page_id: 'pg_1', title: '認証' }], updated_at: '2026-01-02T00:00:00Z' }
+  ];
+  assert.deepEqual(citedContextIds('OIDCです[ctx_1]。期限は15分[pg_1]。[pg_9]は無い', results), ['ctx_1', 'pg_1']);
+
+  const evidence = evidenceFrom(results, '期限は15分[pg_1]。');
+  assert.deepEqual(evidence.map(({ type, contextId, cited }) => [type, contextId, cited]), [['context', 'ctx_1', false], ['page', 'pg_1', true]]);
+  assert.equal(evidence[1].heading, 'トークン');
+  assert.equal(evidence[1].kind, 'page');
+
+  const block = savedContextsBlock(results);
+  assert.match(block, /<context id="ctx_1" kind="decision" scope="workspace" updated="">\nOIDCを利用する\n<\/context>/);
+  assert.match(block, /<page id="pg_1" title="設計 > 認証" heading="トークン" updated="2026-01-02">\n有効期限は15分\n<\/page>/);
+  assert.match(block, /A <context> is a decision or preference the user saved; a <page> is an excerpt/);
+  // ページが無いときの文面は、この機能が無かった頃と同じです。
+  assert.doesNotMatch(savedContextsBlock([results[0]]), /<page>|pg_456/);
 });
 
 test('要らないと判断した質問では、保存した判断を引かない', async (t) => {
@@ -263,6 +312,9 @@ async function exists(filePath) {
  */
 async function startStubContextApi() {
   const contexts = new Map();
+  // ページの代わり。本物はナレッジベースの画面から書きますが、ここではテストから直に置きます。
+  const pages = new Map();
+  const searches = [];
   let nextId = 0;
 
   const handle = async (request) => {
@@ -304,13 +356,44 @@ async function startStubContextApi() {
     if (id && request.method === 'DELETE') {
       return contexts.delete(id) ? [200, { deleted: true }] : [404, { error: '見つかりません' }];
     }
+    if (url.pathname === '/pages' && request.method === 'POST') {
+      const now = new Date().toISOString();
+      const page = {
+        page_id: `pg_stub_${nextId += 1}`,
+        workspace_id: body.workspace_id,
+        title: body.title || '',
+        content: body.content || '',
+        updated_at: now
+      };
+      pages.set(page.page_id, page);
+      return [201, { page }];
+    }
     if (url.pathname === '/search' && request.method === 'POST') {
       if (!body.query) return [400, { error: 'query を指定してください' }];
+      searches.push(body);
       const allowed = scopeKeys(body);
-      const results = [...contexts.values()]
-        .filter((context) => allowed.has(scopeKeyOf(context)))
-        .map((context) => ({ ...context, score: overlap(body.query, context.content) }))
-        .filter((context) => context.score > 0)
+      const sources = body.sources || ['context'];
+      const results = [
+        ...(sources.includes('context') ? [...contexts.values()]
+          .filter((context) => allowed.has(scopeKeyOf(context)))
+          .map((context) => ({ type: 'context', ...context, score: overlap(body.query, context.content) })) : []),
+        // 本物と同じく、ページは当たった箇所の抜粋（snippet）で返します。
+        ...(sources.includes('page') ? [...pages.values()]
+          .filter((page) => allowed.has(`ws:${page.workspace_id}`))
+          .map((page) => ({
+            type: 'page',
+            page_id: page.page_id,
+            workspace_id: page.workspace_id,
+            title: page.title,
+            breadcrumb: [{ page_id: page.page_id, title: page.title }],
+            heading: '',
+            snippet: page.content,
+            content: page.content,
+            score: overlap(body.query, `${page.title} ${page.content}`),
+            updated_at: page.updated_at
+          })) : [])
+      ]
+        .filter((result) => result.score > 0)
         .sort((a, b) => b.score - a.score)
         .slice(0, body.limit || 5);
       return [200, { results }];
@@ -328,6 +411,7 @@ async function startStubContextApi() {
   await new Promise((resolve) => server.once('listening', resolve));
   return {
     server,
+    searches,
     endpoint: `http://127.0.0.1:${server.address().port}`,
     closeApi: () => new Promise((resolve) => server.close(resolve))
   };
@@ -367,7 +451,7 @@ async function startChat(t, { needsContext = true } = {}) {
   const dataDir = await temporaryDir(t);
   await fs.writeFile(path.join(root, 'guide.md'), '# 手順\n\n本文です。\n', 'utf8');
 
-  const { server, endpoint, closeApi } = await startStubContextApi();
+  const { server, endpoint, closeApi, searches } = await startStubContextApi();
   t.after(() => (server.listening ? closeApi() : null));
 
   const prompts = [];
@@ -377,7 +461,7 @@ async function startChat(t, { needsContext = true } = {}) {
     client: fakeClient(prompts, needsContext),
     contextService: createContextService({ rootDir: root, endpoint })
   });
-  return { service, root, store, dataDir, endpoint, prompts, closeApi };
+  return { service, root, store, dataDir, endpoint, prompts, closeApi, searches };
 }
 
 /**
@@ -403,7 +487,7 @@ function fakeClient(prompts, needsContext = true) {
           })
         };
       }
-      const quoted = [...prompt.matchAll(/<context id="(ctx_[^"]+)"[^>]*>\n([^\n]+)/g)];
+      const quoted = [...prompt.matchAll(/<(?:context|page) id="((?:ctx|pg)_[^"]+)"[^>]*>\n([^\n]+)/g)];
       if (quoted.length === 0) return { text: '保存済みの決定は見つかりませんでした。' };
       return { text: `${quoted[0][2]}と決めています[${quoted[0][1]}]。` };
     }
