@@ -77,6 +77,8 @@ test('Contextの保存・検索・訂正・削除が、ChromaDB越しに通る',
   assert.deepEqual(upsert.body.ids, [`${created.context_id}#0`]);
   assert.equal(upsert.body.embeddings[0].length, 512, '埋め込みはこちらで作って渡す');
   assert.deepEqual(upsert.body.metadatas[0], {
+    // 出どころ。ページと同じ索引に載るので、検索のときにContextだけを引けるように付けます。
+    source: 'context',
     scope_key: 'path:W:src/auth',
     scope_depth: 2,
     scope: 'path',
@@ -89,9 +91,13 @@ test('Contextの保存・検索・訂正・削除が、ChromaDB越しに通る',
     query: 'このプロジェクトの認証方式', workspace_id: 'W', scope_path: 'src/auth/oauth'
   }));
   const query = chroma.requests.findLast(({ pathname }) => pathname.endsWith('/query'));
-  // 絞り込みは1本の文字列で渡します。どのVector DBにもある「どれかに一致」で済むためです。
+  // 範囲の絞り込みは1本の文字列で渡します。どのVector DBにもある「どれかに一致」で済むためです。
+  // 出どころ（Contextだけ）と合わせて2条件なので、Chromaの決まりどおり `$and` で包みます。
   assert.deepEqual(query.body.where, {
-    scope_key: { $in: ['path:W:src/auth/oauth', 'path:W:src/auth', 'path:W:src', 'ws:W', 'global'] }
+    $and: [
+      { scope_key: { $in: ['path:W:src/auth/oauth', 'path:W:src/auth', 'path:W:src', 'ws:W', 'global'] } },
+      { source: { $in: ['context'] } }
+    ]
   });
   assert.deepEqual(results.map(({ context }) => context.content), ['このプロジェクトではOIDCを利用する']);
   assert.ok(results[0].score > 0 && results[0].score <= 1, 'コサイン距離を「大きいほど近い」へ直して読む');
@@ -155,11 +161,13 @@ async function startFakeChroma(t, { version, unreadyFirst = 0 }) {
       }
       return reply(200, {});
     }
+    if (url.pathname === `${root}/collections/collection-1/count`) {
+      return reply(200, chroma.collection.size);
+    }
     if (url.pathname === `${root}/collections/collection-1/query`) {
-      const allowed = new Set(body.where?.scope_key?.$in || []);
       const [vector] = body.query_embeddings;
       const hits = [...chroma.collection.entries()]
-        .filter(([, entry]) => allowed.size === 0 || allowed.has(entry.metadata.scope_key))
+        .filter(([, entry]) => matchesWhere(entry.metadata, body.where))
         // 本物と同じく、コサイン距離（小さいほど近い）で返します。
         .map(([id, entry]) => [id, entry, 1 - dot(vector, entry.vector)])
         .sort((a, b) => a[2] - b[2])
@@ -177,6 +185,15 @@ async function startFakeChroma(t, { version, unreadyFirst = 0 }) {
   await new Promise((resolve) => server.once('listening', resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
   return { chroma, endpoint: `http://127.0.0.1:${server.address().port}` };
+}
+
+/** Chromaの `where` のうち、こちらが使う形（`$in` と `$and`）だけを本物と同じように読みます。 */
+function matchesWhere(metadata, where) {
+  if (!where) return true;
+  if (Array.isArray(where.$and)) return where.$and.every((clause) => matchesWhere(metadata, clause));
+  return Object.entries(where).every(([key, condition]) => (
+    Array.isArray(condition?.$in) ? condition.$in.includes(metadata[key]) : metadata[key] === condition
+  ));
 }
 
 function dot(a, b) {

@@ -6,6 +6,8 @@ WORKDIR /app
 COPY package.json ./
 COPY bin ./bin
 COPY src ./src
+# 画面（Notion風のアプリ）。ビルドは無く、素のファイルをそのまま配ります（`src/ui.js`）。
+COPY public ./public
 
 # コンテナの中では 0.0.0.0 でListenします。コンテナの 127.0.0.1 はコンテナ自身を指すので、
 # そのままだとホストから届きません。外から見える範囲は、ホストへ公開するポートのほうで

@@ -29,6 +29,14 @@ const STORE_VERSION = 1;
 const STORE_FILE = 'contexts.json';
 
 /**
+ * 索引の形の版です。索引のMetadataに何を入れるかを変えたら上げます。
+ * 起動時に保存済みの版と違えば、埋め込みを替えたときと同じように索引を作り直します。
+ * 2: 出どころ（`source`）を入れました。ページ（`pages/store.js`）と同じ索引に載せて、
+ *    検索のときに出どころで絞れるようにするためです。
+ */
+export const INDEX_VERSION = 2;
+
+/**
  * @param {object} options
  * @param {string} options.dataDir Contextの正本と索引を置くディレクトリ。
  * @param {object} options.embedder `embedding.js` が作ったもの。
@@ -46,6 +54,8 @@ export function createContextStore({ dataDir, embedder: rawEmbedder, vectorStore
   let contexts = null;
   /** 索引を作った埋め込みのid。正本のファイルに一緒に入れます。 */
   let indexedWith = null;
+  /** 索引を作ったときの索引の形の版（`INDEX_VERSION`）。 */
+  let indexedVersion = null;
   /**
    * 読み込み中の約束。要求は同時に届くので、1回目が読み終わる前に2回目が来ます。
    * ここで覚えておかないと、2回目が読み直した中身で1回目の保存を上書きします。
@@ -64,10 +74,12 @@ export function createContextStore({ dataDir, embedder: rawEmbedder, vectorStore
       const parsed = JSON.parse(await fs.readFile(filePath, 'utf8'));
       contexts = new Map((parsed?.contexts || []).map((context) => [context.context_id, context]));
       indexedWith = typeof parsed?.embedding === 'string' ? parsed.embedding : null;
+      indexedVersion = Number.isInteger(parsed?.index_version) ? parsed.index_version : null;
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
       contexts = new Map();
       indexedWith = null;
+      indexedVersion = null;
     }
     return contexts;
   }
@@ -87,6 +99,7 @@ export function createContextStore({ dataDir, embedder: rawEmbedder, vectorStore
     const payload = {
       version: STORE_VERSION,
       embedding: indexedWith,
+      index_version: indexedVersion,
       contexts: [...contexts.values()]
     };
     const temporary = `${filePath}.${process.pid}.tmp`;
@@ -106,6 +119,8 @@ export function createContextStore({ dataDir, embedder: rawEmbedder, vectorStore
       vector: vectors[index],
       text,
       metadata: {
+        // 出どころ。ページ（`pages/store.js`）と同じ索引に載るので、検索のときにどちらかだけを引けるようにします。
+        source: 'context',
         scope_key: scopeKeyFor(context),
         // 並び順には使いませんが、将来「近い範囲を優先する」を入れるときの材料です
         // （`scope.js` 冒頭の【要確認5】への回答）。
@@ -130,15 +145,35 @@ export function createContextStore({ dataDir, embedder: rawEmbedder, vectorStore
     async ready(options = {}) {
       await vectorStore.ready(options);
       await load();
-      if (indexedWith === embedder.id) return { reindexed: 0 };
+      if (indexedWith === embedder.id && indexedVersion === INDEX_VERSION) return { reindexed: 0 };
       let reindexed = 0;
       for (const context of contexts.values()) {
         await reindex(context);
         reindexed += 1;
       }
       indexedWith = embedder.id;
+      indexedVersion = INDEX_VERSION;
       await persist();
       return { reindexed };
+    },
+
+    /** 保存済みのContextの数。`/health` と画面の設定欄が出します。 */
+    async count() {
+      await load();
+      return contexts.size;
+    },
+
+    /**
+     * 保存済みのContextが属するWorkspaceのid。ページの側のWorkspace一覧に混ぜるためのものです。
+     * CLIから判断だけを保存したWorkspaceも、画面から見えるようにします（`pages/store.js` の `listWorkspaces`）。
+     */
+    async workspaceIds() {
+      await load();
+      const ids = new Set();
+      for (const context of contexts.values()) {
+        if (context.workspace_id) ids.add(context.workspace_id);
+      }
+      return [...ids];
     },
 
     async create(input) {
@@ -195,7 +230,9 @@ export function createContextStore({ dataDir, embedder: rawEmbedder, vectorStore
         // Chunk単位で引いてからContext単位へまとめるので、要求された件数より多めに引きます。
         // 同じContextの複数Chunkが上位を占めると、まとめたあとに件数が足りなくなるためです。
         limit: (request.limit || DEFAULT_SEARCH_LIMIT) * 4,
-        scopeKeys
+        scopeKeys,
+        // ここが引くのはContextだけです。ページも一緒に引く口は `search.js` にあります。
+        sources: ['context']
       });
       return rankContexts(hits, {
         load: (id) => contexts.get(id) || null,
@@ -236,7 +273,7 @@ export function createContextStore({ dataDir, embedder: rawEmbedder, vectorStore
  * 503 なら「いまContextが使えない」とユーザーへ伝えてローカルファイルの機能は続け、
  * 500 ならこちらの不具合なので、そのまま出します（仕様7.4）。
  */
-function unavailableAs503(target, label) {
+export function unavailableAs503(target, label) {
   return new Proxy(target, {
     get(source, property) {
       const value = source[property];

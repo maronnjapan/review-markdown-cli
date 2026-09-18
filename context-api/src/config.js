@@ -55,9 +55,26 @@ export function readConfig(env = process.env) {
       ...(env.CHROMA_TENANT ? { tenant: env.CHROMA_TENANT } : {}),
       ...(env.CHROMA_DATABASE ? { database: env.CHROMA_DATABASE } : {})
     },
+    // 回答の生成（`answer.js`）。既定は何も呼びません。検索だけなら要りません。
+    chat: {
+      provider: env.CHAT_PROVIDER || 'none',
+      ...(env.CHAT_MODEL ? { model: env.CHAT_MODEL } : {}),
+      ...(env.CHAT_ENDPOINT ? { endpoint: env.CHAT_ENDPOINT } : {}),
+      ...(env.CHAT_API_KEY || env.OPENAI_API_KEY ? { apiKey: env.CHAT_API_KEY || env.OPENAI_API_KEY } : {})
+    },
+    // 画面（Notion風のアプリ）を同じプロセスから配るかどうか。APIだけを置きたいときは off にします。
+    ui: parseSwitch(env.CONTEXT_API_UI, true),
     // ChromaDBはこのサービスより遅く立ち上がることがあります。何秒まで待つか。
     waitForVectorDbSeconds: parseSeconds(env.VECTOR_DB_WAIT_SECONDS, 30)
   };
+}
+
+function parseSwitch(value, fallback) {
+  if (value === undefined || value === '') return fallback;
+  const text = String(value).trim().toLowerCase();
+  if (['1', 'true', 'on', 'yes'].includes(text)) return true;
+  if (['0', 'false', 'off', 'no'].includes(text)) return false;
+  throw new Error(`CONTEXT_API_UI は on か off で指定してください: ${value}`);
 }
 
 function parsePort(value) {

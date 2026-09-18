@@ -155,8 +155,11 @@ export function createSavedContextController({ refs, state, api, toaster }) {
     const available = state.savedContextStatus?.available === true;
     refs.savedContextForm.classList.toggle('hidden', !available);
     refs.savedContextSearchForm.classList.toggle('hidden', !available);
-    refs.savedContextEndpoint.textContent = available
-      ? `預け先: ${state.savedContextStatus.endpoint}（${state.savedContextStatus.embedding?.label || '埋め込み不明'}）`
+    // 預け先には、ページも書けるナレッジベースの画面があります。同じ判断をそちらでも直せるので、
+    // 行き来できるようにリンクにします。
+    refs.savedContextEndpoint.innerHTML = available
+      ? `預け先: <a href="${escapeHtml(state.savedContextStatus.endpoint)}/" target="_blank" rel="noopener">${escapeHtml(state.savedContextStatus.endpoint)}</a>`
+        + `（${escapeHtml(state.savedContextStatus.embedding?.label || '埋め込み不明')}）`
       : '';
     refs.savedContextEndpoint.hidden = !available;
 

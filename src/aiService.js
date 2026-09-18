@@ -748,7 +748,9 @@ export class AiService {
     }
 
     try {
-      const results = await this.contexts.searchContext(plan.query, { documentPath });
+      // 判断だけでなく、ナレッジベースに書いたページの抜粋も引きます。ページが無ければ、
+      // 今までどおり判断だけが返ります。
+      const results = await this.contexts.searchContext(plan.query, { documentPath, sources: ['context', 'page'] });
       return {
         block: results.length ? savedContextsBlock(results) : emptyContextsBlock(),
         usage: (text) => contextUsage({

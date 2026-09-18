@@ -104,11 +104,17 @@ export async function checkContextServer({ endpoint, token, fetchImpl = fetch } 
       };
     }
     const body = await response.json();
+    const counts = body.counts ? `  saved: 判断 ${body.counts.contexts ?? 0}件 / ページ ${body.counts.pages ?? 0}件` : null;
     return {
       stdout: [
         `Context API: ${base}`,
         `  embedding: ${body.embedding?.label || body.embedding?.id || '不明'}`,
-        `  vector db: ${body.vector_store?.label || body.vector_store?.id || '不明'}`
+        `  vector db: ${body.vector_store?.label || body.vector_store?.id || '不明'}`,
+        // 画面（ページも書けるナレッジベース）と、回答の生成があるかどうか。無いときも1行出します。
+        // 出さないと、使えるはずの機能が黙って無いことになります。
+        `  answer: ${body.chat?.label || '生成しない（検索だけ）'}`,
+        ...(body.ui ? [`  ui: ${base}/`] : []),
+        ...(counts ? [counts] : [])
       ],
       stderr: [],
       exitCode: 0

@@ -545,8 +545,18 @@ function contextUsageHtml(usage) {
     </div>`;
 }
 
-/** 根拠1件。idと本文の冒頭と範囲を出します（仕様7.3が求める3つです）。 */
+/** 根拠1件。idと本文の冒頭と範囲を出します（仕様7.3が求める3つです）。ページは題名と見出しを出します。 */
 function evidenceHtml(entry) {
+  if (entry.type === 'page') {
+    const where = [entry.title || '無題', entry.heading].filter(Boolean).join(' › ');
+    return `
+      <p class="ai-evidence-item" data-type="page">
+        <code class="ai-evidence-id">${escapeHtml(entry.contextId)}</code>
+        <span class="ai-evidence-kind">ページ</span>
+        <span class="ai-evidence-scope">${escapeHtml(where)}</span>
+        <span class="ai-evidence-content">${escapeHtml(truncate(entry.content || '', 80))}</span>
+      </p>`;
+  }
   return `
     <p class="ai-evidence-item">
       <code class="ai-evidence-id">${escapeHtml(entry.contextId)}</code>
