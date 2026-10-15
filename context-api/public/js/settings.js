@@ -34,6 +34,7 @@ export function createSettingsView({ root, api, toast, getWorkspace, getToken, s
           <dl class="settings-facts" data-health><dt>状態</dt><dd>確認しています…</dd></dl>
           <p class="muted">索引に失敗したページがあるときは、埋め込みのサービスを立ち上げ直してから作り直せます。</p>
           <button type="button" data-retry-index>失敗した索引を作り直す</button>
+          <p class="muted">索引に何が入っているか（Chunkの本文、Metadata、ベクトル）は <a href="#/index">索引</a> の画面で見られます。</p>
         </section>
 
         <section class="settings-block">

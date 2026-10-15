@@ -176,6 +176,19 @@ test(
     assert.deepEqual(hits.map((hit) => hit.contextId), ['c1'], '出どころと範囲で絞れる');
     assert.ok(hits[0].score > 0.99, 'コサイン距離を「大きいほど近い」へ直して読む');
 
+    // 入れたものを、入れた形のまま読めます（画面の「索引」が使う口）。ベクトルも返ります。
+    const listed = await store.list({ vectors: true });
+    assert.equal(listed.total, 2);
+    const c1 = listed.chunks.find((chunk) => chunk.id === 'c1#0');
+    assert.equal(c1.text, 'OIDCを使う');
+    assert.equal(c1.contextId, 'c1');
+    assert.equal(c1.metadata.source, 'context');
+    assert.deepEqual(c1.vector.map((value) => Math.round(value)), unit(0), 'ベクトルは入れた値のまま');
+    const pagesOnly = await store.list({ sources: ['page'] });
+    assert.equal(pagesOnly.total, 1, '絞ったときの全体の数も本物から読める');
+    assert.deepEqual(pagesOnly.chunks.map((chunk) => chunk.id), ['p1#0']);
+    assert.equal((await store.list({ contextId: 'c1' })).chunks.length, 1);
+
     await store.deleteByContext('c1');
     assert.equal(await store.count(), 1);
   }

@@ -65,6 +65,7 @@ review-markdown context status
 - **保存した判断**。CLI が「保存した判断」として引くものと同じ物を、ここでも残せて、直せて、消せます。
 - **資料に聞く**。見つかった資料だけを根拠に答えます（`POST /ask`）。回答を作るには `CHAT_PROVIDER` の設定が要り、無ければ資料の一覧だけが出ます。
 - **設定**。サーバの状態、Workspace の名前と id、Markdown の取り込みと書き出し、外部のツールから繋ぐ手順。
+- **索引**。ChromaDB（または1ファイルの索引）に入っている Chunk を、入れた形のまま並べます。本文、範囲や出どころの Metadata、埋め込みのベクトルを1件ずつ見られます。「保存したのに引けない」ときに、何が埋め込まれているかを確かめるところです。ChromaDB は外へ公開していないので、ローカルでもデプロイ先でもこの画面（と `GET /index/chunks`）から覗きます。
 
 Workspace の id は、CLI が `.review/workspace.json` に振るものと同じ形（ULID）です。
 画面で作った Workspace の id をそのファイルに書けば、そのリポジトリを開いた CLI の AI が、ここに書いたページも引きます。
@@ -197,6 +198,8 @@ npm パッケージから立ち上げるときも、ChromaDB が待ち受ける�
 | `PATCH` | `/pages/{page_id}` | 題名・本文・親・並び順の更新 |
 | `DELETE` | `/pages/{page_id}` | 削除（下のページごと） |
 | `POST` | `/index/retry` | 失敗した索引を作り直す |
+| `GET` | `/index/chunks` | 索引に入っている Chunk の一覧（本文と Metadata）。`source`（`context` / `page`）、`id`（判断かページの id）、`limit` / `offset` で絞り、`vectors=on` でベクトルも付けます |
+| `GET` | `/index/chunks/{chunk_id}` | Chunk 1件。ベクトルごと返します |
 | `POST` | `/mcp` | MCP（Streamable HTTP） |
 
 ```bash
@@ -280,6 +283,14 @@ Chunk には出どころ（`source`）を付け、検索のときにどちらか
 埋め込みや索引の形を替えると、起動時に保存済みのものをすべて作り直します。
 違う埋め込みで作った数字同士を比べても意味が無いからです。
 正本が別にあるので、作り直しで失われるものはありません。
+
+索引に何が入っているか（Chunk の本文、Metadata、ベクトル）は、画面の「索引」か `GET /index/chunks` で見られます。
+1ファイルの索引も本文を一緒に持つので、ChromaDB と同じ見え方です。
+
+```bash
+curl 'http://127.0.0.1:8765/index/chunks?source=context&limit=5'
+curl 'http://127.0.0.1:8765/index/chunks/ctx_%E2%80%A6%230'   # 1件はベクトルごと（# は %23 と書きます）
+```
 
 ページは見出しごとの節に分けてから長さで切り、題名と見出しの経路を頭に付けて埋め込みます。
 「有効期限は15分」という節の本文だけでは何の有効期限か分からず、

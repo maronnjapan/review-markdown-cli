@@ -16,11 +16,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const INDEX_VERSION = 1;
+/** 1ファイルの索引の形の版。2: 本文（`text`）も持つようにしました（画面の「索引」で、何を埋め込んだかを見せるため）。 */
+const INDEX_VERSION = 2;
 
 export function createLocalVectorStore({ dataDir, fileName = 'vectors.json' } = {}) {
   const filePath = path.join(dataDir, fileName);
-  /** Chunk id -> `{ contextId, vector, metadata }`。読み込むまでは null です。 */
+  /** Chunk id -> `{ contextId, vector, text, metadata }`。読み込むまでは null です。 */
   let entries = null;
   /** 読み込み中の約束。同時に届いた要求が、同じファイルを二度読まないようにします。 */
   let loading = null;
@@ -79,6 +80,9 @@ export function createLocalVectorStore({ dataDir, fileName = 'vectors.json' } = 
           id: chunk.id,
           contextId: chunk.contextId,
           vector: chunk.vector,
+          // 本文の正本は `store.js` と `pages/store.js` が持ちます。ここにも置くのは、
+          // 索引を覗いたとき（`list`）に「何を埋め込んだか」をベクトルと並べて見せるためです。
+          text: chunk.text ?? null,
           metadata: chunk.metadata || {}
         });
       }
@@ -128,6 +132,43 @@ export function createLocalVectorStore({ dataDir, fileName = 'vectors.json' } = 
     async count() {
       await load();
       return entries.size;
+    },
+
+    /**
+     * 索引に入っているChunkを、入れた形のまま読みます（`GET /index/chunks`、画面の「索引」）。
+     * `chroma.js` と同じ形で返します。
+     *
+     * @param {object} [options]
+     * @param {number} [options.limit] 返す上限。既定50。
+     * @param {number} [options.offset] 読み飛ばす数。既定0。
+     * @param {string[]} [options.ids] 指定したChunkだけ（1件を開くとき）。
+     * @param {string} [options.contextId] 1件の正本（Contextかページ）のChunkだけ。
+     * @param {string[]} [options.sources] 出どころ（`context` / `page`）で絞ります。
+     * @param {boolean} [options.vectors] ベクトルも返すか。既定は返しません（1Chunkに数百〜数千の数が付くので、求められたときだけ）。
+     * @returns {Promise<{ chunks: Array<{ id: string, contextId: string, text: string|null, metadata: object, vector?: number[] }>, total: number }>}
+     *   `total` は切る前の数です。
+     */
+    async list({ limit = 50, offset = 0, ids = null, contextId = null, sources = null, vectors = false } = {}) {
+      await load();
+      const wanted = ids ? new Set(ids) : null;
+      const allowedSources = sources ? new Set(sources) : null;
+      const matched = [];
+      for (const entry of entries.values()) {
+        if (wanted && !wanted.has(entry.id)) continue;
+        if (contextId && entry.contextId !== contextId) continue;
+        if (allowedSources && !allowedSources.has(entry.metadata?.source || 'context')) continue;
+        matched.push(entry);
+      }
+      return {
+        total: matched.length,
+        chunks: matched.slice(offset, offset + limit).map((entry) => ({
+          id: entry.id,
+          contextId: entry.contextId,
+          text: entry.text ?? null,
+          metadata: entry.metadata || {},
+          ...(vectors ? { vector: entry.vector } : {})
+        }))
+      };
     },
 
     async close() {

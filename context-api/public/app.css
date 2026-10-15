@@ -625,3 +625,19 @@ input.page-title { border: 0; padding: 0; background: transparent; border-radius
   .page, .contexts, .ask, .settings, .empty-state { padding: 24px 16px 0; }
   .page-title { font-size: 30px; }
 }
+
+/* ---- 索引（ChromaDBに入っているChunkとベクトル） ---- */
+.index-filter { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 14px; }
+.index-filter .field { flex: 1 1 160px; }
+.index-list { display: grid; gap: 10px; }
+.chunk-card { padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; }
+.chunk-id { font-size: 12px; background: var(--bg-code); padding: 2px 6px; border-radius: 4px; word-break: break-all; }
+.chip-source[data-source="context"] { background: rgba(35, 131, 226, 0.14); color: var(--accent); }
+.chip-source[data-source="page"] { background: rgba(68, 131, 97, 0.16); color: var(--success); }
+.chunk-meta { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 8px 0 0; font-size: 12px; color: var(--text-muted); }
+.chunk-meta dt { font-family: var(--mono); }
+.chunk-meta dd { margin: 0; word-break: break-all; }
+.chunk-vector { margin-top: 8px; }
+.chunk-vector-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+.chunk-vector-values { margin: 0; max-height: 220px; overflow: auto; padding: 8px 10px; background: var(--bg-code); border-radius: var(--radius); font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+.index-pager { display: flex; gap: 8px; align-items: center; margin-top: 14px; font-size: 13px; color: var(--text-muted); }

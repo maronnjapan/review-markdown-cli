@@ -87,6 +87,12 @@ export function createChromaVectorStore({
     return connection;
   }
 
+  async function countChunks() {
+    const { root, collectionId } = await connect();
+    const result = await request(`${root}/collections/${collectionId}/count`);
+    return typeof result === 'number' ? result : Number(result?.count ?? result ?? 0);
+  }
+
   return {
     id: 'chroma',
     label: `ChromaDB（${base} / ${collection}）`,
@@ -177,9 +183,45 @@ export function createChromaVectorStore({
 
     /** 索引に入っているChunkの数。 */
     async count() {
+      return countChunks();
+    },
+
+    /**
+     * 索引に入っているChunkを、入れた形のまま読みます（`GET /index/chunks`、画面の「索引」）。
+     * Chromaの `get` です。`local.js` と同じ形で返します。
+     *
+     * ChromaDBはこの端末の外へ公開していないので（`docker-compose.yml`、`../chromaServer.js`）、
+     * 中身を覗くにもこのサービスの口を通ります。ローカルでもデプロイ先でも同じ見え方にするためです。
+     *
+     * @param {object} [options] `local.js` の `list` と同じです。
+     */
+    async list({ limit = 50, offset = 0, ids = null, contextId = null, sources = null, vectors = false } = {}) {
       const { root, collectionId } = await connect();
-      const result = await request(`${root}/collections/${collectionId}/count`);
-      return typeof result === 'number' ? result : Number(result?.count ?? result ?? 0);
+      const where = whereClause({ contextId, sources });
+      // 全体の数。絞っていなければコレクションの件数、絞っているときはidだけを全部読んで数えます
+      // （個人の規模なら数千件です）。idを名指ししたときは、返ってきた数がそのまま全体です。
+      let total = null;
+      if (!ids) {
+        total = where
+          ? ((await request(`${root}/collections/${collectionId}/get`, { method: 'POST', body: { where, include: [] } })).ids || []).length
+          : await countChunks();
+      }
+      const body = {
+        limit,
+        offset,
+        include: ['documents', 'metadatas', ...(vectors ? ['embeddings'] : [])],
+        ...(ids ? { ids } : {}),
+        ...(where ? { where } : {})
+      };
+      const result = await request(`${root}/collections/${collectionId}/get`, { method: 'POST', body });
+      const chunks = (result.ids || []).map((id, index) => ({
+        id,
+        contextId: result.metadatas?.[index]?.context_id,
+        text: result.documents?.[index] ?? null,
+        metadata: result.metadatas?.[index] || {},
+        ...(vectors ? { vector: result.embeddings?.[index] || null } : {})
+      }));
+      return { chunks, total: total ?? chunks.length };
     },
 
     async close() {}
@@ -189,8 +231,10 @@ export function createChromaVectorStore({
 /**
  * Chromaの `where` です。条件が2つ以上のときだけ `$and` で包みます（1つのときに `$and` を使うと断られます）。
  */
-function whereClause({ scopeKeys, sources }) {
+function whereClause({ scopeKeys = null, sources = null, contextId = null }) {
   const clauses = [];
+  // 正本1件のChunkだけ。ページも `context_id` にページのidを入れて載せています（`upsert`）。
+  if (contextId) clauses.push({ context_id: contextId });
   if (scopeKeys) clauses.push({ scope_key: { $in: scopeKeys } });
   if (sources) clauses.push({ source: { $in: sources } });
   if (clauses.length === 0) return null;

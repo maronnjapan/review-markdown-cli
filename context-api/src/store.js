@@ -33,8 +33,12 @@ const STORE_FILE = 'contexts.json';
  * 起動時に保存済みの版と違えば、埋め込みを替えたときと同じように索引を作り直します。
  * 2: 出どころ（`source`）を入れました。ページ（`pages/store.js`）と同じ索引に載せて、
  *    検索のときに出どころで絞れるようにするためです。
+ * 3: 1ファイルの索引（`vectorStores/local.js`）にも本文を持たせました。索引を覗く口
+ *    （`GET /index/chunks`、画面の「索引」）で、何を埋め込んだかをベクトルと並べて見せるためです。
+ *    ChromaDBは最初から本文（documents）を持っていますが、版は索引の種類を問わず1つなので、
+ *    どちらも作り直します。
  */
-export const INDEX_VERSION = 2;
+export const INDEX_VERSION = 3;
 
 /**
  * @param {object} options

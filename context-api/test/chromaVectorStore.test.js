@@ -113,6 +113,40 @@ test('Contextの保存・検索・訂正・削除が、ChromaDB越しに通る',
   await store.close();
 });
 
+test('索引の中身は、ChromaDBの get で入れた形のまま読める', async (t) => {
+  const { chroma, endpoint } = await startFakeChroma(t, { version: 'v2' });
+  const store = createChromaVectorStore({ endpoint, collection: 'contexts' });
+  await store.upsert([
+    { id: 'c1#0', contextId: 'c1', vector: [1, 0], text: 'OIDCを使う', metadata: { source: 'context', scope_key: 'ws:W' } },
+    { id: 'p1#0', contextId: 'p1', vector: [0, 1], text: 'ページの節', metadata: { source: 'page', scope_key: 'ws:W' } }
+  ]);
+  const gets = () => chroma.requests.filter(({ pathname }) => pathname.endsWith('/get'));
+
+  const listed = await store.list({ limit: 10, offset: 0 });
+  assert.deepEqual(gets().at(-1).body, { limit: 10, offset: 0, include: ['documents', 'metadatas'] }, '一覧ではベクトルを求めない');
+  assert.equal(listed.total, 2, '絞っていなければコレクションの件数');
+  assert.deepEqual(
+    listed.chunks.map((chunk) => [chunk.id, chunk.contextId, chunk.text]),
+    [['c1#0', 'c1', 'OIDCを使う'], ['p1#0', 'p1', 'ページの節']],
+    '本文（documents）とMetadataを入れた形のまま読む'
+  );
+  assert.equal(listed.chunks[0].metadata.context_id, 'c1');
+  assert.equal('vector' in listed.chunks[0], false);
+
+  const one = await store.list({ ids: ['p1#0'], vectors: true });
+  assert.deepEqual(gets().at(-1).body.ids, ['p1#0']);
+  assert.ok(gets().at(-1).body.include.includes('embeddings'), '1件を開くときはベクトルも求める');
+  assert.deepEqual(one.chunks[0].vector, [0, 1]);
+  assert.equal(one.total, 1);
+
+  const filtered = await store.list({ contextId: 'c1', sources: ['context'] });
+  const [counted, fetched] = gets().slice(-2);
+  assert.deepEqual(fetched.body.where, { $and: [{ context_id: 'c1' }, { source: { $in: ['context'] } }] });
+  assert.deepEqual(counted.body, { where: fetched.body.where, include: [] }, '絞ったときの全体の数は、idだけを読んで数える');
+  assert.equal(filtered.total, 1);
+  assert.deepEqual(filtered.chunks.map((chunk) => chunk.id), ['c1#0']);
+});
+
 /* ---------------------------------------------------------------- *
  * ChromaDBの代わり
  * ---------------------------------------------------------------- */
@@ -151,9 +185,24 @@ async function startFakeChroma(t, { version, unreadyFirst = 0 }) {
     if (url.pathname === `${root}/collections/collection-1/upsert`) {
       body.ids.forEach((id, index) => chroma.collection.set(id, {
         vector: body.embeddings[index],
+        document: body.documents?.[index] ?? null,
         metadata: body.metadatas[index]
       }));
       return reply(200, {});
+    }
+    if (url.pathname === `${root}/collections/collection-1/get`) {
+      // 本物と同じく、`ids` と `where` で絞り、`limit` / `offset` で切り、`include` にあるものだけ返します。
+      const matched = [...chroma.collection.entries()]
+        .filter(([id, entry]) => (!body.ids || body.ids.includes(id)) && matchesWhere(entry.metadata, body.where));
+      const offset = body.offset || 0;
+      const sliced = matched.slice(offset, body.limit === undefined ? undefined : offset + body.limit);
+      const include = body.include || ['metadatas', 'documents'];
+      return reply(200, {
+        ids: sliced.map(([id]) => id),
+        ...(include.includes('documents') ? { documents: sliced.map(([, entry]) => entry.document) } : {}),
+        ...(include.includes('metadatas') ? { metadatas: sliced.map(([, entry]) => entry.metadata) } : {}),
+        ...(include.includes('embeddings') ? { embeddings: sliced.map(([, entry]) => entry.vector) } : {})
+      });
     }
     if (url.pathname === `${root}/collections/collection-1/delete`) {
       for (const [id, entry] of chroma.collection) {

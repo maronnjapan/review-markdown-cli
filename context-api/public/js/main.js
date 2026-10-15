@@ -16,6 +16,7 @@ import { createContextsView } from './contexts.js';
 import { createPageView } from './page.js';
 import { createPalette } from './palette.js';
 import { createSettingsView } from './settings.js';
+import { createIndexView } from './indexView.js';
 import { createTree } from './tree.js';
 import { el, escapeHtml, modKey, storage, untitled } from './util.js';
 
@@ -82,6 +83,7 @@ const refs = {
   contextsLink: document.getElementById('contexts-link'),
   askLink: document.getElementById('ask-link'),
   settingsLink: document.getElementById('settings-link'),
+  indexLink: document.getElementById('index-link'),
   searchButton: document.getElementById('search-button'),
   newPageButton: document.getElementById('new-page-button'),
   sidebarCollapse: document.getElementById('sidebar-collapse'),
@@ -103,6 +105,7 @@ const hrefForPage = (pageId, workspaceId = state.workspaceId) => `#/w/${encode(w
 const hrefForContexts = (contextId, workspaceId = state.workspaceId) => `#/w/${encode(workspaceId)}/contexts${contextId ? `?id=${encode(contextId)}` : ''}`;
 const hrefForAsk = (question, workspaceId = state.workspaceId) => `#/w/${encode(workspaceId)}/ask${question ? `?q=${encode(question)}` : ''}`;
 const hrefForSettings = (workspaceId = state.workspaceId) => (workspaceId ? `#/w/${encode(workspaceId)}/settings` : '#/settings');
+const hrefForIndex = (workspaceId = state.workspaceId) => (workspaceId ? `#/w/${encode(workspaceId)}/index` : '#/index');
 
 function navigate(href, { replace = false } = {}) {
   if (replace) window.location.replace(href);
@@ -219,6 +222,7 @@ function paintWorkspace() {
   refs.contextsLink.href = hrefForContexts(null);
   refs.askLink.href = hrefForAsk('');
   refs.settingsLink.href = hrefForSettings();
+  refs.indexLink.href = hrefForIndex();
 }
 
 async function refreshTree() {
@@ -457,6 +461,14 @@ const settingsView = createSettingsView({
   onImported: () => refreshTree()
 });
 
+const indexView = createIndexView({
+  root: refs.view,
+  api,
+  toast,
+  hrefForPage: (pageId, workspaceId) => hrefForPage(pageId, workspaceId || state.workspaceId),
+  hrefForContext: (contextId, workspaceId) => hrefForContexts(contextId, workspaceId || state.workspaceId || '')
+});
+
 const palette = createPalette({
   root: refs.palette,
   api,
@@ -496,6 +508,7 @@ function paintBreadcrumb() {
   } else if (route.name === 'contexts') crumbs.push({ label: '保存した判断' });
   else if (route.name === 'ask') crumbs.push({ label: '資料に聞く' });
   else if (route.name === 'settings') crumbs.push({ label: '設定' });
+  else if (route.name === 'index') crumbs.push({ label: '索引' });
   refs.breadcrumb.innerHTML = crumbs.map((crumb, index) => (
     `${index ? '<span class="crumb-sep">/</span>' : ''}`
     + (crumb.href && index < crumbs.length - 1
@@ -559,12 +572,14 @@ function parseHash() {
   const segments = pathPart.split('/').filter(Boolean).map((segment) => decodeURIComponent(segment));
   const query = new URLSearchParams(queryPart);
   if (segments[0] === 'settings') return { name: 'settings', ws: null };
+  if (segments[0] === 'index') return { name: 'index', ws: null, source: query.get('source') || '', id: query.get('id') || '' };
   if (segments[0] === 'w' && segments[1]) {
     const ws = segments[1];
     if (segments[2] === 'p' && segments[3]) return { name: 'page', ws, pageId: segments[3] };
     if (segments[2] === 'contexts') return { name: 'contexts', ws, contextId: query.get('id') };
     if (segments[2] === 'ask') return { name: 'ask', ws, question: query.get('q') || '' };
     if (segments[2] === 'settings') return { name: 'settings', ws };
+    if (segments[2] === 'index') return { name: 'index', ws, source: query.get('source') || '', id: query.get('id') || '' };
     return { name: 'workspace', ws };
   }
   return { name: 'home' };
@@ -613,6 +628,9 @@ async function route() {
       break;
     case 'settings':
       mount(settingsView, () => settingsView.show());
+      break;
+    case 'index':
+      mount(indexView, () => indexView.show({ source: target.source, id: target.id }));
       break;
     default:
       showWorkspaceHome();

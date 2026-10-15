@@ -66,6 +66,9 @@ export function createApi({ getToken = () => null, onUnauthorized = () => {} } =
     patchPage: (id, body) => request('PATCH', `/pages/${encode(id)}`, body),
     deletePage: (id) => request('DELETE', `/pages/${encode(id)}`),
     retryIndex: () => request('POST', '/index/retry', {}),
+    // 索引に入っているChunk（画面の「索引」）。一覧はベクトル無し、1件はベクトルごと。
+    listChunks: (params = {}) => request('GET', `/index/chunks?${new URLSearchParams(params)}`),
+    chunk: (id) => request('GET', `/index/chunks/${encode(id)}`).then((payload) => payload.chunk),
 
     search: (body) => request('POST', '/search', body).then((payload) => payload.results),
 

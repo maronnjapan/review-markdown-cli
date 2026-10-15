@@ -110,6 +110,8 @@ export function createContextApi(options = {}) {
     { method: 'PATCH', pattern: /^\/pages\/([^/]+)$/, handle: patchPage },
     { method: 'DELETE', pattern: /^\/pages\/([^/]+)$/, handle: deletePage },
     { method: 'POST', pattern: /^\/index\/retry$/, handle: retryIndex },
+    { method: 'GET', pattern: /^\/index\/chunks$/, handle: listChunks },
+    { method: 'GET', pattern: /^\/index\/chunks\/([^/]+)$/, handle: getChunk },
     // AIエージェント向けの口（`mcp.js`）
     { method: 'POST', pattern: /^\/mcp$/, handle: handleMcp },
     { method: 'GET', pattern: /^\/mcp$/, handle: handleMcp },
@@ -321,6 +323,45 @@ export function createContextApi(options = {}) {
     return sendJson(response, await pages.retryFailedIndexes());
   }
 
+  /**
+   * 索引に入っているChunkを、入れた形のまま返します（画面の「索引」）。
+   *
+   * 本文の正本はContextとページにあり、ここで見えるのは「何を埋め込んだか」です。
+   * 「保存したのに引けない」ときに、本文・範囲・出どころ・ベクトルを確かめるための口で、
+   * ChromaDBを外へ公開していないので、ローカルでもデプロイ先でもここを通して覗きます。
+   * ベクトルは `vectors=on` のときだけ付けます。1Chunkに数百〜数千の数が付くので、一覧では省きます。
+   */
+  async function listChunks({ response, url }) {
+    const source = url.searchParams.get('source');
+    if (source && !KNOWLEDGE_SOURCES.includes(source)) {
+      throw httpError(`source は ${KNOWLEDGE_SOURCES.join(' / ')} のどれかです: ${source}`, 400);
+    }
+    const limit = boundedInteger(url.searchParams.get('limit'), { fallback: 50, min: 1, max: 200 });
+    const offset = boundedInteger(url.searchParams.get('offset'), { fallback: 0, min: 0, max: Number.MAX_SAFE_INTEGER });
+    const result = await store.vectorStore.list({
+      limit,
+      offset,
+      sources: source ? [source] : null,
+      contextId: url.searchParams.get('id') || null,
+      vectors: ['on', 'true', '1'].includes(url.searchParams.get('vectors') || '')
+    });
+    return sendJson(response, {
+      chunks: result.chunks.map(chunkPayload),
+      total: result.total,
+      limit,
+      offset,
+      embedding: { id: store.embedder.id, label: store.embedder.label },
+      vector_store: { id: store.vectorStore.id, label: store.vectorStore.label }
+    });
+  }
+
+  /** Chunk 1件。ベクトルごと返します。 */
+  async function getChunk({ response, params }) {
+    const { chunks } = await store.vectorStore.list({ ids: [params[0]], limit: 1, vectors: true });
+    if (chunks.length === 0) throw httpError('Chunk not found', 404);
+    return sendJson(response, { chunk: chunkPayload(chunks[0]) });
+  }
+
   /* ---------------------------------------------------------------- *
    * MCP
    * ---------------------------------------------------------------- */
@@ -399,6 +440,26 @@ export function createContextApi(options = {}) {
       return server.listen(port, host, callback);
     }
   };
+}
+
+/** 索引のChunkを、APIの応答の形にします。出どころと正本のidを見出しに出し、Metadataは入れた形のままです。 */
+function chunkPayload(chunk) {
+  const source = chunk.metadata?.source || 'context';
+  return {
+    id: chunk.id,
+    source,
+    source_id: chunk.contextId ?? chunk.metadata?.context_id ?? null,
+    text: chunk.text ?? null,
+    metadata: chunk.metadata || {},
+    ...(Array.isArray(chunk.vector) ? { vector: chunk.vector, dimensions: chunk.vector.length } : {})
+  };
+}
+
+function boundedInteger(value, { fallback, min, max }) {
+  if (value === null || value === '') return fallback;
+  const number = Number(value);
+  if (!Number.isInteger(number)) throw httpError(`整数で指定してください: ${value}`, 400);
+  return Math.min(max, Math.max(min, number));
 }
 
 /** ブラウザ以外から来る要求に `Origin` はありません。あるときだけ、この端末のものかを見ます。 */
