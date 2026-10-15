@@ -11,14 +11,49 @@
  * `127.0.0.1` はコンテナ自身を指すので、そのままだとホストから届かないからです。
  * 代わりに、ホストへ公開するポートのほうを `127.0.0.1:8765:8765` と縛ります。
  * 外から見える範囲は、どちらの動かし方でも同じ「この端末だけ」です。
+ *
+ * ── 素で動かすときも `.env` を読む理由 ────────────────────────
+ * `docker compose` は `context-api/.env` を読みます。`npm start` がそれを読まないと、
+ * 同じ設定をシェルで付け直すことになり、付け忘れた値は黙って既定に戻ります（埋め込みが
+ * 変われば、索引ごと作り直しです）。そこで同じファイルを読みます。シェルで付けた値が
+ * 勝つのも `docker compose` と同じです。
  */
 
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import util from 'node:util';
 import { DEFAULT_ENDPOINT as DEFAULT_CHROMA_URL } from './vectorStores/chroma.js';
 
 export const DEFAULT_PORT = 8765;
+/** 素で動かすときに読む `.env`。`docker compose` が読むのと同じ `context-api/.env` です。 */
+export const DEFAULT_ENV_FILE = fileURLToPath(new URL('../.env', import.meta.url));
 const CHROMA_SERVERS = ['external', 'npm'];
+
+/**
+ * `.env` を読み、まだ設定されていない環境変数だけを足します。シェルで付けた値が勝ちます。
+ * ファイルが無ければ何もしません（コンテナの中では、環境変数は `docker-compose.yml` が渡します）。
+ *
+ * @returns {string|null} 読んだファイル。無ければ null
+ */
+export function loadEnvFile(file = DEFAULT_ENV_FILE, env = process.env) {
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw new Error(`${file} を読めませんでした: ${error.message}`);
+  }
+  // 書式の解釈（引用符、行末のコメント、`export`）はNode.jsに任せます。依存パッケージを増やしません。
+  if (typeof util.parseEnv !== 'function') {
+    throw new Error(`${file} を読むには Node.js 20.12 以上が要ります（今は ${process.version}）。上げるか、.env を消して環境変数として付けてください`);
+  }
+  for (const [key, value] of Object.entries(util.parseEnv(text))) {
+    if (env[key] === undefined) env[key] = value;
+  }
+  return file;
+}
 
 /** Contextの正本（`contexts.json`）の置き場所。Dockerではボリュームを当てます。 */
 export function defaultDataDir(env = process.env, platform = process.platform) {

@@ -2,15 +2,16 @@
 /**
  * Context API の起動口です。
  *
- * 設定は環境変数から読みます（`src/config.js`）。既定の動かし方は
- * `docker compose up` で、ChromaDB と一緒に立ち上がります。
+ * 設定は環境変数から読みます（`src/config.js`）。`context-api/.env` があれば、それも読みます
+ * （シェルで付けた値が優先）。既定の動かし方は `docker compose up` で、ChromaDB と一緒に立ち上がります。
  * Docker を使わないときは `CHROMA_SERVER=npm` で、npm パッケージ（`chromadb`）に同梱された
  * ChromaDB をこのプロセスが立ち上げ、終了時に止めます（`src/chromaServer.js`）。
  */
 import { startChromaServer } from '../src/chromaServer.js';
-import { readConfig } from '../src/config.js';
+import { loadEnvFile, readConfig } from '../src/config.js';
 import { createContextApi } from '../src/server.js';
 
+const envFile = loadEnvFile();
 const config = readConfig();
 const api = createContextApi(config);
 
@@ -77,6 +78,7 @@ await new Promise((resolve, reject) => {
 const port = server.address().port;
 const shownHost = config.host === '0.0.0.0' ? '127.0.0.1' : config.host;
 console.log(`Context API is serving http://${config.host}:${port}`);
+if (envFile) console.log(`  env: ${envFile}（シェルで付けた値が優先）`);
 console.log(`  data: ${config.dataDir}`);
 console.log(`  embedding: ${api.store.embedder.label}`);
 console.log(`  vector db: ${api.store.vectorStore.label}`);

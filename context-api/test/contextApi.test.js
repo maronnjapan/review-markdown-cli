@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { chunkContent } from '../src/chunking.js';
-import { readConfig } from '../src/config.js';
+import { loadEnvFile, readConfig } from '../src/config.js';
 import { createLocalEmbedder, hashEmbedding } from '../src/embedding.js';
 import { applyContextPatch, buildContext } from '../src/model.js';
 import { ancestorPaths, normalizeSearchRequest, scopeKeysFor } from '../src/scope.js';
@@ -311,6 +311,26 @@ test('既定の索引はChromaDBで、環境変数で切り替える', () => {
 
   assert.throws(() => readConfig({ CONTEXT_API_PORT: 'http' }), /CONTEXT_API_PORT/);
   assert.throws(() => createVectorStore({ kind: 'qdrant' }), /使えないVector DB/);
+});
+
+test('素で動かすときも .env を読み、シェルで付けた値はそのまま残す', async (t) => {
+  const dir = await temporaryDir(t);
+  const file = path.join(dir, '.env');
+  await fs.writeFile(file, [
+    '# docker compose と同じファイル',
+    'EMBEDDING_PROVIDER=ollama',
+    'EMBEDDING_MODEL="nomic-embed-text" # 行末のコメント',
+    'CONTEXT_API_PORT=9000',
+    ''
+  ].join('\n'));
+  const env = { CONTEXT_DATA_DIR: '/data', CONTEXT_API_PORT: '9100' };
+
+  assert.equal(loadEnvFile(file, env), file);
+  const config = readConfig(env);
+  assert.deepEqual(config.embedding, { provider: 'ollama', model: 'nomic-embed-text' });
+  assert.equal(config.port, 9100, 'シェルで付けた値が .env に勝つ');
+
+  assert.equal(loadEnvFile(path.join(dir, 'missing.env'), env), null, '無ければ何もしない');
 });
 
 /* ---------------------------------------------------------------- *

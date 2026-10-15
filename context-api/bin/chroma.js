@@ -6,15 +6,16 @@
  * 要りません。索引だけを先に立てておきたいとき（Context APIを何度も立ち上げ直す、
  * 別のツールからも同じChromaDBを覗く）のための口です。
  *
- * 設定は `npm start` と同じ環境変数から読みます（`src/config.js`）。待ち受け先は `CHROMA_URL`、
+ * 設定は `npm start` と同じ環境変数と `.env` から読みます（`src/config.js`）。待ち受け先は `CHROMA_URL`、
  * 索引の置き場所は `CHROMA_PATH`（既定は `CONTEXT_DATA_DIR` の下の `chroma/`）です。
  * 同じ変数を見るので、ここで立てたものへ `npm start` は既定のまま繋がります。
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { chromaRunArgs, resolveChromaCli } from '../src/chromaServer.js';
-import { readConfig } from '../src/config.js';
+import { loadEnvFile, readConfig } from '../src/config.js';
 
+const envFile = loadEnvFile();
 const config = readConfig();
 let cli;
 let args;
@@ -28,6 +29,7 @@ try {
 
 fs.mkdirSync(config.chroma.path, { recursive: true });
 console.log(`ChromaDB ${cli.version}（npmパッケージ chromadb）を立ち上げます`);
+if (envFile) console.log(`  env: ${envFile}（シェルで付けた値が優先）`);
 console.log(`  url: ${config.chroma.url}`);
 console.log(`  索引: ${config.chroma.path}`);
 console.log('  Context API からは、このまま npm start で繋がります（CHROMA_URL が同じなので）');

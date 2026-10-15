@@ -104,8 +104,9 @@ curl -X POST http://127.0.0.1:8765/search \
 
 ## 設定
 
-環境変数で決めます。`docker compose` は `.env` を読みます（`.env.example` を写してください）。
-`npm start` は `.env` を読まないので、`CHROMA_SERVER=npm EMBEDDING_PROVIDER=ollama npm start` のように環境変数として付けます。
+環境変数で決めます。`docker compose` も `npm start`（`npm run chroma` も）も、`context-api/.env` を読みます（`.env.example` を写してください）。
+シェルで付けた値が `.env` より優先されるので、`CHROMA_SERVER=npm EMBEDDING_PROVIDER=ollama npm start` のように1回だけ変えることもできます。
+`npm start` で `.env` を読むには Node.js 20.12 以上が要ります。
 
 | 変数 | 既定 | 意味 |
 | --- | --- | --- |
