@@ -1,8 +1,9 @@
 /**
  * どのVector DBを索引に使うかの表です。
  *
- * 既定はChromaDBで、`docker compose up` が一緒に立ち上げます。`VECTOR_DB=local` に
- * すると、Dockerを使わずに1ファイルだけで試せます（テストもこちらを使います）。
+ * 既定はChromaDBで、`docker compose up` が一緒に立ち上げます。Dockerを使わないときは
+ * `CHROMA_SERVER=npm` で、npmパッケージに同梱されたChromaDBを立ち上げます（`../chromaServer.js`）。
+ * `VECTOR_DB=local` にすると、ChromaDBを用意せずに1ファイルだけで試せます（テストもこちらを使います）。
  *
  * 増やすときはここへ1行足します。CLIはどれが動いているかを知りません。知る必要が
  * 無いようにするために、このサービスをCLIから切り離してあります（仕様3.2）。
@@ -13,11 +14,11 @@ import { createLocalVectorStore } from './local.js';
 
 const STORES = {
   chroma: {
-    summary: 'ChromaDB（既定。docker compose up が一緒に立ち上げます）',
+    summary: 'ChromaDB（既定。docker compose up が一緒に立ち上げるか、CHROMA_SERVER=npm で npm パッケージから立ち上げます）',
     create: (options) => createChromaVectorStore(options)
   },
   local: {
-    summary: 'ローカルのJSONファイル（Dockerを使わずに試すとき、およびテスト用）',
+    summary: 'ローカルのJSONファイル（ChromaDBを用意せずに試すとき、およびテスト用）',
     create: (options) => createLocalVectorStore(options)
   }
 };

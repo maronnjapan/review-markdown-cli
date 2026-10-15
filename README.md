@@ -94,6 +94,8 @@ review-markdown .
 
 ```bash
 cd context-api && docker compose up -d                                    # ChromaDBごと立ち上がります
+# Docker を使わないなら、npm パッケージの ChromaDB をこのサービスが立ち上げます
+# cd context-api && npm install && CHROMA_SERVER=npm npm start
 review-markdown config set contextEndpoint http://127.0.0.1:8765 --global
 review-markdown context status                                            # 繋がるかどうかを確かめる
 ```
@@ -1075,7 +1077,13 @@ review-markdown context status
 #   saved: 判断 0件 / ページ 0件
 ```
 
-Docker を使わずに試すときは、索引を1ファイルに切り替えて直接起動できます。
+Docker を使わないときは、npm パッケージ（`chromadb`）に同梱された ChromaDB をこのサービスが立ち上げます。
+
+```bash
+cd context-api && npm install && CHROMA_SERVER=npm npm start
+```
+
+ChromaDB を用意せずに試すだけなら、索引を1ファイルに切り替えて直接起動できます（`npm install` も要りません）。
 
 ```bash
 cd context-api && VECTOR_DB=local npm start
@@ -1098,6 +1106,7 @@ review-markdown config set contextToken <token> --global
 ```
 
 設定の一覧と API の詳細は [`context-api/README.md`](context-api/README.md) にあります。
+端末の外に置く（デプロイする）ときに決めることも、同じ README の「デプロイする」にあります。
 
 ### 判断を残す
 
@@ -1218,7 +1227,7 @@ claude mcp add --transport http knowledge http://127.0.0.1:8765/mcp
 
 ### 索引と埋め込みを取り替える
 
-索引は ChromaDB で、`docker compose up` が一緒に立ち上げます。
+索引は ChromaDB で、`docker compose up` が一緒に立ち上げます（Docker を使わないときは `CHROMA_SERVER=npm npm start` が、npm パッケージの ChromaDB を立ち上げます）。
 埋め込みは既定でこのプロセスの中の計算なので、API キーも外部への通信も要りません。
 取り替えるときは `context-api/.env` を書きます。
 
@@ -1240,7 +1249,7 @@ OPENAI_API_KEY=sk-...
 言い換えまで拾わせたいときは、埋め込みを取り替えてください。
 
 索引だけを ChromaDB からローカルの1ファイルへ替えることもできます（`VECTOR_DB=local`）。
-Docker を用意せずに試すときの道で、繋ぎ先が変わらないので CLI 側の設定はそのままです。
+ChromaDB を用意せずに試すときの道で、繋ぎ先が変わらないので CLI 側の設定はそのままです。
 
 埋め込みを取り替えると、次の起動で保存済みの判断の索引を作り直します。
 違う埋め込みで作った数字同士を比べても意味が無いので、作り直すまで検索できないからです。

@@ -2,12 +2,16 @@
  * ChromaDBを索引に使うときの口です。既定の索引はこちらです。
  *
  * `docker compose up` を打つと、このサービスと一緒にChromaDBが立ち上がり、
- * `CHROMA_URL` で繋がります。Dockerを使わずに試すときは `VECTOR_DB=local` で、
- * 1ファイルの索引（`local.js`）へ切り替えられます。
+ * `CHROMA_URL` で繋がります。Dockerを使わないときは `CHROMA_SERVER=npm` で、npmパッケージ
+ * （`chromadb`）に同梱されたChromaDBをこのサービスが立ち上げます（`../chromaServer.js`）。
+ * ChromaDBを用意せずに試すときは `VECTOR_DB=local` で、1ファイルの索引（`local.js`）へ
+ * 切り替えられます。
  *
  * ── npmのクライアントを使わない理由 ──────────────────────
- * ChromaはHTTPで話せるので、`fetch` だけで足ります。依存を足すと、Chromaを使わない人
- * （＝既定の人すべて）にもインストールの時間がかかります。
+ * ChromaはHTTPで話せるので、`fetch` だけで足ります。`chromadb` パッケージは入れてありますが、
+ * それはChroma本体（サーバ）を同梱していて、Dockerなしで立ち上げるためです。話す側まで
+ * パッケージに任せると、v1とv2の吸収も、本物を立てずに「何を送っているか」を読むテスト
+ * （`test/chromaVectorStore.test.js`）も、パッケージの形に縛られます。
  *
  * ── v2とv1の両方を見る理由 ────────────────────────────
  * Chromaは 0.6 でAPIのパスが `/api/v1` から `/api/v2/tenants/.../databases/...` へ
@@ -16,7 +20,7 @@
  * Chromaの版を知らずに済みます。
  */
 
-const DEFAULT_ENDPOINT = 'http://127.0.0.1:8000';
+export const DEFAULT_ENDPOINT = 'http://127.0.0.1:8000';
 const DEFAULT_COLLECTION = 'review_markdown_contexts';
 const DEFAULT_TENANT = 'default_tenant';
 const DEFAULT_DATABASE = 'default_database';

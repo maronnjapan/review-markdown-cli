@@ -15,8 +15,10 @@
 
 import os from 'node:os';
 import path from 'node:path';
+import { DEFAULT_ENDPOINT as DEFAULT_CHROMA_URL } from './vectorStores/chroma.js';
 
 export const DEFAULT_PORT = 8765;
+const CHROMA_SERVERS = ['external', 'npm'];
 
 /** Contextの正本（`contexts.json`）の置き場所。Dockerではボリュームを当てます。 */
 export function defaultDataDir(env = process.env, platform = process.platform) {
@@ -37,11 +39,14 @@ export function defaultDataDir(env = process.env, platform = process.platform) {
  * 失敗し、そのときにはもう「保存できたつもり」のユーザーがいます。
  */
 export function readConfig(env = process.env) {
+  const dataDir = defaultDataDir(env);
+  const vectorDb = env.VECTOR_DB || 'chroma';
   return {
-    port: parsePort(env.CONTEXT_API_PORT),
+    // `PORT` も見るのは、デプロイ先（PaaS）が待ち受けるポートをその名前で渡してくるからです。
+    port: parsePort(env.CONTEXT_API_PORT || env.PORT),
     host: env.CONTEXT_API_HOST || '127.0.0.1',
     token: env.CONTEXT_API_TOKEN || null,
-    dataDir: defaultDataDir(env),
+    dataDir,
     embedding: {
       provider: env.EMBEDDING_PROVIDER || 'local',
       ...(env.EMBEDDING_MODEL ? { model: env.EMBEDDING_MODEL } : {}),
@@ -49,11 +54,20 @@ export function readConfig(env = process.env) {
       ...(env.OPENAI_API_KEY ? { apiKey: env.OPENAI_API_KEY } : {})
     },
     vectorStore: {
-      kind: env.VECTOR_DB || 'chroma',
+      kind: vectorDb,
       ...(env.CHROMA_URL ? { endpoint: env.CHROMA_URL } : {}),
       ...(env.CHROMA_COLLECTION ? { collection: env.CHROMA_COLLECTION } : {}),
       ...(env.CHROMA_TENANT ? { tenant: env.CHROMA_TENANT } : {}),
       ...(env.CHROMA_DATABASE ? { database: env.CHROMA_DATABASE } : {})
+    },
+    // ChromaDBを誰が動かすか（`chromaServer.js`）。`external` は `CHROMA_URL` の先に誰かが立てたもの
+    // （docker compose、`npm run chroma`、手元で動かしているChroma）、`npm` はこのプロセスが
+    // npmパッケージ（`chromadb`）から立ち上げて、終了時に止めます。
+    chroma: {
+      server: parseChromaServer(env.CHROMA_SERVER, vectorDb),
+      url: env.CHROMA_URL || DEFAULT_CHROMA_URL,
+      // 索引の置き場所。正本（contexts.json、pages.json）の隣に置き、ボリュームを1つ当てれば両方残るようにします。
+      path: env.CHROMA_PATH ? path.resolve(env.CHROMA_PATH) : path.join(dataDir, 'chroma')
     },
     // 回答の生成（`answer.js`）。既定は何も呼びません。検索だけなら要りません。
     chat: {
@@ -65,6 +79,7 @@ export function readConfig(env = process.env) {
     // 画面（Notion風のアプリ）を同じプロセスから配るかどうか。APIだけを置きたいときは off にします。
     ui: parseSwitch(env.CONTEXT_API_UI, true),
     // ChromaDBはこのサービスより遅く立ち上がることがあります。何秒まで待つか。
+    // `CHROMA_SERVER=npm` では、立ち上げたChromaDBが心拍を返すまでの上限でもあります。
     waitForVectorDbSeconds: parseSeconds(env.VECTOR_DB_WAIT_SECONDS, 30)
   };
 }
@@ -75,6 +90,17 @@ function parseSwitch(value, fallback) {
   if (['1', 'true', 'on', 'yes'].includes(text)) return true;
   if (['0', 'false', 'off', 'no'].includes(text)) return false;
   throw new Error(`CONTEXT_API_UI は on か off で指定してください: ${value}`);
+}
+
+function parseChromaServer(value, vectorDb) {
+  const server = value === undefined || value === '' ? 'external' : String(value).trim().toLowerCase();
+  if (!CHROMA_SERVERS.includes(server)) {
+    throw new Error(`CHROMA_SERVER は external か npm で指定してください: ${value}`);
+  }
+  if (server === 'npm' && vectorDb !== 'chroma') {
+    throw new Error(`CHROMA_SERVER=npm は VECTOR_DB=chroma のときだけ使えます（今は ${vectorDb}）`);
+  }
+  return server;
 }
 
 function parsePort(value) {

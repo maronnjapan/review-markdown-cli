@@ -17,23 +17,43 @@
 
 ## 立ち上げる
 
+索引（ChromaDB）の用意の仕方は2つあります。どちらも `http://127.0.0.1:8765` で待ち受け、CLI からの繋ぎ方は同じです。
+
+### Docker で
+
 ```bash
 cd context-api
 docker compose up -d
 ```
 
-ChromaDB と一緒に立ち上がり、`http://127.0.0.1:8765` で待ち受けます。
+ChromaDB と一緒に立ち上がります。
+
+### npm で（Docker なし）
+
+`chromadb` の npm パッケージは、Chroma 本体（Rust 製のサーバ）を同梱しています。
+`npm install` で揃い、`CHROMA_SERVER=npm` を付けると、このサービスが起動時に ChromaDB を立ち上げ、終了時に止めます。
+
+```bash
+cd context-api
+npm install
+CHROMA_SERVER=npm npm start
+```
+
+索引のデータは `CONTEXT_DATA_DIR` の下の `chroma/` に残ります（`CHROMA_PATH` で変えられます）。
+ChromaDB だけを別に動かしておきたいときは `npm run chroma` です。
+`CHROMA_URL` のポート（既定 8000）で待ち受けるので、`npm start` は既定のままそこへ繋がります。
+止めるのは Ctrl-C です（`npm run` 越しに `kill` を送ると npm だけが終わり、ChromaDB が残ります。`kill` するなら `node` のプロセスへ送ってください）。
+
+`chromadb` パッケージは Chroma 本体を含むので 50MB ほどあります。
+索引を ChromaDB にせず1ファイルで済ませるなら `VECTOR_DB=local npm start` で、`npm install` も要りません。
+
+### 繋ぐ
+
 ブラウザで開くと画面が出ます。CLI からは、この URL を設定して繋ぎます。
 
 ```bash
 review-markdown config set contextEndpoint http://127.0.0.1:8765 --global
 review-markdown context status
-```
-
-Docker を使わずに試すときは、索引を1ファイルに切り替えて直接起動できます。
-
-```bash
-VECTOR_DB=local npm start
 ```
 
 ## 画面
@@ -84,10 +104,11 @@ curl -X POST http://127.0.0.1:8765/search \
 ## 設定
 
 環境変数で決めます。`docker compose` は `.env` を読みます（`.env.example` を写してください）。
+`npm start` は `.env` を読まないので、`CHROMA_SERVER=npm EMBEDDING_PROVIDER=ollama npm start` のように環境変数として付けます。
 
 | 変数 | 既定 | 意味 |
 | --- | --- | --- |
-| `CONTEXT_API_PORT` | `8765` | 待ち受けるポート |
+| `CONTEXT_API_PORT` | `8765` | 待ち受けるポート。無ければ `PORT`（デプロイ先が渡すもの）、それも無ければ 8765 |
 | `CONTEXT_API_HOST` | `127.0.0.1` | Bind するアドレス（コンテナの中だけ `0.0.0.0`） |
 | `CONTEXT_API_TOKEN` | なし | 設定すると `Authorization: Bearer <token>` を求める |
 | `CONTEXT_API_UI` | `on` | 画面を配るかどうか。`off` で API だけ |
@@ -95,6 +116,9 @@ curl -X POST http://127.0.0.1:8765/search \
 | `VECTOR_DB` | `chroma` | 索引（`chroma` / `local`） |
 | `CHROMA_URL` | `http://127.0.0.1:8000` | ChromaDB の URL |
 | `CHROMA_COLLECTION` | `review_markdown_contexts` | コレクション名 |
+| `CHROMA_SERVER` | `external` | ChromaDB を誰が動かすか。`external` は `CHROMA_URL` の先に立っているもの（`docker compose`、`npm run chroma`）、`npm` はこのプロセスが npm パッケージ（`chromadb`）から立ち上げて終了時に止める |
+| `CHROMA_PATH` | `CONTEXT_DATA_DIR` の下の `chroma/` | `CHROMA_SERVER=npm` と `npm run chroma` のときの、ChromaDB の索引の置き場所 |
+| `RUST_LOG` | `warn` | npm パッケージの ChromaDB のログの量。`info` にすると要求ごとに出ます |
 | `EMBEDDING_PROVIDER` | `local` | 埋め込み（`local` / `ollama` / `openai`） |
 | `EMBEDDING_MODEL` | プロバイダごと | 埋め込みのモデル名 |
 | `EMBEDDING_ENDPOINT` | プロバイダごと | 埋め込みサービスの URL |
@@ -103,7 +127,37 @@ curl -X POST http://127.0.0.1:8765/search \
 | `CHAT_MODEL` | プロバイダごと | 回答を作るモデル名（Ollama は `llama3.2`、OpenAI 互換は `gpt-4o-mini`） |
 | `CHAT_ENDPOINT` | プロバイダごと | 回答を作るサービスの URL |
 | `CHAT_API_KEY` | `OPENAI_API_KEY` | `CHAT_PROVIDER=openai` のとき |
-| `VECTOR_DB_WAIT_SECONDS` | `30` | 起動時に ChromaDB を待つ秒数 |
+| `VECTOR_DB_WAIT_SECONDS` | `30` | 起動時に ChromaDB を待つ秒数（`CHROMA_SERVER=npm` では、立ち上げた ChromaDB が心拍を返すまでの上限） |
+
+## デプロイする
+
+1つの端末の外に置きたいとき（別の端末からも引く、チームで同じ判断を共有する）は、このサービスを1つのイメージ、
+または1つの Node のプロセスとしてデプロイします。
+`CHROMA_SERVER=npm` にすると ChromaDB も同じコンテナの中で動くので、ChromaDB を別に用意する必要はありません。
+
+```bash
+cd context-api
+docker build -t context-api .
+docker run -d --name context-api \
+  -p 8765:8765 \
+  -v context-data:/data \
+  -e CHROMA_SERVER=npm \
+  -e CONTEXT_API_TOKEN=<token> \
+  context-api
+```
+
+イメージを1つ動かせる先（Fly.io、Cloud Run、Railway、VPS の Docker）なら、どこでもこの形です。
+Node が動くホスティング（Render、Railway の Nixpacks など）に置くなら、ビルドは `npm ci`、起動は `CHROMA_SERVER=npm npm start` です。
+
+置くときに決めることは5つです。
+
+- **トークン**。`CONTEXT_API_TOKEN` を必ず設定します。このサービスは他に認証を持たず、保存した判断とページがそのまま読めます。CLI には `review-markdown config set contextToken <token> --global`、MCP には `--header "Authorization: Bearer <token>"`、画面は設定の画面で入れます。トークン無しで外から届く設定になっていると、起動ログに注意を出します。
+- **TLS**。トークンは平文で流れるので、HTTPS で受けてください（PaaS の前段か、リバースプロキシ）。このサービス自身は TLS を持ちません。
+- **ポート**。既定は 8765 です。デプロイ先が `PORT` を渡してくれば、そちらで待ち受けます（`CONTEXT_API_PORT` があればそれが優先）。
+- **データ**。正本（`contexts.json`、`pages.json`）と索引（`chroma/`）は `CONTEXT_DATA_DIR`（コンテナでは `/data`）にまとまっています。ここに永続ボリュームを当てます。当てないと、再デプロイで消えます。コンテナは `node` ユーザで動くので、ボリュームはそのユーザが書ける持ち主にします。
+- **インスタンスは1つ**。索引は ChromaDB の1プロセスが持ち、同じデータを複数のプロセスで開けません。横に増やさず、1つで動かします。
+
+既定の埋め込み（`local`）は外へ出ません。`openai` や `ollama` にするときは、デプロイ先からそのサービスへ届く必要があります。
 
 ## 届く範囲
 
@@ -111,6 +165,7 @@ curl -X POST http://127.0.0.1:8765/search \
 素で動かすときは `127.0.0.1` にだけ Bind し、Docker で動かすときはホストへ公開するポートを
 `127.0.0.1:8765:8765` と縛ります。どちらの動かし方でも、外から見える範囲は「この端末だけ」です。
 ChromaDB はホストへ公開しません（繋ぐのは同じネットワークにいるこのサービスだけです）。
+npm パッケージから立ち上げるときも、ChromaDB が待ち受けるのはこの端末（`127.0.0.1`）だけです。
 
 画面を持つので、ブラウザから来る要求の `Origin` も見ます。
 `Origin` が、このサービス自身か、この端末（localhost）でなければ 403 です。
@@ -257,4 +312,5 @@ npm test
 ```
 
 ChromaDB は要りません。索引は1ファイルのもの（`VECTOR_DB=local` と同じ実装）で走ります。
+`npm install` 済みで `chromadb` パッケージがあるときだけ、npm パッケージの ChromaDB を実際に立ち上げて索引の読み書きを通すテストも走ります（無ければ飛ばします）。
 画面の Markdown の描き手も、ブラウザを持たない純粋な関数なので同じテストで確かめます。

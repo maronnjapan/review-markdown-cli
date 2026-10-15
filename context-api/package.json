@@ -14,6 +14,10 @@
   },
   "scripts": {
     "start": "node ./bin/context-api.js",
+    "chroma": "node ./bin/chroma.js",
     "test": "node --test"
+  },
+  "dependencies": {
+    "chromadb": "^3.5.0"
   }
 }
